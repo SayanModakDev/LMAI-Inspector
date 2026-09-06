@@ -513,7 +513,7 @@ def validate_manufacturer_present(
 
     # Strip prefix keywords to inspect actual entity name
     cleaned = re.sub(
-        r'^(?:manufactured\s+(?:by|at|for)|mfd\.?\s*by|mfg\.?\s*by|packed\s+(?:by|at)|marketed\s+by)[:\s-]*',
+        r'^(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfd\.?\s*by|mfg\.?\s*by|packed\s+(?:by|at)|marketed\s+by)[:\s-]*',
         '',
         raw_val,
         flags=re.IGNORECASE,

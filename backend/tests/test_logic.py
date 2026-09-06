@@ -350,3 +350,223 @@ def test_same_line_mfd_and_expiry_separated():
     assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '10/2025'
     assert fields.get('EXPIRY_DATE', {}).get('value') == '18/04/2027'
 
+
+def test_multiline_manufacturer():
+    """Multiline manufacturer name and continuation lines should be captured cleanly."""
+    text = (
+        "Manufactured & Marketed by:\n"
+        "Apex Beverages Private Limited\n"
+        "Plot No. 42, Sector 18, Phase IV\n"
+        "Gurugram, Haryana 122015\n"
+        "Net Quantity: 750 ml"
+    )
+    fields = extract_declarations(text)
+
+    assert 'Apex Beverages Private Limited' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'Manufactured & Marketed by' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'Plot No. 42' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert '122015' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Net Quantity' not in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '750 ml'
+
+
+def test_manufacturer_address_spanning_multiple_lines():
+    """Manufacturer address spanning multiple lines should stop at section boundaries."""
+    text = (
+        "Manufactured by: Sunrise Spice Mills Pvt. Ltd.\n"
+        "Survey No. 124/1, GIDC Estate\n"
+        "Behind Fire Station, Ankleshwar\n"
+        "District Bharuch, Gujarat - 393002\n"
+        "MRP: Rs. 140.00"
+    )
+    fields = extract_declarations(text)
+
+    assert 'Sunrise Spice Mills Pvt. Ltd.' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    address = fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Survey No. 124/1' in address
+    assert 'Ankleshwar' in address
+    assert '393002' in address
+    assert 'MRP' not in address
+    assert fields.get('MRP', {}).get('value') == '₹140.00'
+
+
+def test_manufacturer_without_manufactured_by_prefix():
+    """Verifiable corporate entity (Pvt. Ltd. / Limited) should be recognized without 'Manufactured by:'."""
+    text = (
+        "Himalayan Pure Organic Honey\n"
+        "Everest Organics India Limited\n"
+        "Khasra No. 340, Village Bhowali\n"
+        "Dist. Nainital, Uttarakhand - 263132\n"
+        "Net Wt: 500 g\n"
+        "MRP Rs 350"
+    )
+    fields = extract_declarations(text)
+
+    assert fields.get('MANUFACTURER_NAME', {}).get('value') == 'Everest Organics India Limited'
+    address = fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Khasra No. 340' in address
+    assert '263132' in address
+    assert 'Net Wt' not in address
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '500 g'
+
+
+def test_ingredients_followed_by_manufacturer_isolation():
+    """Ingredients must not bleed into manufacturer and vice-versa."""
+    text = (
+        "Ingredients: Sugar, Liquid Glucose, Milk Solids, Cocoa Butter, Salt.\n"
+        "Manufactured by: Sweet Treats Confectionery Pvt Ltd\n"
+        "Industrial Estate, Pune 411028"
+    )
+    fields = extract_declarations(text)
+
+    ingredients = fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Sugar' in ingredients
+    assert 'Cocoa Butter' in ingredients
+    assert 'Manufactured by' not in ingredients
+    assert 'Sweet Treats' not in ingredients
+
+    assert 'Sweet Treats Confectionery Pvt Ltd' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'Pune 411028' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+
+
+def test_ingredients_and_manufacturer_on_same_line_isolation():
+    """Inline ingredients followed by manufacturer on the same line must be sliced cleanly."""
+    text = (
+        "Ingredients: Almonds, Cashews, Pistachios. Manufactured by: Nut Delight Foods Pvt Ltd, Delhi 110006\n"
+        "Net Wt: 200 g"
+    )
+    fields = extract_declarations(text)
+
+    ingredients = fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Almonds, Cashews, Pistachios.' in ingredients
+    assert 'Manufactured by' not in ingredients
+
+    assert 'Nut Delight Foods Pvt Ltd' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'Delhi 110006' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Net Wt' not in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '200 g'
+
+
+def test_manufacturer_followed_by_net_quantity():
+    """Manufacturer address must not contain trailing net quantity from the same or next line."""
+    text = (
+        "Manufactured/Packed by: Royal Tea Blends Pvt Ltd, 14 Biplabi Trailokya Maharaj Sarani, Kolkata 700001  Net Weight: 250 g\n"
+        "MRP: ₹ 160.00"
+    )
+    fields = extract_declarations(text)
+
+    assert 'Royal Tea Blends Pvt Ltd' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    address = fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Kolkata 700001' in address
+    assert 'Net Weight' not in address
+    assert '250 g' not in address
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '250 g'
+    assert fields.get('MRP', {}).get('value') == '₹160.00'
+
+
+def test_ingredients_followed_by_nutrition_information():
+    """Ingredients must stop when nutritional panel begins."""
+    text = (
+        "Ingredients: Whole Wheat Flour, Water, Yeast, Salt, Emulsifiers (INS 471, INS 481).\n"
+        "Nutritional Information per 100g:\n"
+        "Energy: 245 kcal\n"
+        "Protein: 8.2 g\n"
+        "Carbohydrate: 49.0 g\n"
+        "Fat: 1.5 g\n"
+        "Manufactured by: Golden Crust Bakery Pvt Ltd, Mumbai 400050"
+    )
+    fields = extract_declarations(text)
+
+    ingredients = fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Whole Wheat Flour' in ingredients
+    assert 'INS 481' in ingredients
+    assert 'Nutritional Information' not in ingredients
+    assert 'Energy' not in ingredients
+
+    nutrition = fields.get('NUTRITIONAL_INFO', {}).get('value', '')
+    assert 'Energy' in nutrition
+    assert 'Protein' in nutrition
+
+
+def test_cosmetic_talcum_powder_comprehensive():
+    """Comprehensive declaration extraction for cosmetic talcum powder."""
+    text = (
+        "GREAT DEAL\n"
+        "JIVE\n"
+        "Fragrant Soft Talc\n"
+        "Body Talcum Powder\n"
+        "Ingredients: Talc, Calcium Carbonate, Fragrance, Dipropylene Glycol.\n"
+        "Manufactured by: Premier Personal Care Pvt Ltd\n"
+        "Plot 10, Sector 5, IMT Manesar, Gurugram, Haryana - 122050\n"
+        "Net Qty: 300 g\n"
+        "MRP: ₹ 180.00\n"
+        "Batch No: B4019\n"
+        "MFD: 02/2026\n"
+        "Best Before: 36 months from mfg\n"
+        "Consumer Care: 1800-222-3333, feedback@premiercare.in"
+    )
+    fields = extract_declarations(text)
+
+    assert fields.get('GENERIC_NAME', {}).get('value') == 'TALCUM POWDER'
+    assert 'GREAT DEAL' not in fields.get('PRODUCT_NAME', {}).get('value', '')
+    assert 'Talc' in fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Manufactured by' not in fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Premier Personal Care Pvt Ltd' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'IMT Manesar' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '300 g'
+    assert fields.get('MRP', {}).get('value') == '₹180.00'
+    assert fields.get('BATCH_NUMBER', {}).get('value') == 'B4019'
+    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '02/2026'
+    assert '36 months' in fields.get('BEST_BEFORE_USE_BY', {}).get('value', '')
+    assert '1800-222-3333' in fields.get('CONSUMER_CARE', {}).get('value', '')
+
+
+def test_food_packaged_commodity_comprehensive():
+    """Comprehensive declaration extraction for food packaged commodity."""
+    text = (
+        "NUTRIVA\n"
+        "Crispy Oats Cookies\n"
+        "Ingredients: Rolled Oats, Whole Wheat Flour, Sugar, Edible Vegetable Oil, Butter, Raising Agents (INS 500ii).\n"
+        "Nutritional Facts per 100g:\n"
+        "Energy: 480 kcal\n"
+        "Protein: 8.5 g\n"
+        "Manufactured & Marketed by: Healthy Foods India Pvt Ltd\n"
+        "Survey No. 88, Village Khed, Pune, Maharashtra 410501\n"
+        "Net Weight: 250 g\n"
+        "MRP: Rs. 95.00\n"
+        "Batch: HF-2026\n"
+        "Date of Manufacture: 11/2025\n"
+        "Best Before Date: 10/2026\n"
+        "Customer Helpline: 1800-444-5555\n"
+        "FSSAI Lic No: 10019022000456"
+    )
+    fields = extract_declarations(text)
+
+    assert 'Rolled Oats' in fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Nutritional Facts' not in fields.get('INGREDIENTS_LIST', {}).get('value', '')
+    assert 'Healthy Foods India Pvt Ltd' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+    assert 'Village Khed' in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert 'Net Weight' not in fields.get('MANUFACTURER_ADDRESS', {}).get('value', '')
+    assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '250 g'
+    assert fields.get('MRP', {}).get('value') == '₹95.00'
+    assert fields.get('BATCH_NUMBER', {}).get('value') == 'HF-2026'
+    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '11/2025'
+    assert fields.get('BEST_BEFORE_USE_BY', {}).get('value') == '10/2026'
+    assert '1800-444-5555' in fields.get('CONSUMER_CARE', {}).get('value', '')
+    assert fields.get('FSSAI_LICENSE', {}).get('value') == '10019022000456'
+
+
+def test_arbitrary_nearby_text_not_treated_as_manufacturer():
+    """Arbitrary descriptive or marketing text must never be treated as manufacturer."""
+    text = (
+        "Best Quality Premium Salt\n"
+        "Vacuum Evaporated\n"
+        "Net Wt: 1 kg\n"
+        "MRP Rs 28"
+    )
+    fields = extract_declarations(text)
+
+    assert 'MANUFACTURER_NAME' not in fields
+    assert 'MANUFACTURER_ADDRESS' not in fields
+
+

@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +46,13 @@ CONSUMER_CARE_PATTERNS = [
 ]
 
 MANUFACTURER_KEYWORDS = [
-    'manufactured by', 'manufactured at', 'manufactured for', 'manufactured:',
-    'mfg by', 'mfd by', 'mfg. by', 'mfd. by',
-    'manufacturer', 'marketed by', 'packed by', 'packed at', 'puckea by', 'packer', 'made by',
+    'manufactured & marketed by', 'manufactured and marketed by', 'manufactured/marketed by',
+    'manufactured & packed by', 'manufactured and packed by', 'manufactured/packed by',
+    'manufactured at', 'manufactured for', 'manufactured by', 'manufactured:',
+    'mfg & mkt by', 'mfg & pkd by', 'mfd & pkd by', 'mfd & mkt by',
+    'mfg. by', 'mfd. by', 'mfg by', 'mfd by',
+    'marketed by', 'packed at', 'packed by', 'puckea by',
+    'packer', 'manufacturer', 'made by',
 ]
 IMPORTER_KEYWORDS = ['imported by', 'importer', 'import by']
 INGREDIENT_KEYWORDS = ['ingredients', 'composition', 'ingredient list']
@@ -62,17 +66,61 @@ MFG_DATE_KEYWORDS = ['date of manufacture', 'date of manufacturing', 'manufactur
 PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date', 'pkg date', 'pkd date', 'packed on', 'pkd:', 'pkd.', 'pkd']
 MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
 SECTION_BOUNDARY_RE = re.compile(
-    r'(?:manufactured\s+(?:by|at|for)|mfd\s+by|mfg\s+by|packed\s+(?:by|at)|marketed\s+by|'
-    r'imported\s+by|country\s+of\s+origin|made\s+in|address|net\s*(?:wt\.?|weight|qty\.?|quantity|content)|'
-    r'm\.?\s*r\.?\s*p\.?|batch(?:\s*no)?|b\.?\s*no\.?|lot(?:\s*no)?|use\s*-?\s*before|use\s+by|'
-    r'best\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date)?|consumer\s+care|customer\s+care|write\s+to|ingredients?|nutritional?|'
-    r'fssai|barcode)',
+    r'(?:'
+    r'\b(?:manufactured|mfg|mfd|packed|marketed|imported)\s*(?:&|and|/)?\s*(?:marketed|packed|mkt|pkd)?\s*(?:by|at|for)\b|'
+    r'\bpacked\s+(?:by|at)\b|\bmarketed\s+by\b|\bimported\s+by\b|\bcountry\s+of\s+origin\b|\bmade\s+in\b|'
+    r'\bnet\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)\b|\bquantity\b|'
+    r'\bm\.?\s*r\.?\s*p\.?|\bmaximum\s+retail\s+price\b|'
+    r'\bbatch\s*(?:no\.?|number)?\b|\bb\.?\s*no\.?\b|\blot\s*(?:no\.?|number)?\b|'
+    r'\buse\s*-?\s*(?:by|before)\b|\bbest\s+before\b|\bbest\s+by\b|\bconsume\s+before\b|'
+    r'\bdate\s+of\s+(?:manufactur\w+|pack\w+)\b|\bmfg\s*date\b|\bmfd\s*date\b|\bpkd\s*date\b|\bpkg\s*date\b|\bpacked\s+on\b|'
+    r'\bexpiry(?:\s+date)?\b|\bexp(?:\.|\s*date|:)|'
+    r'\bconsumer\s+care\b|\bcustomer\s+care\b|\bcustomer\s+support\b|\bhelpline\b|\btoll\s*free\b|\bwrite\s+to\b|'
+    r'\bingredients?\b|\bcomposition\b|\bingredient\s+list\b|'
+    r'\bnutritional?\s*(?:information|facts)\b|'
+    r'\bfssai\b|\blic\.?\s*(?:no\.?|number)?\b|\blicen[cs]e\s*(?:no\.?|number)?\b|\bbarcode\b|\bean\b'
+    r')',
     re.IGNORECASE,
 )
 VENDOR_LINE_RE = re.compile(
-    r'([A-Za-z][A-Za-z0-9&.\'\s-]{2,80}?(?:Pvt\.?\s*Ltd\.?|Private\s+Limited|Ltd\.?))',
+    r'([A-Za-z][A-Za-z0-9&.\'\s-]{2,80}?(?:Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b))',
     re.IGNORECASE,
 )
+COMPANY_SUFFIX_RE = re.compile(
+    r'\b([A-Za-z][A-Za-z0-9&.\'\s-]{1,70}?\s+(?:Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b))(?:\s*[,;:]|\s*$|\s+(?=[A-Za-z0-9]))',
+    re.IGNORECASE,
+)
+NON_COMPANY_LIMITED_WORDS = {'edition', 'offer', 'period', 'time', 'stock', 'validity', 'warranty', 'qty', 'quantity'}
+INLINE_SECTION_PATTERNS = {
+    'manufacturer': [
+        r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfg\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|mfd\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|packed\s+(?:by|at)|marketed\s+by|imported\s+by|packer\b|manufacturer\b|made\s+by\b)',
+    ],
+    'ingredients': [
+        r'\b(?:ingredients?|composition|ingredient\s+list)\b',
+    ],
+    'net_quantity': [
+        r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents)\b',
+    ],
+    'mrp': [
+        r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\b',
+        r'\b(?:rs\.?|₹|inr)\s*\d',
+    ],
+    'batch': [
+        r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b',
+    ],
+    'date': [
+        r'\b(?:date\s+of\s+(?:manufactur\w+|pack\w+)|mfg\s*date|mfd\s*date|pkd\s*date|pkg\s*date|packed\s+on|mfd[:.]|mfg[:.]|pkd[:.]|best\s+before|best\s+by|use\s*-?\s*(?:by|before)|consume\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date|:))\b',
+    ],
+    'consumer_care': [
+        r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|contact(?:\s+us)?|write\s+to|feedback)\b',
+    ],
+    'nutrition': [
+        r'\b(?:nutritional\s+information|nutrition\s+facts|nutritional\s+facts|per\s+(?:100\s*g|serving)|energy\s*:|protein\s*:|carbohydrate\s*:)\b',
+    ],
+    'fssai': [
+        r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?|licen[cs]e\s*(?:no\.?|number)?|reg\.?\s*no\.?)\b',
+    ],
+}
 VENDOR_PREFIX_RE = re.compile(
     r'\b(?:manufactured|mfg|mfd|packed|marketed|imported|produced|distributed)\s*(?:\.|\b)\s*(?:by|at|for|in)\b',
     re.IGNORECASE,
@@ -105,8 +153,18 @@ def _normalize_text(raw_text: str) -> str:
     return text.strip()
 
 
-def _is_section_boundary(line: str) -> bool:
-    return bool(SECTION_BOUNDARY_RE.search(line or ''))
+def _is_section_boundary(line: str, current_section: Optional[str] = None) -> bool:
+    if not line:
+        return False
+    if current_section:
+        for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+            if sec_name == current_section:
+                continue
+            for pat in patterns:
+                if re.search(pat, line, re.IGNORECASE):
+                    return True
+        return False
+    return bool(SECTION_BOUNDARY_RE.search(line))
 
 
 def _values_conflict(left: str, right: str) -> bool:
@@ -357,7 +415,7 @@ def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]
         lowered = [word.lower() for word in words]
         if not words or len(words) > 8 or ':' in line or any(word in MARKETING_TERMS for word in lowered) and len(words) <= 3:
             continue
-        if re.search(r'\b(?:manufactured|manufacturing|marketed|packed|ingredients|nutrition|fssai|consumer|address|mrp|net\s*(?:wt|weight))\b', line, re.I):
+        if re.search(r'\b(?:manufactured|manufacturing|marketed|packed|ingredients|nutrition|fssai|consumer|address|mrp|net\s*(?:wt|weight)|pvt\.?\s*ltd|private\s+limited|ltd\b|limited\b|plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|sector\b|phase\s+[ivx0-9]+|gidc|industrial\s*area)\b', line, re.I):
             continue
         score = 1.0 + max(0, 8 - index) * 0.08
         if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice)\b', line, re.I):
@@ -415,6 +473,139 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
             if not previous or float(candidate.get('confidence') or 0) > float(previous.get('confidence') or 0):
                 merged[name] = candidate
     return merged
+
+
+def _cut_before_next_section(text: str, current_section: str) -> str:
+    """Cut text on the same line before any other section begins."""
+    if not text:
+        return ""
+    earliest_pos = len(text)
+    for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+        if sec_name == current_section:
+            continue
+        for pat in patterns:
+            for m in re.finditer(pat, text, re.IGNORECASE):
+                if 0 < m.start() < earliest_pos:
+                    earliest_pos = m.start()
+    return text[:earliest_pos].strip(' :;,-')
+
+
+def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
+    """If a line contains a verifiable corporate entity (e.g., 'Shree Foods Pvt. Ltd.'),
+    return (company_name, remaining_address_on_same_line).
+    """
+    line_clean = line.strip()
+    if not line_clean or _is_section_boundary(line_clean):
+        return None
+    m = COMPANY_SUFFIX_RE.search(line_clean)
+    if not m:
+        return None
+    entity = m.group(1).strip(' ,;:')
+    after_entity = line_clean[m.end():].strip(' ,;:')
+    first_word_after = after_entity.split()[0].lower() if after_entity.split() else ''
+    if first_word_after in NON_COMPANY_LIMITED_WORDS:
+        return None
+    words = entity.split()
+    if len(words) < 2:
+        return None
+    if any(w.lower() in {'fresh', 'natural', 'pure', 'offer', 'deal', 'free', 'great'} for w in words[:-1]) and len(words) <= 2:
+        return None
+    return entity, after_entity
+
+
+def _collect_continuation_lines(lines: List[str], start_index: int, current_section: str, max_lines: int = 6) -> List[str]:
+    """Collect continuation lines for a section, stopping immediately at any subsequent section boundary."""
+    collected = []
+    for line in lines[start_index + 1:start_index + 1 + max_lines]:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        if _is_section_boundary(line_clean, current_section):
+            break
+        if current_section in ('ingredients', 'nutrition') and _extract_company_entity_from_line(line_clean):
+            break
+        cut_line = _cut_before_next_section(line_clean, current_section)
+        if cut_line != line_clean:
+            if cut_line:
+                collected.append(cut_line.strip(' ,;'))
+            break
+        collected.append(line_clean.strip(' ,;'))
+    return collected
+
+
+def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Extract manufacturer name and address cleanly without section contamination."""
+    # Step 1: Look for explicit manufacturer keyword lines
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        matched_kw = None
+        for kw in MANUFACTURER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'manufacturer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'manufacturer', max_lines=6)
+
+            # Check if cleaned_after has a company entity
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = ', '.join(part for part in addr_parts if part)
+                return name, address or None
+
+            # Check if label was alone on line and first continuation line is company entity
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = ', '.join(part for part in addr_parts if part)
+                    return name, address or None
+
+            # Fallback split
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    address = ', '.join([vendor['address']] + cont_lines)
+                elif cleaned_after:
+                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    address = ', '.join(cont_lines)
+                else:
+                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    address = ', '.join(cont_lines[1:]) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                address = vendor['address'] or None
+                return name or None, address
+
+    # Step 2: Standalone company entity without "Manufactured by:" prefix
+    for idx, line in enumerate(lines):
+        comp_res = _extract_company_entity_from_line(line)
+        if comp_res:
+            comp_name, comp_addr = comp_res
+            cont_lines = _collect_continuation_lines(lines, idx, 'manufacturer', max_lines=6)
+            addr_parts = [comp_addr] if comp_addr else []
+            addr_parts.extend(cont_lines)
+            address = ', '.join(part for part in addr_parts if part)
+            return comp_name, address or None
+
+    return None, None
 
 
 def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
@@ -616,21 +807,11 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if qty_field:
         fields['DECLARED_NET_QUANTITY'] = qty_field
 
-    for line_index, line in enumerate(lines):
-        lower = line.lower()
-        if any(keyword in lower for keyword in MANUFACTURER_KEYWORDS):
-            candidate = line
-            for kw in MANUFACTURER_KEYWORDS:
-                if kw in lower:
-                    candidate = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
-                    break
-            candidate = ' '.join([candidate, _lines_after_label(lines, line_index)]).strip()
-            vendor = _split_vendor_and_address(candidate)
-            if vendor['name']:
-                fields['MANUFACTURER_NAME'] = {'value': f"Manufactured by: {vendor['name']}", 'confidence': 0.75, 'source': 'OCR'}
-            if vendor['address']:
-                fields['MANUFACTURER_ADDRESS'] = {'value': vendor['address'][:500], 'confidence': 0.65, 'source': 'OCR'}
-            break
+    mfg_name, mfg_addr = _extract_manufacturer_and_address(lines)
+    if mfg_name:
+        fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.8, 'source': 'OCR'}
+    if mfg_addr:
+        fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.7, 'source': 'OCR'}
 
     for line_index, line in enumerate(lines):
         lower = line.lower()
@@ -668,10 +849,28 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS)
     if best_before:
         fields['BEST_BEFORE_USE_BY'] = {'value': best_before, 'raw_value': best_before, 'normalized_value': best_before, 'confidence': 0.75, 'source': 'OCR'}
+    else:
+        for line in lines:
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in BEST_BEFORE_KEYWORDS):
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                if dur_match:
+                    dur_val = dur_match.group(1).strip()
+                    fields['BEST_BEFORE_USE_BY'] = {'value': dur_val, 'raw_value': dur_val, 'normalized_value': dur_val, 'confidence': 0.75, 'source': 'OCR'}
+                    break
 
     use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS)
     if use_by:
         fields['USE_BEFORE_DATE'] = {'value': use_by, 'raw_value': use_by, 'normalized_value': use_by, 'confidence': 0.75, 'source': 'OCR'}
+    elif 'BEST_BEFORE_USE_BY' not in fields:
+        for line in lines:
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in USE_BY_KEYWORDS):
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                if dur_match:
+                    dur_val = dur_match.group(1).strip()
+                    fields['USE_BEFORE_DATE'] = {'value': dur_val, 'raw_value': dur_val, 'normalized_value': dur_val, 'confidence': 0.75, 'source': 'OCR'}
+                    break
 
     expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS)
     if expiry_date:
@@ -685,15 +884,20 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         lower = line.lower()
         if any(keyword in lower for keyword in INGREDIENT_KEYWORDS):
             kw = next(k for k in INGREDIENT_KEYWORDS if k in lower)
-            candidate = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
-            candidate = ' '.join([candidate, _lines_after_label(lines, line_index, 6)]).strip()
+            raw_after = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
+            cleaned_first = _cut_before_next_section(raw_after, 'ingredients')
+            cont_lines = _collect_continuation_lines(lines, line_index, 'ingredients', max_lines=8)
+            all_ing_parts = [cleaned_first] if cleaned_first else []
+            all_ing_parts.extend(cont_lines)
+            candidate = ' '.join(all_ing_parts).strip(' ,;')
             if candidate:
-                fields['INGREDIENTS_LIST'] = {'value': candidate[:1000], 'confidence': 0.7, 'source': 'OCR'}
+                fields['INGREDIENTS_LIST'] = {'value': candidate[:1000], 'confidence': 0.75, 'source': 'OCR'}
             break
 
     for line_index, line in enumerate(lines):
         if any(keyword in line.lower() for keyword in NUTRITIONAL_KEYWORDS):
-            panel = ' '.join([line, _lines_after_label(lines, line_index, 12)]).strip()
+            cont_lines = _collect_continuation_lines(lines, line_index, 'nutrition', max_lines=12)
+            panel = ' '.join([line.strip()] + cont_lines).strip()
             fields['NUTRITIONAL_INFO'] = {'value': panel[:2000], 'confidence': 0.65, 'source': 'OCR', 'regulatory_source': 'FSSAI_FOOD_LABELING'}
             break
 
@@ -712,7 +916,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if cc_match and 'CONSUMER_CARE' not in fields:
         fields['CONSUMER_CARE'] = {'value': cc_match[:200], 'confidence': 0.7, 'source': 'OCR'}
 
-    batch_match = re.search(r'(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?)\s*[:\s-]*\s*([A-Za-z][A-Za-z0-9\-/]*|\d{1,10})', normalized, re.IGNORECASE)
+    batch_match = re.search(r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\s*[:\s-]*\s*([A-Za-z0-9][A-Za-z0-9\-/]*)', normalized, re.IGNORECASE)
     if batch_match:
         fields['BATCH_NUMBER'] = {'value': batch_match.group(1)[:100], 'confidence': 0.7, 'source': 'OCR'}
 
