@@ -15,7 +15,13 @@ from app.ocr.ocr_service import run_ocr
 from app.ocr.preprocessing import preprocess_image
 from app.rules.applicability import get_applicable_rules
 from app.rules.rule_engine import evaluate_rules, build_inspection_findings
-from app.utils.helpers import generate_filename
+from app.utils.helpers import (
+    generate_filename,
+    sanitize_filename,
+    validate_image_content,
+    is_allowed_mime_type,
+    get_safe_upload_path,
+)
 from app.barcode_decoder import decode_barcodes, lookup_barcode
 from app.visual_detection import detect_food_symbol
 
@@ -40,17 +46,69 @@ async def perform_scan(
         raise HTTPException(status_code=400, detail="No file uploaded")
 
     request_started = time.perf_counter()
+    max_bytes = getattr(settings, "MAX_UPLOAD_SIZE_BYTES", settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024)
+
+    # Validate all files before any disk writes or OCR execution
+    validated_files = []
+    for uploaded_file in uploaded_files:
+        raw_name = uploaded_file.filename or "upload"
+        sanitized_name = sanitize_filename(raw_name)
+
+        # 1. Check declared MIME type
+        content_type = uploaded_file.content_type
+        if content_type and not is_allowed_mime_type(content_type):
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported media type '{content_type}' for file '{sanitized_name}'. Allowed formats: JPEG, PNG, WEBP, BMP.",
+            )
+
+        # 2. Read content into memory
+        content = await uploaded_file.read()
+        if not content or len(content) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file '{sanitized_name}' is empty (0 bytes).",
+            )
+
+        # 3. Enforce maximum file size
+        if len(content) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{sanitized_name}' exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB}MB.",
+            )
+
+        # 4. Validate magic bytes and structural image integrity
+        is_valid, detected_fmt, err_msg = validate_image_content(content)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{sanitized_name}' is not a valid image: {err_msg}",
+            )
+
+        # 5. Generate secure server-side filename and ensure upload path containment
+        safe_filename = generate_filename(sanitized_name, detected_format=detected_fmt)
+        try:
+            dest_path = get_safe_upload_path(settings.UPLOAD_DIR, safe_filename)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid file path for '{sanitized_name}': {str(exc)}")
+
+        validated_files.append({
+            'safe_filename': safe_filename,
+            'dest_path': dest_path,
+            'content': content,
+        })
+
+    # Save validated files to disk
     original_paths = []
     safe_filenames = []
-    for uploaded_file in uploaded_files:
-        safe_filename = generate_filename(uploaded_file.filename)
-        original_path = os.path.join(settings.UPLOAD_DIR, safe_filename)
-        with open(original_path, "wb") as handle:
-            handle.write(await uploaded_file.read())
-        safe_filenames.append(safe_filename)
-        original_paths.append(original_path)
+    for item in validated_files:
+        with open(item['dest_path'], "wb") as handle:
+            handle.write(item['content'])
+        safe_filenames.append(item['safe_filename'])
+        original_paths.append(item['dest_path'])
+
     upload_ms = round((time.perf_counter() - request_started) * 1000)
-    logger.info("scan timing upload_ms=%s images=%s", upload_ms, len(uploaded_files))
+    logger.info("scan timing upload_ms=%s images=%s", upload_ms, len(validated_files))
 
     try:
         image_results = []

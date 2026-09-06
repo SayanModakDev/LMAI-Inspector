@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change-this-to-a-random-secret-key"
 
+    # Upload Hardening & Constraints
+    MAX_UPLOAD_SIZE_MB: int = 15
+    MAX_UPLOAD_SIZE_BYTES: int = 15 * 1024 * 1024
+    ALLOWED_IMAGE_EXTENSIONS: set = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    ALLOWED_IMAGE_MIME_TYPES: set = {
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/bmp",
+        "image/x-ms-bmp",
+    }
+
     @field_validator("DEBUG", mode="before")
     @classmethod
     def parse_debug_mode(cls, value):
