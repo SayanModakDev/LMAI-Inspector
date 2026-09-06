@@ -66,6 +66,9 @@ def _add_missing_columns():
             "source_link": "VARCHAR(500)",
             "detection_method": "VARCHAR(100)",
             "visual_or_text": "VARCHAR(30)",
+            "source_authority": "VARCHAR(255)",
+            "source_url": "VARCHAR(500)",
+            "rule_reference_status": "VARCHAR(50)",
         },
         "rule_results": {
             "regulatory_source": "VARCHAR(100)",

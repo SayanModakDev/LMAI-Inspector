@@ -58,7 +58,10 @@ def sync_rules_to_db() -> None:
                 db_rule.severity = r_data.get('severity', 'HIGH')
                 db_rule.exception = r_data.get('exception')
                 db_rule.evidence_required = r_data.get('evidence_required', True)
-                db_rule.source_link = r_data.get('source_link')
+                db_rule.source_link = r_data.get('source_link') or r_data.get('source_url')
+                db_rule.source_url = r_data.get('source_url') or r_data.get('source_link')
+                db_rule.source_authority = r_data.get('source_authority')
+                db_rule.rule_reference_status = r_data.get('rule_reference_status', 'PENDING_VERIFICATION')
                 db_rule.detection_method = r_data.get('detection_method')
                 db_rule.visual_or_text = r_data.get('visual_or_text', 'TEXT')
                 db_rule.is_active = True

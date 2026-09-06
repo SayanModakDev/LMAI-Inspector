@@ -135,6 +135,11 @@ class RuleSchema(BaseModel):
     severity: str = "HIGH"
     exception: Optional[str] = None
     evidence_required: bool = True
+    source_authority: Optional[str] = None
+    source_url: Optional[str] = None
+    source_link: Optional[str] = None
+    rule_reference_status: str = "PENDING_VERIFICATION"
+    regulatory_source: Optional[str] = "LEGAL_METROLOGY"
 
 
 # ---------------------------------------------------------------------------

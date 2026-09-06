@@ -31,6 +31,11 @@ def get_rules(db: Session = Depends(get_db)):
             result_type=r.result_type,
             severity=r.severity,
             exception=r.exception,
-            evidence_required=r.evidence_required
+            evidence_required=r.evidence_required,
+            source_authority=getattr(r, 'source_authority', None),
+            source_url=getattr(r, 'source_url', None) or getattr(r, 'source_link', None),
+            source_link=getattr(r, 'source_link', None) or getattr(r, 'source_url', None),
+            rule_reference_status=getattr(r, 'rule_reference_status', 'PENDING_VERIFICATION') or 'PENDING_VERIFICATION',
+            regulatory_source=r.regulatory_source,
         ) for r in rules
     ]

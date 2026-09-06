@@ -73,10 +73,9 @@ def get_applicable_rules(
             if import_status.upper() != 'IMPORTED':
                 continue
 
-        if condition == 'PHYSICAL_ONLY':
-            if not has_physical_data:
-                continue
-
+        # Physical verification rules (condition == 'PHYSICAL_ONLY') remain visible
+        # in applicability and inspection results rather than being omitted from image-only scans,
+        # ensuring inspectors clearly see statutory physical verification requirements.
         applicable.append(rule)
 
     logger.info(

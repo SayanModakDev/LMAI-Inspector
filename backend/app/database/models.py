@@ -194,6 +194,9 @@ class Rule(Base):
     source_link = Column(String(500), nullable=True)
     detection_method = Column(String(100), nullable=True)
     visual_or_text = Column(String(30), default="TEXT")
+    source_authority = Column(String(255), nullable=True)
+    source_url = Column(String(500), nullable=True)
+    rule_reference_status = Column(String(50), default="PENDING_VERIFICATION")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
