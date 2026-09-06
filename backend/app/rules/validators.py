@@ -153,7 +153,7 @@ def _check_preconditions(
     # 0b. Ambiguous / OCR variation evidence also requires review
     if evidence and evidence.get("status") == "REVIEW":
         review_reason = evidence.get("reason") or (
-            f"Multiple plausible evidence candidates detected for '{parameter}'. "
+            f"Evidence detected for '{parameter}' requires review. "
             "Manual verification recommended."
         )
         return ValidationResult(
@@ -510,7 +510,27 @@ def validate_mrp_present(
     if pre:
         return pre
 
-    raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
+    raw_val = str(evidence.get("raw_text") or evidence.get("raw_value") or evidence.get("value", "")).strip()
+
+    # Check currency status and corrupted symbols
+    currency_status = evidence.get("currency_status")
+    if currency_status == "UNKNOWN" or "■" in raw_val or evidence.get("status") in ("REVIEW", "NOT_VERIFIABLE"):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=evidence.get("reason") or f"MRP declaration contains corrupted or unverified currency symbol: '{raw_val}'. Manual review required.",
+            normalized_value=raw_val,
+            evidence=evidence,
+        )
+
+    if currency_status == "INFERRED":
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=evidence.get("reason") or f"Currency symbol is missing from MRP declaration: '{raw_val}'. Manual review required.",
+            normalized_value=raw_val,
+            evidence=evidence,
+        )
 
     # Extract price amount using numeric search (avoids picking up periods from 'Rs.' or 'M.R.P.')
     price_match = re.search(r'([+-]?\d+(?:\.\d+)?)', raw_val)

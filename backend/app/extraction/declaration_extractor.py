@@ -65,6 +65,83 @@ EXPIRY_KEYWORDS = ['expiry date', 'expiration date', 'exp date', 'exp. date', 'e
 MFG_DATE_KEYWORDS = ['date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date', 'mfg date', 'mfd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd']
 PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date', 'pkg date', 'pkd date', 'packed on', 'pkd:', 'pkd.', 'pkd']
 MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
+# Semantic section classifications
+SECTION_DECLARED_QUANTITY = "DECLARED_QUANTITY"
+SECTION_NUTRITION = "NUTRITION"
+SECTION_SERVING_SIZE = "SERVING_SIZE"
+SECTION_INGREDIENTS = "INGREDIENTS"
+SECTION_MANUFACTURER = "MANUFACTURER"
+SECTION_ADDRESS = "ADDRESS"
+SECTION_MRP = "MRP"
+SECTION_DATE = "DATE"
+SECTION_CONSUMER_CARE = "CONSUMER_CARE"
+SECTION_FSSAI = "FSSAI"
+SECTION_STORAGE = "STORAGE"
+SECTION_MARKETING = "MARKETING"
+SECTION_FRONT_TITLE = "FRONT_TITLE"
+SECTION_OTHER = "OTHER"
+
+NET_QTY_POSITIVE_CONTEXT_RE = re.compile(
+    r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity|net\s*contents?)\b',
+    re.IGNORECASE,
+)
+
+NUTRITION_SECTION_HEADER_RE = re.compile(
+    r'\b(?:nutritional?\s*(?:information|facts|values?)|nutrition\s+table)\b',
+    re.IGNORECASE,
+)
+
+NUTRITION_LINE_RE = re.compile(
+    r'(?:'
+    r'\b(?:energy|calories|protein|carbohydrates?|total\s+sugars?|added\s+sugars?|sugar|total\s+fat|fat|saturated\s+fat|trans\s+fat|cholesterol|sodium|dietary\s+fib(?:re|er)|calcium|iron|potassium|zinc|nutrients?)\b|'
+    r'\b(?:kcal|kj)\b|'
+    r'\bper\s+100\s*(?:g|ml)\b|'
+    r'\bapprox(?:imate)?\s+value\b'
+    r')',
+    re.IGNORECASE,
+)
+
+SERVING_SIZE_RE = re.compile(
+    r'\b(?:serv(?:e|ing)\s*size|per\s+(?:serve|serving)|servings?\s+per\s+(?:container|pack|package)|serve\s*size\s*per)\b',
+    re.IGNORECASE,
+)
+
+INGREDIENTS_LINE_RE = re.compile(
+    r'\b(?:ingredients?|composition|contains?\s*:|ingredient\s+list)\b',
+    re.IGNORECASE,
+)
+
+CONSUMER_CARE_STOP_RE = re.compile(
+    r'(?:'
+    r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|call\s+us\s+at|call\s+us|write\s+to|feedback|contact\s*us|reach\s*us)\b|'
+    r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4}|\b\d{3,5}[\s\-]\d{6,10}|\b0\d{2,4}[\s\-]?\d{6,8})\b|'
+    r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b|'
+    r'\b(?:www\.[a-z0-9\-]+|https?://[^\s]+)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+STORAGE_STOP_RE = re.compile(
+    r'(?:'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away)\b|'
+    r'\bcool\s*(?:,|&|and)?\s*dry\s+place\b|\brefrigerat\w*\b|'
+    r'\bavoid\s+(?:direct\s+)?sunlight\b|\bdo\s+not\s+(?:store|keep)\b|'
+    r'\bdirections?\s+for\s+use\b|\bfor\s+external\s+use\b'
+    r')',
+    re.IGNORECASE,
+)
+
+MARKETING_STOP_RE = re.compile(
+    r'(?:'
+    r"\bsweet'?n\s*sour\b|\bcrispy\s*(?:&|and)\s*crunchy\b|"
+    r'\bdelicious\b|\btasty\b|\bpremium\s+quality\b|'
+    r'\b(?:100|pure)\s*%\s*(?:natural|pure|vegetarian)\b|'
+    r'\bno\s+added\s+(?:preservative|colour|flavor|sugar)\b|'
+    r'\b(?:new|improved)\s+(?:taste|formula|recipe)\b'
+    r')',
+    re.IGNORECASE,
+)
+
 SECTION_BOUNDARY_RE = re.compile(
     r'(?:'
     r'\b(?:manufactured|mfg|mfd|packed|marketed|imported)\s*(?:&|and|/)?\s*(?:marketed|packed|mkt|pkd)?\s*(?:by|at|for)\b|'
@@ -75,9 +152,11 @@ SECTION_BOUNDARY_RE = re.compile(
     r'\buse\s*-?\s*(?:by|before)\b|\bbest\s+before\b|\bbest\s+by\b|\bconsume\s+before\b|'
     r'\bdate\s+of\s+(?:manufactur\w+|pack\w+)\b|\bmfg\s*date\b|\bmfd\s*date\b|\bpkd\s*date\b|\bpkg\s*date\b|\bpacked\s+on\b|'
     r'\bexpiry(?:\s+date)?\b|\bexp(?:\.|\s*date|:)|'
-    r'\bconsumer\s+care\b|\bcustomer\s+care\b|\bcustomer\s+support\b|\bhelpline\b|\btoll\s*free\b|\bwrite\s+to\b|'
+    r'\bconsumer\s+care\b|\bcustomer\s+care\b|\bcustomer\s+support\b|\bhelpline\b|\btoll\s*free\b|\bwrite\s+to\b|\bcall\s+us\s+at\b|\bcall\s+us\b|'
     r'\bingredients?\b|\bcomposition\b|\bingredient\s+list\b|'
-    r'\bnutritional?\s*(?:information|facts)\b|'
+    r'\bnutritional?\s*(?:information|facts)\b|\bserv(?:e|ing)\s*size\b|'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bcool\s*(?:&|and)?\s*dry\s+place\b|'
+    r"\bsweet'?n\s*sour\b|\bpremium\s+quality\b|"
     r'\bfssai\b|\blic\.?\s*(?:no\.?|number)?\b|\blicen[cs]e\s*(?:no\.?|number)?\b|\bbarcode\b|\bean\b'
     r')',
     re.IGNORECASE,
@@ -112,10 +191,18 @@ INLINE_SECTION_PATTERNS = {
         r'\b(?:date\s+of\s+(?:manufactur\w+|pack\w+)|mfg\s*date|mfd\s*date|pkd\s*date|pkg\s*date|packed\s+on|mfd[:.]|mfg[:.]|pkd[:.]|best\s+before|best\s+by|use\s*-?\s*(?:by|before)|consume\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date|:))\b',
     ],
     'consumer_care': [
-        r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|contact(?:\s+us)?|write\s+to|feedback)\b',
+        r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|call\s+us\s+at|call\s+us|contact(?:\s+us)?|write\s+to|feedback)\b',
+        r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4}|\b\d{3,5}[\s\-]\d{6,10}|\b0\d{2,4}[\s\-]?\d{6,8})\b',
     ],
     'nutrition': [
         r'\b(?:nutritional\s+information|nutrition\s+facts|nutritional\s+facts|per\s+(?:100\s*g|serving)|energy\s*:|protein\s*:|carbohydrate\s*:)\b',
+        r'\b(?:serving\s*size|serve\s*size|per\s+serve|nutrients?)\b',
+    ],
+    'storage': [
+        r'\b(?:container\s+once\s+opened|store\s+in|keep\s+(?:in|away)|cool\s*(?:&|and)?\s*dry\s+place|refrigerat\w*|avoid\s+sunlight|do\s+not\s+store)\b',
+    ],
+    'marketing': [
+        r"\b(?:sweet'?n\s*sour|crispy\s*(?:&|and)\s*crunchy|delicious|tasty|premium\s+quality|100\s*%\s*(?:pure|natural)|no\s+added)\b",
     ],
     'fssai': [
         r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?|licen[cs]e\s*(?:no\.?|number)?|reg\.?\s*no\.?)\b',
@@ -126,6 +213,48 @@ VENDOR_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 ALL_DATE_LABELS = MFG_DATE_KEYWORDS + PACKING_DATE_KEYWORDS + BEST_BEFORE_KEYWORDS + USE_BY_KEYWORDS + EXPIRY_KEYWORDS
+
+
+def classify_line_section(line: str, current_section: Optional[str] = None) -> str:
+    """Classify an OCR text line into its semantic section."""
+    cleaned = line.strip()
+    if not cleaned:
+        return current_section or SECTION_OTHER
+
+    if NUTRITION_SECTION_HEADER_RE.search(cleaned):
+        return SECTION_NUTRITION
+    if SERVING_SIZE_RE.search(cleaned):
+        return SECTION_SERVING_SIZE
+    if NET_QTY_POSITIVE_CONTEXT_RE.search(cleaned):
+        return SECTION_DECLARED_QUANTITY
+    if INGREDIENTS_LINE_RE.search(cleaned):
+        return SECTION_INGREDIENTS
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MANUFACTURER_KEYWORDS) or COMPANY_SUFFIX_RE.search(cleaned):
+        return SECTION_MANUFACTURER
+    if CONSUMER_CARE_STOP_RE.search(cleaned):
+        return SECTION_CONSUMER_CARE
+    if STORAGE_STOP_RE.search(cleaned):
+        return SECTION_STORAGE
+    if MARKETING_STOP_RE.search(cleaned):
+        return SECTION_MARKETING
+    if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\b', cleaned, re.I):
+        return SECTION_MRP
+    if re.search(r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?)\b', cleaned, re.I):
+        return SECTION_FSSAI
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in ALL_DATE_LABELS):
+        return SECTION_DATE
+
+    # Section continuity
+    if current_section == SECTION_NUTRITION:
+        if NUTRITION_LINE_RE.search(cleaned) or re.search(r'\b\d+(?:\.\d+)?\s*(?:g|mg|kcal|kj|%)\b', cleaned, re.I):
+            return SECTION_NUTRITION
+        if re.fullmatch(r'[\d.,\s/%+-]+', cleaned) or len(cleaned.split()) <= 4:
+            return SECTION_NUTRITION
+    elif current_section in (SECTION_MANUFACTURER, SECTION_ADDRESS):
+        if re.search(r'(?:plot|survey|sector|phase|road|street|bldg|building|floor|estate|industrial|gidc|district|dist|pin|india)', cleaned, re.I):
+            return SECTION_ADDRESS
+
+    return SECTION_OTHER
 
 
 def _normalize_text(raw_text: str) -> str:
@@ -763,14 +892,25 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
     val = str(candidate.get('value') or '').strip()
     raw = str(candidate.get('raw_text') or candidate.get('value') or '').strip()
     # Surrounding context from the source line/text
-    context = str(candidate.get('source_context') or raw)
+    context = str(candidate.get('source_context') or candidate.get('context') or raw)
+    sec = candidate.get('semantic_section')
+    rel = candidate.get('relevance')
+    rel_score = candidate.get('relevance_score')
 
     if not val:
         return True
 
+    if rel == 'rejected_as_irrelevant':
+        return True
+
+    if rel_score is not None and float(rel_score) <= 0.2 and field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        return True
+
     if field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        if sec in (SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS):
+            return True
         # Reject nutrition/serving-size quantities
-        if NUTRITION_CONTEXT_RE.search(context):
+        if NUTRITION_CONTEXT_RE.search(context) or SERVING_SIZE_RE.search(context) or NUTRITION_LINE_RE.search(context):
             return True
         # Reject isolated single digits without units (OCR noise like "2")
         if re.fullmatch(r'\d{1,2}', val) and not re.search(r'[a-zA-Z]', val):
@@ -783,6 +923,8 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
 
     elif field_name == 'MANUFACTURER_NAME':
+        if sec in (SECTION_MARKETING, SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE):
+            return True
         # Reject marketing slogans, nutrition rows, storage instructions
         if MARKETING_CONTEXT_RE.search(context) or NUTRITION_CONTEXT_RE.search(context):
             return True
@@ -792,22 +934,35 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
 
     elif field_name == 'MANUFACTURER_ADDRESS':
+        if sec in (SECTION_MARKETING, SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE):
+            return True
         # Reject storage instructions, marketing, contact lines
         if STORAGE_CONTEXT_RE.search(val) or MARKETING_CONTEXT_RE.search(val):
             return True
         if CONTACT_CONTEXT_RE.search(val):
             return True
         # Reject if it looks like a nutrition/serving line
-        if NUTRITION_CONTEXT_RE.search(val):
+        if NUTRITION_CONTEXT_RE.search(val) or NUTRITION_LINE_RE.search(val):
             return True
 
     elif field_name == 'PRODUCT_NAME':
+        if sec == SECTION_NUTRITION:
+            return True
         # Reject nutrition table rows
-        if NUTRITION_CONTEXT_RE.search(val):
+        if NUTRITION_CONTEXT_RE.search(val) or NUTRITION_LINE_RE.search(val):
             return True
         # Reject very short low-confidence fragments (likely OCR noise)
         conf = float(candidate.get('confidence') or 0)
         if len(val) <= 3 and conf < 0.7:
+            return True
+
+    elif field_name == 'MRP':
+        if sec in (SECTION_NUTRITION, SECTION_CONSUMER_CARE):
+            return True
+        if NUTRITION_CONTEXT_RE.search(context) or NUTRITION_LINE_RE.search(context):
+            return True
+        digits_only = re.sub(r'\D', '', val)
+        if len(digits_only) >= 10 and not re.search(r'(?:mrp|price|₹|rs)', context, re.I):
             return True
 
     return False
@@ -1009,9 +1164,50 @@ def _cut_before_next_section(text: str, current_section: str) -> str:
             continue
         for pat in patterns:
             for m in re.finditer(pat, text, re.IGNORECASE):
-                if 0 < m.start() < earliest_pos:
+                if 0 <= m.start() < earliest_pos:
                     earliest_pos = m.start()
     return text[:earliest_pos].strip(' :;,-')
+
+
+def _clean_address_text(raw_addr: str) -> str:
+    """Clean manufacturer address by stripping trailing consumer care, storage, marketing, and nutrition fragments."""
+    if not raw_addr:
+        return ""
+
+    # Split into chunks by comma, semicolon, or newline
+    parts = [p.strip() for p in re.split(r'[,;\n]+', raw_addr) if p.strip()]
+    cleaned_parts = []
+
+    for part in parts:
+        part_clean = part.strip(' :;,-')
+        if not part_clean:
+            continue
+
+        # Check if this part marks the beginning of another section
+        if CONSUMER_CARE_STOP_RE.search(part_clean):
+            break
+        if STORAGE_STOP_RE.search(part_clean):
+            break
+        if MARKETING_STOP_RE.search(part_clean):
+            break
+        if SERVING_SIZE_RE.search(part_clean) or NUTRITION_LINE_RE.search(part_clean) or NUTRITION_SECTION_HEADER_RE.search(part_clean):
+            break
+        if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|fssai|lic\.?\s*(?:no\.?|number)?)\b', part_clean, re.I):
+            break
+
+        # Check for inline section cut inside the part
+        cut_part = _cut_before_next_section(part_clean, 'manufacturer')
+        if cut_part:
+            cleaned_parts.append(cut_part)
+            if cut_part != part_clean:
+                # Truncated inline before the next section
+                break
+        else:
+            # Entire part belongs to another section
+            break
+
+    result = ', '.join(cleaned_parts).strip(' :;,-')
+    return result
 
 
 def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
@@ -1034,6 +1230,8 @@ def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
         return None
     if any(w.lower() in {'fresh', 'natural', 'pure', 'offer', 'deal', 'free', 'great'} for w in words[:-1]) and len(words) <= 2:
         return None
+    after_entity = _cut_before_next_section(after_entity, 'manufacturer')
+    after_entity = _clean_address_text(after_entity)
     return entity, after_entity
 
 
@@ -1045,6 +1243,14 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
         if not line_clean:
             continue
         if _is_section_boundary(line_clean, current_section):
+            break
+        if CONSUMER_CARE_STOP_RE.search(line_clean):
+            break
+        if STORAGE_STOP_RE.search(line_clean):
+            break
+        if MARKETING_STOP_RE.search(line_clean):
+            break
+        if current_section != 'nutrition' and (SERVING_SIZE_RE.search(line_clean) or NUTRITION_SECTION_HEADER_RE.search(line_clean) or NUTRITION_LINE_RE.search(line_clean)):
             break
         if current_section in ('ingredients', 'nutrition') and _extract_company_entity_from_line(line_clean):
             break
@@ -1084,7 +1290,7 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
                 name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
                 addr_parts = [comp_addr] if comp_addr else []
                 addr_parts.extend(cont_lines)
-                address = ', '.join(part for part in addr_parts if part)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
                 return name, address or None
 
             # Check if label was alone on line and first continuation line is company entity
@@ -1096,7 +1302,7 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
                     name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
                     addr_parts = [comp_addr] if comp_addr else []
                     addr_parts.extend(cont_lines[1:])
-                    address = ', '.join(part for part in addr_parts if part)
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
                     return name, address or None
 
             # Fallback split
@@ -1104,18 +1310,18 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
                 vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
                 if vendor['name'] and vendor['address']:
                     name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
-                    address = ', '.join([vendor['address']] + cont_lines)
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
                 elif cleaned_after:
                     name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
-                    address = ', '.join(cont_lines)
+                    address = _clean_address_text(', '.join(cont_lines))
                 else:
                     name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
-                    address = ', '.join(cont_lines[1:]) if len(cont_lines) > 1 else None
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
                 return name or None, address or None
             else:
                 vendor = _split_vendor_and_address(cleaned_after)
                 name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
-                address = vendor['address'] or None
+                address = _clean_address_text(vendor['address']) or None
                 return name or None, address
 
     # Step 2: Standalone company entity without "Manufactured by:" prefix
@@ -1126,7 +1332,7 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
             cont_lines = _collect_continuation_lines(lines, idx, 'manufacturer', max_lines=6)
             addr_parts = [comp_addr] if comp_addr else []
             addr_parts.extend(cont_lines)
-            address = ', '.join(part for part in addr_parts if part)
+            address = _clean_address_text(', '.join(part for part in addr_parts if part))
             return comp_name, address or None
 
     return None, None
@@ -1145,6 +1351,187 @@ def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
         if len(first) > 3 and len(first) <= 200:
             return {'name': first.strip(), 'address': second.strip()}
     return {'name': value[:200], 'address': ''}
+
+
+MRP_EXPLICIT_RUPEE_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*(?:₹)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_RS_INR_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*(?:rs\.?|inr)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_CORRUPTED_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*([■\?*#§¤])\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_PREFIX_ONLY_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+
+
+def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """Extract structured Maximum Retail Price declaration, identifying currency symbols,
+    corrupted symbols, and inference status without fabricating currency."""
+    if not normalized and not raw_text:
+        return None
+
+    if lines is None:
+        lines = [l.strip() for l in normalized.split('\n') if l.strip()]
+
+    # First pass: line-by-line inspection
+    for line in lines:
+        cleaned_line = line.strip()
+        if not cleaned_line:
+            continue
+
+        # 1. Corrupted currency symbol (e.g. ■10.00, MRP ■10.00)
+        m_corrupt = MRP_CORRUPTED_RE.search(cleaned_line)
+        if m_corrupt:
+            raw_span = m_corrupt.group(0).strip()
+            corrupt_char = m_corrupt.group(1)
+            num_str = m_corrupt.group(2).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            return {
+                'raw_value': raw_span,
+                'raw_text': raw_span,
+                'value': raw_span,
+                'numeric_value': num_val,
+                'currency_symbol': None,
+                'currency_status': 'UNKNOWN',
+                'status': 'REVIEW',
+                'binary': 0,
+                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
+                'confidence': 0.6,
+                'source': 'OCR',
+            }
+
+        # 2. Explicit Indian Rupee symbol (e.g. MRP ₹120, ₹120)
+        m_rupee = MRP_EXPLICIT_RUPEE_RE.search(cleaned_line)
+        if m_rupee and ('mrp' in cleaned_line.lower() or '₹' in cleaned_line):
+            raw_span = m_rupee.group(0).strip()
+            num_str = m_rupee.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"₹{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': '₹',
+                    'currency_status': 'VERIFIED',
+                    'status': 'PASS',
+                    'binary': 1,
+                    'reason': f"Detected valid MRP declaration: {display_val}",
+                    'confidence': 0.9,
+                    'source': 'OCR',
+                }
+
+        # 3. Explicit Rs. or INR (e.g. MRP Rs. 120, Rs 120, INR 120)
+        m_rs = MRP_RS_INR_RE.search(cleaned_line)
+        if m_rs and ('mrp' in cleaned_line.lower() or re.search(r'\b(?:rs\.?|inr)\b', cleaned_line, re.I)):
+            raw_span = m_rs.group(0).strip()
+            num_str = m_rs.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"₹{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': '₹',
+                    'currency_status': 'VERIFIED',
+                    'status': 'PASS',
+                    'binary': 1,
+                    'reason': f"Detected valid MRP declaration: {display_val}",
+                    'confidence': 0.88,
+                    'source': 'OCR',
+                }
+
+        # 4. MRP prefix only, missing currency symbol (e.g. MRP 120, Maximum Retail Price: 120)
+        m_prefix = MRP_PREFIX_ONLY_RE.search(cleaned_line)
+        if m_prefix and 'mrp' in cleaned_line.lower():
+            raw_span = m_prefix.group(0).strip()
+            num_str = m_prefix.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': None,
+                    'currency_status': 'INFERRED',
+                    'status': 'REVIEW',
+                    'binary': 0,
+                    'reason': f"Currency symbol missing; inferred from MRP prefix but requires review: '{raw_span}'.",
+                    'confidence': 0.7,
+                    'source': 'OCR',
+                }
+
+    # Second pass: check normalized text as a whole
+    m_corrupt_full = MRP_CORRUPTED_RE.search(normalized)
+    if m_corrupt_full:
+        raw_span = m_corrupt_full.group(0).strip()
+        corrupt_char = m_corrupt_full.group(1)
+        num_str = m_corrupt_full.group(2).replace(',', '')
+        try:
+            num_val = float(num_str)
+        except ValueError:
+            num_val = None
+        return {
+            'raw_value': raw_span,
+            'raw_text': raw_span,
+            'value': raw_span,
+            'numeric_value': num_val,
+            'currency_symbol': None,
+            'currency_status': 'UNKNOWN',
+            'status': 'REVIEW',
+            'binary': 0,
+            'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
+            'confidence': 0.6,
+            'source': 'OCR',
+        }
+
+    legacy_mrp = _search_patterns(normalized, MRP_PATTERNS)
+    if legacy_mrp:
+        clean_num = legacy_mrp.replace(',', '')
+        try:
+            num_val = float(clean_num)
+        except ValueError:
+            num_val = None
+        if num_val is not None and num_val > 0:
+            return {
+                'raw_value': legacy_mrp,
+                'raw_text': legacy_mrp,
+                'value': f"₹{clean_num}",
+                'numeric_value': num_val,
+                'currency_symbol': '₹',
+                'currency_status': 'VERIFIED',
+                'status': 'PASS',
+                'binary': 1,
+                'reason': f"Detected valid MRP declaration: ₹{clean_num}",
+                'confidence': 0.85,
+                'source': 'OCR',
+            }
+
+    return None
 
 
 NET_QTY_UNITS_MAP = {
@@ -1170,81 +1557,250 @@ STANDALONE_QTY_RE = re.compile(
 )
 
 
-def _extract_net_quantity_field(normalized: str) -> Optional[Dict[str, Any]]:
-    """Extract structured declared net quantity, separating raw OCR text from normalized numbers/units."""
-    label_match = NET_QTY_LABEL_RE.search(normalized)
-    if label_match:
-        raw_span = label_match.group(0).strip()
-        after_label = label_match.group(1).strip()
+def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """Extract structured declared net quantity with semantic section scoping.
+    Distinguishes declared package quantity from nutritional table values, serving sizes,
+    and unrelated section numbers. Preserves ignored candidates for auditability."""
+    if not text:
+        return None
+
+    if lines is None:
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+
+    current_sec = SECTION_OTHER
+    annotated_lines = []
+    for line in lines:
+        current_sec = classify_line_section(line, current_sec)
+        annotated_lines.append((line, current_sec))
+
+    valid_candidates: List[Dict[str, Any]] = []
+    ignored_candidates: List[Dict[str, Any]] = []
+    fallback_candidates: List[Dict[str, Any]] = []
+
+    for line, sec in annotated_lines:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+
+        # 1. Check for explicit Net Quantity label pattern on this line
+        label_match = NET_QTY_LABEL_RE.search(line_clean)
+        if label_match:
+            raw_span = label_match.group(0).strip()
+            after_label = label_match.group(1).strip()
+            num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+            unit_match = re.search(
+                r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
+                after_label,
+                re.IGNORECASE,
+            )
+
+            qty_val = num_match.group(1) if num_match else None
+            quantity_present = qty_val is not None
+            raw_unit = unit_match.group(1) if unit_match else None
+            unit_present = raw_unit is not None
+            norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower()) if raw_unit else None
+
+            if quantity_present or unit_present:
+                try:
+                    num_float = float(qty_val) if qty_val is not None else None
+                    num_valid = num_float is not None and num_float > 0
+                except ValueError:
+                    num_valid = False
+
+                quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
+
+                if quantity_present and unit_present:
+                    display_val = f"{qty_val} {norm_unit}"
+                elif quantity_present:
+                    display_val = f"{qty_val}"
+                elif unit_present:
+                    display_val = f"{norm_unit}"
+                else:
+                    display_val = raw_span
+
+                cand = {
+                    'raw_value': raw_span,
+                    'value': display_val,
+                    'quantity_value': qty_val,
+                    'quantity_unit': norm_unit,
+                    'raw_unit': raw_unit,
+                    'quantity_present': quantity_present,
+                    'unit_present': unit_present,
+                    'quantity_unit_valid': quantity_unit_valid,
+                    'confidence': 0.9 if quantity_unit_valid else 0.8,
+                    'source': 'OCR',
+                    'semantic_section': SECTION_DECLARED_QUANTITY,
+                    'relevance': 'high',
+                    'relevance_score': 0.95 if quantity_unit_valid else 0.85,
+                    'source_context': line_clean,
+                }
+                valid_candidates.append(cand)
+                continue
+
+        # 2. Check for standalone quantity on this line
+        for sm in STANDALONE_QTY_RE.finditer(line_clean):
+            qty_val = sm.group(1)
+            raw_unit = sm.group(2)
+            norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower(), raw_unit.lower())
+            raw_span = sm.group(0).strip()
+
+            try:
+                num_float = float(qty_val)
+                num_valid = num_float > 0
+            except ValueError:
+                num_valid = False
+            quantity_unit_valid = bool(num_valid and norm_unit in NET_QTY_UNITS_MAP.values())
+
+            is_nutrition = (
+                sec == SECTION_NUTRITION
+                or bool(NUTRITION_LINE_RE.search(line_clean))
+                or bool(NUTRITION_SECTION_HEADER_RE.search(line_clean))
+                or bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium)\b', line_clean, re.I))
+            )
+            is_serving = (
+                sec == SECTION_SERVING_SIZE
+                or bool(SERVING_SIZE_RE.search(line_clean))
+            )
+            is_other_section = (
+                sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS)
+                or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
+                or bool(STORAGE_STOP_RE.search(line_clean))
+                or bool(MARKETING_STOP_RE.search(line_clean))
+            )
+
+            if is_nutrition:
+                ignored_candidates.append({
+                    'raw_value': raw_span,
+                    'value': f"{qty_val} {norm_unit}",
+                    'quantity_value': qty_val,
+                    'quantity_unit': norm_unit,
+                    'raw_unit': raw_unit,
+                    'quantity_present': True,
+                    'unit_present': True,
+                    'quantity_unit_valid': quantity_unit_valid,
+                    'confidence': 0.7,
+                    'source': 'OCR',
+                    'semantic_section': SECTION_NUTRITION,
+                    'relevance': 'rejected_as_irrelevant',
+                    'relevance_score': 0.0,
+                    'rejection_reason': 'Value belongs to nutritional table, not declared net quantity',
+                    'source_context': line_clean,
+                })
+            elif is_serving:
+                ignored_candidates.append({
+                    'raw_value': raw_span,
+                    'value': f"{qty_val} {norm_unit}",
+                    'quantity_value': qty_val,
+                    'quantity_unit': norm_unit,
+                    'raw_unit': raw_unit,
+                    'quantity_present': True,
+                    'unit_present': True,
+                    'quantity_unit_valid': quantity_unit_valid,
+                    'confidence': 0.7,
+                    'source': 'OCR',
+                    'semantic_section': SECTION_SERVING_SIZE,
+                    'relevance': 'rejected_as_irrelevant',
+                    'relevance_score': 0.0,
+                    'rejection_reason': 'Value is serving size, not package declared net quantity',
+                    'source_context': line_clean,
+                })
+            elif is_other_section:
+                ignored_candidates.append({
+                    'raw_value': raw_span,
+                    'value': f"{qty_val} {norm_unit}",
+                    'quantity_value': qty_val,
+                    'quantity_unit': norm_unit,
+                    'raw_unit': raw_unit,
+                    'quantity_present': True,
+                    'unit_present': True,
+                    'quantity_unit_valid': quantity_unit_valid,
+                    'confidence': 0.5,
+                    'source': 'OCR',
+                    'semantic_section': sec,
+                    'relevance': 'rejected_as_irrelevant',
+                    'relevance_score': 0.0,
+                    'rejection_reason': f"Value belongs to {sec} section, not declared net quantity",
+                    'source_context': line_clean,
+                })
+            else:
+                fallback_candidates.append({
+                    'raw_value': raw_span,
+                    'value': f"{qty_val} {norm_unit}",
+                    'quantity_value': qty_val,
+                    'quantity_unit': norm_unit,
+                    'raw_unit': raw_unit,
+                    'quantity_present': True,
+                    'unit_present': True,
+                    'quantity_unit_valid': quantity_unit_valid,
+                    'confidence': 0.75,
+                    'source': 'OCR',
+                    'semantic_section': SECTION_OTHER,
+                    'relevance': 'standalone_fallback',
+                    'relevance_score': 0.6,
+                    'source_context': line_clean,
+                })
+
+    # If valid positive-context candidates exist, pick the best one
+    if valid_candidates:
+        valid_candidates.sort(
+            key=lambda c: (c.get('relevance_score', 0), 1 if c.get('quantity_unit_valid') else 0, c.get('confidence', 0)),
+            reverse=True,
+        )
+        winner = dict(valid_candidates[0])
+        all_ignored = [c for c in valid_candidates[1:]] + ignored_candidates + fallback_candidates
+        if all_ignored:
+            winner['ignored_candidates'] = all_ignored
+        return winner
+
+    # Fallback to normalized text-level label search if lines didn't catch it
+    label_match_norm = NET_QTY_LABEL_RE.search(text)
+    if label_match_norm:
+        raw_span = label_match_norm.group(0).strip()
+        after_label = label_match_norm.group(1).strip()
         num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
         unit_match = re.search(
             r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
             after_label,
             re.IGNORECASE,
         )
-
         qty_val = num_match.group(1) if num_match else None
-        quantity_present = qty_val is not None
         raw_unit = unit_match.group(1) if unit_match else None
-        unit_present = raw_unit is not None
         norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower()) if raw_unit else None
-
-        if quantity_present or unit_present:
-            try:
-                num_float = float(qty_val) if qty_val is not None else None
-                num_valid = num_float is not None and num_float > 0
-            except ValueError:
-                num_valid = False
-
-            quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
-
-            if quantity_present and unit_present:
-                display_val = f"{qty_val} {norm_unit}"
-            elif quantity_present:
-                display_val = f"{qty_val}"
-            elif unit_present:
-                display_val = f"{norm_unit}"
-            else:
-                display_val = raw_span
-
-            return {
-                'raw_value': raw_span,
-                'value': display_val,
-                'quantity_value': qty_val,
-                'quantity_unit': norm_unit,
-                'raw_unit': raw_unit,
-                'quantity_present': quantity_present,
-                'unit_present': unit_present,
-                'quantity_unit_valid': quantity_unit_valid,
-                'confidence': 0.8,
-                'source': 'OCR',
-            }
-
-    # Standalone quantity + unit fallback
-    standalone_match = STANDALONE_QTY_RE.search(normalized)
-    if standalone_match:
-        raw_span = standalone_match.group(0).strip()
-        qty_val = standalone_match.group(1)
-        raw_unit = standalone_match.group(2)
-        norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower(), raw_unit.lower())
+        quantity_present = qty_val is not None
+        unit_present = raw_unit is not None
         try:
-            num_float = float(qty_val)
-            num_valid = num_float > 0
+            num_float = float(qty_val) if qty_val is not None else None
+            num_valid = num_float is not None and num_float > 0
         except ValueError:
             num_valid = False
-        quantity_unit_valid = bool(num_valid and norm_unit in NET_QTY_UNITS_MAP.values())
-        return {
+        quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
+        display_val = f"{qty_val} {norm_unit}" if (quantity_present and unit_present) else (qty_val or norm_unit or raw_span)
+        winner = {
             'raw_value': raw_span,
-            'value': f"{qty_val} {norm_unit}",
+            'value': display_val,
             'quantity_value': qty_val,
             'quantity_unit': norm_unit,
             'raw_unit': raw_unit,
-            'quantity_present': True,
-            'unit_present': True,
+            'quantity_present': quantity_present,
+            'unit_present': unit_present,
             'quantity_unit_valid': quantity_unit_valid,
-            'confidence': 0.8,
+            'confidence': 0.85,
             'source': 'OCR',
+            'semantic_section': SECTION_DECLARED_QUANTITY,
+            'relevance': 'high',
+            'relevance_score': 0.9,
+            'source_context': raw_span,
         }
+        if ignored_candidates:
+            winner['ignored_candidates'] = ignored_candidates
+        return winner
+
+    # If standalone fallback candidates exist and NO nutrition context was found on package
+    if fallback_candidates and not any(c.get('semantic_section') == SECTION_NUTRITION for c in ignored_candidates):
+        winner = dict(fallback_candidates[0])
+        if ignored_candidates:
+            winner['ignored_candidates'] = ignored_candidates
+        return winner
 
     return None
 
@@ -1323,11 +1879,11 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         elif 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('value', '').lower() in MARKETING_TERMS:
             fields['PRODUCT_NAME'] = {'value': generic.title(), 'confidence': .75, 'source': 'OCR'}
 
-    mrp_value = _search_patterns(normalized, MRP_PATTERNS)
-    if mrp_value:
-        fields['MRP'] = {'value': f'₹{mrp_value.replace(",", "")}', 'confidence': 0.85, 'source': 'OCR'}
+    mrp_field = _extract_mrp_structured(normalized, raw_text, lines)
+    if mrp_field:
+        fields['MRP'] = mrp_field
 
-    qty_field = _extract_net_quantity_field(normalized)
+    qty_field = _extract_net_quantity_field(normalized, lines)
     if qty_field:
         fields['DECLARED_NET_QUANTITY'] = qty_field
 
