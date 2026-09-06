@@ -613,7 +613,7 @@ def _parse_and_validate_date(date_str: str) -> Tuple[bool, Optional[str], Option
     # Reject numeric noise like "0.73" or barcodes
     if re.fullmatch(r'\d+\.\d+', token):
         return False, None, f"Numeric decimal value is not a valid date: '{date_str}'"
-    if re.fullmatch(r'\d{10,}', token):
+    if '1800' in token or len(re.sub(r'\D', '', token)) > 8 or re.fullmatch(r'\d{10,}', token):
         return False, None, f"Barcode or telephone number is not a valid date: '{date_str}'"
 
     # Pattern: Mon/Year or Mon-Year (e.g. JUL/26, Oct 2025, Mar-24)

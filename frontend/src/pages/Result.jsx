@@ -267,13 +267,13 @@ const Result = () => {
                     {/* Mfg/Pkg Date */}
                     <tr>
                       <td><strong>Mfg/Pkg Date</strong></td>
-                      <td>{inspection.extracted_fields.find(f => f.field_name === 'MONTH_YEAR_MANUFACTURE')?.field_value || 'Not Found'}</td>
+                      <td>{inspection.extracted_fields.find(f => f.field_name === 'MONTH_YEAR_MANUFACTURE' || f.field_name === 'MANUFACTURE_DATE' || f.field_name === 'PACKING_DATE')?.field_value || 'Not Found'}</td>
                       {isEditing && (
                         <td>
                           <input 
                             type="text" 
                             className="form-control" 
-                            value={manualData.field_overrides.MONTH_YEAR_MANUFACTURE ?? manualData.field_overrides.PACKING_DATE ?? ''}
+                            value={manualData.field_overrides.MONTH_YEAR_MANUFACTURE ?? manualData.field_overrides.MANUFACTURE_DATE ?? manualData.field_overrides.PACKING_DATE ?? ''}
                             onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, MONTH_YEAR_MANUFACTURE: e.target.value}})}
                             placeholder="Correct printed date"
                           />

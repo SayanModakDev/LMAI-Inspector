@@ -222,3 +222,131 @@ def test_decimal_noise_is_never_a_manufacturing_date():
     fields = extract_declarations('MFD: 0.73\nMRP Rs 220\nUse Before: JUL/26')
     assert 'MONTH_YEAR_MANUFACTURE' not in fields
     assert fields['USE_BEFORE_DATE']['value'] == 'JUL/26'
+
+
+def test_mfd_followed_by_another_unrelated_date():
+    """MFD followed by another unrelated date must not capture the later date."""
+    text = "MFD: 10/2025 18/04/2027\nNet Wt: 500 g"
+    fields = extract_declarations(text)
+
+    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '10/2025'
+    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '10/2025'
+    # Unlabelled later date must not be inferred as Best Before, Expiry, or Use By
+    assert 'BEST_BEFORE_USE_BY' not in fields
+    assert 'USE_BEFORE_DATE' not in fields
+    assert 'EXPIRY_DATE' not in fields
+
+
+def test_manufactured_by_company_name_never_treated_as_date():
+    """A token following 'Manufactured by:' must never be treated as a date."""
+    text = (
+        "Manufactured by: Shree Foods Pvt Ltd\n"
+        "Plot 12, Industrial Area, Mumbai 400001\n"
+        "18/04/2027\n"
+        "Net Weight: 200 g"
+    )
+    fields = extract_declarations(text)
+
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+    assert 'Manufactured by' in fields.get('MANUFACTURER_NAME', {}).get('value', '')
+
+    # Evaluating rule without verified date returns NOT_VERIFIABLE rather than guessing
+    rules = [{'rule_id': 'PC-ALL-009', 'parameter': 'MONTH_YEAR_MANUFACTURE', 'required': True}]
+    results, overall = evaluate_rules(rules, fields)
+    assert results[0]['status'] == 'NOT_VERIFIABLE'
+    assert overall == 'NOT_VERIFIABLE'
+
+
+def test_best_before_classified_separately():
+    """'Best Before' must be classified into BEST_BEFORE_USE_BY and not manufacture/packing date."""
+    text = "Best Before: 30/08/2027\nNet Wt: 1 kg"
+    fields = extract_declarations(text)
+
+    assert fields.get('BEST_BEFORE_USE_BY', {}).get('value') == '30/08/2027'
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'PACKING_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+    assert 'EXPIRY_DATE' not in fields
+
+
+def test_use_by_classified_separately():
+    """'Use By' must be classified into USE_BEFORE_DATE and not manufacture/packing date."""
+    text = "Use By: 18/04/2027\nNet Wt: 500 ml"
+    fields = extract_declarations(text)
+
+    assert fields.get('USE_BEFORE_DATE', {}).get('value') == '18/04/2027'
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'PACKING_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+    assert 'BEST_BEFORE_USE_BY' not in fields
+
+
+def test_expiry_classified_separately():
+    """'Expiry Date' must be classified into EXPIRY_DATE and not manufacture/packing date."""
+    text = "Expiry Date: 18/04/2027\nNet Wt: 250 g"
+    fields = extract_declarations(text)
+
+    assert fields.get('EXPIRY_DATE', {}).get('value') == '18/04/2027'
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'PACKING_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+    assert 'BEST_BEFORE_USE_BY' not in fields
+
+
+def test_jul_26_style_month_year():
+    """JUL/26 style month/year must be parsed cleanly."""
+    text = "MFD: JUL/26\nEXP: JUL/28"
+    fields = extract_declarations(text)
+
+    assert fields.get('MANUFACTURE_DATE', {}).get('value') == 'JUL/26'
+    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == 'JUL/26'
+    assert fields.get('EXPIRY_DATE', {}).get('value') == 'JUL/28'
+
+
+def test_date_appearing_near_use_before():
+    """18/04/2027 appearing near Use Before must bind to USE_BEFORE_DATE."""
+    text = "Use Before: 18/04/2027\nNet Wt: 100 g"
+    fields = extract_declarations(text)
+
+    assert fields.get('USE_BEFORE_DATE', {}).get('value') == '18/04/2027'
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+
+
+def test_decimal_0_73_rejected_as_date():
+    """Decimal number 0.73 must never be captured as a date."""
+    text = "MFD: 0.73\nMRP Rs 50"
+    fields = extract_declarations(text)
+
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+
+
+def test_barcode_like_numeric_strings_rejected_as_date():
+    """Barcode-like numeric strings must never be captured as dates."""
+    text = "MFD: 8901030881234\nBarcode: 8901030881234"
+    fields = extract_declarations(text)
+
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+
+
+def test_phone_numbers_rejected_as_dates():
+    """Phone numbers must never be captured as dates."""
+    text = "MFD: 1800-123-4567\nConsumer Care: 1800-123-4567"
+    fields = extract_declarations(text)
+
+    assert 'MANUFACTURE_DATE' not in fields
+    assert 'MONTH_YEAR_MANUFACTURE' not in fields
+
+
+def test_same_line_mfd_and_expiry_separated():
+    """Multiple date labels on the same line must isolate their dates correctly."""
+    text = "MFD: 10/2025  EXP: 18/04/2027"
+    fields = extract_declarations(text)
+
+    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '10/2025'
+    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '10/2025'
+    assert fields.get('EXPIRY_DATE', {}).get('value') == '18/04/2027'
+

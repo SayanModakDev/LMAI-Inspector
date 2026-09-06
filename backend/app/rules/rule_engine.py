@@ -92,8 +92,16 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
         # Resolve aliases if the primary parameter is not present in extracted fields
         field_data = extracted_fields.get(parameter)
         if not field_data and parameter == 'MONTH_YEAR_MANUFACTURE':
-            field_data = extracted_fields.get('PACKING_DATE') or extracted_fields.get('MONTH_YEAR_MANUFACTURE')
-        if not field_data and parameter == 'BEST_BEFORE_USE_BY':
+            field_data = extracted_fields.get('MANUFACTURE_DATE') or extracted_fields.get('PACKING_DATE')
+        elif not field_data and parameter == 'MANUFACTURE_DATE':
+            field_data = extracted_fields.get('MONTH_YEAR_MANUFACTURE') or extracted_fields.get('PACKING_DATE')
+        elif not field_data and parameter == 'PACKING_DATE':
+            field_data = extracted_fields.get('MONTH_YEAR_MANUFACTURE') or extracted_fields.get('MANUFACTURE_DATE')
+        elif not field_data and parameter == 'BEST_BEFORE_USE_BY':
+            field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('EXPIRY_DATE')
+        elif not field_data and parameter == 'USE_BEFORE_DATE':
+            field_data = extracted_fields.get('EXPIRY_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
+        elif not field_data and parameter == 'EXPIRY_DATE':
             field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
 
         # Dispatch to deterministic validator

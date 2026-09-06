@@ -20,18 +20,19 @@ NET_QTY_PATTERNS = [
 ]
 
 DATE_PATTERNS = [
+    # 3-part dates
     r'\b(\d{1,2}/\d{1,2}/\d{2,4})\b',
     r'\b(\d{1,2}-\d{1,2}-\d{2,4})\b',
     r'\b(\d{1,2}\.\d{1,2}\.\d{2,4})\b',
+    r'\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b',
+    r'\b(\d{1,2}[/-](?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[/-]\d{2,4})\b',
+    r'\b(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})\b',
+    # 2-part dates (Month / Year)
     r'\b(\d{1,2}/\d{2,4})\b',
     r'\b(\d{1,2}-\d{2,4})\b',
-    r'\b(\d{1,2}\.\d{2,4})\b',
-    r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{2,4})\b',
-    r'\b(\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{2,4})\b',
-    r'\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b',
+    r'\b(\d{1,2}\.\d{4})\b',
+    r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*[/.-]?\s*\d{2,4})\b',
     r'\b(\d{4}[/-]\d{1,2})\b',
-    r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*[/.-]\s*\d{2,4})\b',
-    r'\b(\d{1,2}\s*[/.-]\s*\d{2,4})\b',
 ]
 
 FSSAI_PATTERNS = [
@@ -54,16 +55,17 @@ INGREDIENT_KEYWORDS = ['ingredients', 'composition', 'ingredient list']
 NUTRITIONAL_KEYWORDS = ['nutritional information', 'nutrition facts', 'energy', 'protein', 'carbohydrate', 'fat', 'calories', 'per serving']
 VEG_NONVEG_KEYWORDS = ['vegetarian', 'non-vegetarian', 'non-veg', 'nonveg']
 COUNTRY_OF_ORIGIN_KEYWORDS = ['country of origin', 'made in', 'product of', 'manufactured in']
-BEST_BEFORE_KEYWORDS = ['best before', 'best by', 'shelf life', 'consume before', 'consume within']
-USE_BY_KEYWORDS = ['use by', 'use before', 'use-before', 'expiry date', 'exp date', 'expiration', 'valid until', 'valid till', 'bud']
-MFG_DATE_KEYWORDS = ['date of manufacture', 'mfg date', 'mfd date', 'manufacturing date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg ', 'mfd ']
-PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packing date', 'package date', 'pkg date', 'packed on', 'pkd:', 'pkd.']
+BEST_BEFORE_KEYWORDS = ['best before date', 'best before', 'best by date', 'best by']
+USE_BY_KEYWORDS = ['use before date', 'use by date', 'use-before', 'use before', 'use by', 'consume before', 'consume within', 'valid until', 'valid till']
+EXPIRY_KEYWORDS = ['expiry date', 'expiration date', 'exp date', 'exp. date', 'expiry', 'exp:', 'exp.', 'exp']
+MFG_DATE_KEYWORDS = ['date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date', 'mfg date', 'mfd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd']
+PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date', 'pkg date', 'pkd date', 'packed on', 'pkd:', 'pkd.', 'pkd']
 MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
 SECTION_BOUNDARY_RE = re.compile(
     r'(?:manufactured\s+(?:by|at|for)|mfd\s+by|mfg\s+by|packed\s+(?:by|at)|marketed\s+by|'
     r'imported\s+by|country\s+of\s+origin|made\s+in|address|net\s*(?:wt\.?|weight|qty\.?|quantity|content)|'
     r'm\.?\s*r\.?\s*p\.?|batch(?:\s*no)?|b\.?\s*no\.?|lot(?:\s*no)?|use\s*-?\s*before|use\s+by|'
-    r'best\s+before|consumer\s+care|customer\s+care|write\s+to|ingredients?|nutritional?|'
+    r'best\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date)?|consumer\s+care|customer\s+care|write\s+to|ingredients?|nutritional?|'
     r'fssai|barcode)',
     re.IGNORECASE,
 )
@@ -71,7 +73,11 @@ VENDOR_LINE_RE = re.compile(
     r'([A-Za-z][A-Za-z0-9&.\'\s-]{2,80}?(?:Pvt\.?\s*Ltd\.?|Private\s+Limited|Ltd\.?))',
     re.IGNORECASE,
 )
-ALL_DATE_LABELS = MFG_DATE_KEYWORDS + PACKING_DATE_KEYWORDS + BEST_BEFORE_KEYWORDS + USE_BY_KEYWORDS + ['expiry', 'exp']
+VENDOR_PREFIX_RE = re.compile(
+    r'\b(?:manufactured|mfg|mfd|packed|marketed|imported|produced|distributed)\s*(?:\.|\b)\s*(?:by|at|for|in)\b',
+    re.IGNORECASE,
+)
+ALL_DATE_LABELS = MFG_DATE_KEYWORDS + PACKING_DATE_KEYWORDS + BEST_BEFORE_KEYWORDS + USE_BY_KEYWORDS + EXPIRY_KEYWORDS
 
 
 def _normalize_text(raw_text: str) -> str:
@@ -133,22 +139,36 @@ def _find_keyword_line(text: str, keywords: List[str]) -> Optional[Dict[str, Any
 
 
 def _first_date_in(text: str) -> Optional[str]:
-    for pattern in DATE_PATTERNS + [r'\b(\d{1,2}/\d{1,2}[-/]\d{2,4})\b']:
-        match = re.search(pattern, text or '', re.IGNORECASE)
-        if match and _is_valid_date_token(match.group(1).strip()):
-            return match.group(1).strip()
-    return None
+    if not text:
+        return None
+    matches = []
+    for pattern in DATE_PATTERNS:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            token = m.group(1).strip()
+            if _is_valid_date_token(token):
+                matches.append((m.start(), len(token), token))
+    if not matches:
+        return None
+    # Sort primarily by starting character position (earliest in the string),
+    # and secondarily by token length descending (longest valid date format starting at that position)
+    matches.sort(key=lambda x: (x[0], -x[1]))
+    return matches[0][2]
 
 
 def _line_has_other_date_label(line: str, keywords: List[str]) -> bool:
     lowered = line.lower()
-    own = [kw.lower() for kw in keywords]
+    own = [kw.lower().strip() for kw in keywords]
     for label in ALL_DATE_LABELS:
         token = label.lower().strip()
         if len(token) < 3:
             continue
-        if token in lowered and not any(token in item or item in token for item in own):
-            return True
+        if token in own or any(token == item for item in own):
+            continue
+        esc = re.escape(token)
+        pat = rf'(?:\b|(?<=^)){esc}' if token.endswith((':', '.')) else rf'\b{esc}\b'
+        if re.search(pat, lowered):
+            if not re.search(rf'{pat}(?:\s*(?:by|at|for|in)\b)', lowered):
+                return True
     return False
 
 
@@ -159,33 +179,70 @@ def _extract_date_near_keyword(text: str, keywords: List[str]) -> Optional[str]:
     """
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     bound = []
+    own_keywords_lower = [kw.lower().strip() for kw in keywords]
+
+    # Precompile keyword patterns to avoid matching vendor lines as date keywords
+    keyword_patterns = []
+    for kw in sorted(keywords, key=len, reverse=True):
+        escaped = re.escape(kw.strip())
+        if kw.endswith((':', '.')):
+            pat = re.compile(rf'(?:\b|(?<=^)){escaped}(?!\s*(?:by|at|for|in)\b)', re.IGNORECASE)
+        else:
+            pat = re.compile(rf'\b{escaped}\b(?!\s*(?:by|at|for|in)\b)', re.IGNORECASE)
+        keyword_patterns.append((kw, pat))
+
     for index, line in enumerate(lines):
-        lowered = line.lower()
-        if not any(kw.lower().strip() in lowered for kw in keywords if len(kw.strip()) >= 3):
-            continue
-        # Same line: only the span after the matched label, cut at the next other date label.
-        matched_kw = next(kw for kw in keywords if kw.lower().strip() in lowered and len(kw.strip()) >= 3)
-        after = line[lowered.find(matched_kw.lower()) + len(matched_kw):]
-        for other in ALL_DATE_LABELS:
-            pos = after.lower().find(other.lower().strip())
-            if pos > 0 and len(other.strip()) >= 3 and other.lower() not in matched_kw.lower():
-                after = after[:pos]
+        matched_match = None
+        matched_kw_str = None
+        for kw_str, pat in keyword_patterns:
+            m = pat.search(line)
+            if m:
+                # Ensure it's not preceded by a vendor entity name on the same line
+                prefix_before = line[:m.start()]
+                if VENDOR_LINE_RE.search(prefix_before) and not any(sep in prefix_before for sep in (';', '|', '\t', '  ')):
+                    continue
+                matched_match = m
+                matched_kw_str = kw_str
                 break
-        same = _first_date_in(after)
+
+        if not matched_match:
+            continue
+
+        # Same line: only the span after the matched label, cut at the next other date label.
+        after = line[matched_match.end():]
+        earliest_other_pos = len(after)
+        for other in ALL_DATE_LABELS:
+            other_clean = other.lower().strip()
+            if len(other_clean) < 3 or other_clean in own_keywords_lower:
+                continue
+            esc_other = re.escape(other_clean)
+            other_pat = rf'(?:\b|(?<=^)){esc_other}' if other.endswith((':', '.')) else rf'\b{esc_other}\b'
+            other_m = re.search(other_pat, after, re.IGNORECASE)
+            if other_m and other_m.start() < earliest_other_pos:
+                earliest_other_pos = other_m.start()
+
+        after_segment = after[:earliest_other_pos]
+        same = _first_date_in(after_segment)
         if same:
             bound.append(same)
             continue
+
+        # Check neighbour lines only if same line has no date
         for neighbour in (lines[index + 1] if index + 1 < len(lines) else '', lines[index - 1] if index else ''):
-            if not neighbour or _line_has_other_date_label(neighbour, keywords):
+            if not neighbour:
                 continue
-            if SECTION_BOUNDARY_RE.search(neighbour) and not _first_date_in(neighbour):
+            # Never cross into vendor lines or section boundaries
+            if _is_section_boundary(neighbour) or VENDOR_PREFIX_RE.search(neighbour) or _line_has_other_date_label(neighbour, keywords):
                 continue
             neighbour_date = _first_date_in(neighbour)
+            if not neighbour_date:
+                continue
             # Adjacent line may be used only when it is essentially a date token.
-            remainder = re.sub(re.escape(neighbour_date or ''), '', neighbour).strip(' :;,-')
-            if neighbour_date and len(re.sub(r'[^A-Za-z]', '', remainder)) <= 3:
+            remainder = re.sub(re.escape(neighbour_date), '', neighbour).strip(' :;,-')
+            if len(re.sub(r'[^A-Za-z]', '', remainder)) <= 3:
                 bound.append(neighbour_date)
                 break
+
     unique = []
     for value in bound:
         if value not in unique:
@@ -200,22 +257,85 @@ def _is_valid_date_token(value: str) -> bool:
     token = value.strip().lower()
     if not token or len(token) > 18:
         return False
-    if re.search(r'\d+\.\d+', token) and not re.search(r'[a-z]', token):
+
+    # Phone numbers
+    if '1800' in token or any(token.startswith(prefix) for prefix in ('+91', '011', '022', '033', '044', '080')):
         return False
-    if re.fullmatch(r'\d{10,}', token):
+
+    # Currency indicators
+    if re.search(r'(?:rs\.?|inr|₹|mrp)', token):
         return False
-    if re.search(r'[a-z]', token):
-        return bool(re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', token))
+
+    # Decimal numbers (e.g. 0.73, 12.50, 99.99)
+    if re.fullmatch(r'\d+\.\d{1,2}', token):
+        return False
+
+    # Pure long digit sequences (barcodes, serials, phones)
+    digits_only = re.sub(r'\D', '', token)
+    if len(digits_only) > 8:
+        return False
+    if len(digits_only) < 3 and not re.search(r'[a-z]', token):
+        return False
+
+    has_text_month = bool(re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)', token))
+    if re.search(r'[a-z]', token) and not has_text_month:
+        return False
+
+    if has_text_month:
+        nums = [int(n) for n in re.findall(r'\d+', token)]
+        if not nums:
+            return False
+        if len(nums) == 1:
+            yr = nums[0]
+            if len(str(yr)) == 4:
+                return 1990 <= yr <= 2099
+            elif len(str(yr)) <= 2:
+                return 0 <= yr <= 99
+            return False
+        elif len(nums) == 2:
+            day, yr = nums
+            if not (1 <= day <= 31):
+                return False
+            if len(str(yr)) == 4:
+                return 1990 <= yr <= 2099
+            elif len(str(yr)) <= 2:
+                return 0 <= yr <= 99
+            return False
+        return False
+
+    # Numeric parts separated by /, -, or .
     parts = [part for part in re.split(r'[/.-]', token) if part != '']
+    if len(parts) not in (2, 3):
+        return False
+
     try:
-        numbers = [int(part) for part in parts]
+        numbers = [int(p) for p in parts]
     except ValueError:
         return False
+
     if len(parts) == 2:
         first, second = numbers
-        return (1 <= first <= 12 and 0 <= second <= 9999) or (len(parts[0]) == 4 and 1 <= second <= 12)
+        p1_len, p2_len = len(parts[0]), len(parts[1])
+        if 1 <= first <= 12:
+            if p2_len == 4:
+                return 1990 <= second <= 2099
+            elif p2_len == 2:
+                return 0 <= second <= 99
+        if p1_len == 4 and 1990 <= first <= 2099 and 1 <= second <= 12:
+            return True
+        return False
+
     if len(parts) == 3:
-        return 1 <= numbers[0] <= 31 and 1 <= numbers[1] <= 12 and 0 <= numbers[2] <= 9999
+        p1_len, p2_len, p3_len = len(parts[0]), len(parts[1]), len(parts[2])
+        if 1 <= numbers[0] <= 31 and 1 <= numbers[1] <= 12:
+            if p3_len == 4:
+                return 1990 <= numbers[2] <= 2099
+            elif p3_len == 2:
+                return 0 <= numbers[2] <= 99
+        if p1_len == 4 and 1990 <= numbers[0] <= 2099 and 1 <= numbers[1] <= 12 and 1 <= numbers[2] <= 31:
+            return True
+        return False
+
     return False
 
 
@@ -534,21 +654,28 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 fields['COUNTRY_OF_ORIGIN'] = {'value': candidate[:100], 'confidence': 0.7, 'source': 'OCR'}
             break
 
-    date_value = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS)
-    if date_value:
-        fields['MONTH_YEAR_MANUFACTURE'] = {'value': date_value, 'raw_value': date_value, 'normalized_value': date_value, 'confidence': 0.7, 'source': 'OCR'}
+    mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS)
+    if mfg_date:
+        fields['MANUFACTURE_DATE'] = {'value': mfg_date, 'raw_value': mfg_date, 'normalized_value': mfg_date, 'confidence': 0.75, 'source': 'OCR'}
+        fields['MONTH_YEAR_MANUFACTURE'] = {'value': mfg_date, 'raw_value': mfg_date, 'normalized_value': mfg_date, 'confidence': 0.75, 'source': 'OCR'}
 
     packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS)
     if packing_date:
         fields['PACKING_DATE'] = {'value': packing_date, 'raw_value': packing_date, 'normalized_value': packing_date, 'confidence': 0.75, 'source': 'OCR'}
+        if 'MONTH_YEAR_MANUFACTURE' not in fields:
+            fields['MONTH_YEAR_MANUFACTURE'] = {'value': packing_date, 'raw_value': packing_date, 'normalized_value': packing_date, 'confidence': 0.75, 'source': 'OCR'}
 
     best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS)
     if best_before:
-        fields['BEST_BEFORE_USE_BY'] = {'value': best_before, 'raw_value': best_before, 'normalized_value': best_before, 'confidence': 0.7, 'source': 'OCR'}
+        fields['BEST_BEFORE_USE_BY'] = {'value': best_before, 'raw_value': best_before, 'normalized_value': best_before, 'confidence': 0.75, 'source': 'OCR'}
 
     use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS)
     if use_by:
-        fields['USE_BEFORE_DATE'] = {'value': use_by, 'raw_value': use_by, 'normalized_value': use_by, 'confidence': 0.7, 'source': 'OCR'}
+        fields['USE_BEFORE_DATE'] = {'value': use_by, 'raw_value': use_by, 'normalized_value': use_by, 'confidence': 0.75, 'source': 'OCR'}
+
+    expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS)
+    if expiry_date:
+        fields['EXPIRY_DATE'] = {'value': expiry_date, 'raw_value': expiry_date, 'normalized_value': expiry_date, 'confidence': 0.75, 'source': 'OCR'}
 
     fssai = _search_patterns(normalized, FSSAI_PATTERNS)
     if fssai and 9 <= len(fssai) <= 14 and fssai.isdigit():
