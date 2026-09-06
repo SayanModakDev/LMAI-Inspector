@@ -15,6 +15,39 @@ from app.core.ontology import (
     infer_quantity_type,
     normalize_unit,
 )
+from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token
+from app.extraction.evidence_model import (
+    AnchorRelation,
+    EvidenceCandidate,
+    EvidenceMergeClassification,
+    FIELD_SCOPING_REGISTRY,
+    SourceType,
+    ValidationState,
+    SECTION_FRONT_PRODUCT,
+    SECTION_IDENTITY,
+    SECTION_QUANTITY,
+    SECTION_DECLARED_QUANTITY,
+    SECTION_PRICING,
+    SECTION_MRP,
+    SECTION_MANUFACTURER,
+    SECTION_PACKER,
+    SECTION_ADDRESS,
+    SECTION_DATE,
+    SECTION_BATCH,
+    SECTION_NUTRITION,
+    SECTION_SERVING_SIZE,
+    SECTION_INGREDIENTS,
+    SECTION_CONSUMER_CARE,
+    SECTION_FOOD_LABELING,
+    SECTION_COSMETIC_LABELING,
+    SECTION_INSTRUCTIONS,
+    SECTION_STORAGE,
+    SECTION_MARKETING,
+    SECTION_BARCODE,
+    SECTION_OTHER,
+    SECTION_UNKNOWN,
+)
+from app.extraction.association_engine import AssociatedCandidate, LabelValueAssociator
 
 logger = logging.getLogger(__name__)
 
@@ -324,11 +357,9 @@ def _normalize_text(raw_text: str) -> str:
     text = text.replace('₹', ' Rs ')
     text = text.replace('â¹', ' Rs ')
     text = text.replace('–', '-')
-    # Conservative OCR repairs observed on real packages; do not invent values.
+    # Universal OCR repairs: standard whitespace, punctuation, and legal abbreviations
     repairs = (
         (r'\bGREDIENTS\b', 'INGREDIENTS'),
-        (r'\bDODY\s+TALCUM\b', 'BODY TALCUM'),
-        (r'\bBODYTALCUM\b', 'BODY TALCUM'),
         (r'\bMADENINDIA\b', 'MADE IN INDIA'),
         (r'\bMADEININDIA\b', 'MADE IN INDIA'),
         (r'\bMADE\s*N\s*INDIA\b', 'MADE IN INDIA'),
@@ -1083,6 +1114,7 @@ def _classify_multi_image_evidence(
                 'candidates': all_candidates,
                 'review_required': True,
                 'candidate_classification': 'OCR_VARIATION',
+                'evidence_merge_type': 'AMBIGUOUS',
                 'reason': (
                     f"Multiple plausible evidence candidates detected across package views for '{field_name}': "
                     f"{distinct_values}. Likely OCR character variations. Manual verification recommended."
@@ -1112,6 +1144,7 @@ def _classify_multi_image_evidence(
                 'candidates': all_candidates,
                 'review_required': True,
                 'candidate_classification': 'MULTI_PANEL_EVIDENCE',
+                'evidence_merge_type': 'COMPLEMENTARY',
                 'reason': (
                     f"Multiple product identification candidates detected across different package views for '{field_name}': "
                     f"{distinct_values}. Manual verification recommended."
@@ -1129,6 +1162,7 @@ def _classify_multi_image_evidence(
         'candidates': all_candidates,
         'review_required': True,
         'candidate_classification': 'TRUE_CONFLICT',
+        'evidence_merge_type': 'TRUE_CONFLICT',
         'conflict_reason': f"Conflicting declarations detected across package views for '{field_name}': {distinct_values}",
         'reason': (
             f"Conflicting evidence detected across package views for '{field_name}': "
@@ -1142,9 +1176,10 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     Distinguishes between:
     - TRUE_CONFLICT: Same semantic field & context, genuinely contradictory values.
-    - MULTI_PANEL_EVIDENCE: Complementary declarations from different package panels.
-    - REVIEW: Multiple plausible candidates or OCR character variations.
-    - OCR_NOISE / IRRELEVANT_CANDIDATE: Filtered out before conflict evaluation.
+    - COMPLEMENTARY (MULTI_PANEL_EVIDENCE): Complementary declarations from different package panels.
+    - AMBIGUOUS (OCR_VARIATION): Multiple plausible candidates or OCR character variations.
+    - IRRELEVANT (OCR_NOISE): Filtered out before conflict evaluation.
+    - CONFIRMED_SAME: Consistent declarations agreeing across package panels.
 
     Never silently favors the highest-confidence candidate when values disagree.
     All candidate metadata (source, confidence, image index) is preserved.
@@ -1170,6 +1205,9 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Phase 1: Filter out irrelevant/noise candidates
         relevant = [c for c in candidates if not _is_irrelevant_candidate(name, c)]
         noise = [c for c in candidates if _is_irrelevant_candidate(name, c)]
+        for n in noise:
+            n['candidate_classification'] = 'IRRELEVANT'
+            n['evidence_merge_type'] = 'IRRELEVANT'
 
         if not relevant:
             # All candidates are noise — pick best anyway but mark as low-confidence
@@ -1178,12 +1216,17 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 result = dict(best)
                 result['candidates'] = candidates
                 result['filtered_noise'] = noise
+                result['candidate_classification'] = 'IRRELEVANT'
+                result['evidence_merge_type'] = 'IRRELEVANT'
                 merged[name] = result
             continue
 
         if len(relevant) == 1:
             result = dict(relevant[0])
             result['candidates'] = candidates
+            if len(candidates) > 1 and len(noise) == 0:
+                result['candidate_classification'] = 'CONFIRMED_SAME'
+                result['evidence_merge_type'] = 'CONFIRMED_SAME'
             if noise:
                 result['filtered_noise'] = noise
             merged[name] = result
@@ -1206,6 +1249,8 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
             best = max(groups[0], key=lambda c: float(c.get('confidence') or 0))
             agreed = dict(best)
             agreed['candidates'] = candidates
+            agreed['candidate_classification'] = 'CONFIRMED_SAME'
+            agreed['evidence_merge_type'] = 'CONFIRMED_SAME'
             if noise:
                 agreed['filtered_noise'] = noise
             merged[name] = agreed
@@ -1872,7 +1917,8 @@ BATCH_LABEL_RE = re.compile(
 )
 INVALID_BATCH_TOKENS = {
     'no', 'no.', 'number', 'num', 'num.', 'code', 'lot', 'batch', 'b', 'b.',
-    'date', 'mfd', 'pkd', 'exp', 'expiry', 'mrp', 'rs', 'inr', 'none', 'n/a', 'na', 'null'
+    'date', 'mfd', 'pkd', 'exp', 'expiry', 'mrp', 'rs', 'inr', 'none', 'n/a', 'na', 'null',
+    'image', 'placeholder', '[image]', '[image 1]', 'undefined',
 }
 
 
@@ -1951,7 +1997,12 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if not raw_text:
         return {}
 
-    normalized = _normalize_text(raw_text)
+    # Stage 2: OCR Cleaning layer
+    cleaned_text, cleaned_ocr_items, removed_artifacts = clean_ocr_evidence(raw_text, ocr_items)
+    effective_text = cleaned_text or raw_text
+    effective_items = cleaned_ocr_items if cleaned_ocr_items else ocr_items
+
+    normalized = _normalize_text(effective_text)
     lines = [line.strip() for line in normalized.split('\n') if line.strip()]
     fields: Dict[str, Any] = {}
 
@@ -2279,17 +2330,37 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if batch_field:
         fields['BATCH_NUMBER'] = batch_field
 
-    for field_data in fields.values():
-        value = str(field_data.get('value', '')).lower()
-        if ocr_items and value:
+    for f_name, field_data in fields.items():
+        val_str = str(field_data.get('value', ''))
+        val_lower = val_str.lower()
+        if effective_items and val_lower:
             matching_item = next(
-                (item for item in ocr_items if value in str(item.get('text', '')).lower()),
+                (item for item in effective_items if val_lower in str(item.get('text', '')).lower()),
                 None,
             )
             if matching_item:
-                field_data['source_image_index'] = matching_item.get('image_index')
-                field_data['bbox'] = matching_item.get('bbox')
+                field_data.setdefault('source_image_index', matching_item.get('image_index'))
+                field_data.setdefault('bbox', matching_item.get('bbox'))
                 field_data['confidence'] = min(float(field_data.get('confidence') or 0), float(matching_item.get('confidence') or 0))
+
+        # Attach canonical EvidenceCandidate schema
+        if 'evidence_candidate' not in field_data:
+            ev_candidate = EvidenceCandidate(
+                raw_text=field_data.get('raw_text', field_data.get('raw_value', val_str)),
+                normalized_text=field_data.get('normalized_value', val_str),
+                source_image=field_data.get('source', 'OCR'),
+                source_type=SourceType.OCR.value,
+                ocr_confidence=float(field_data.get('confidence') or 0.8),
+                bounding_box=field_data.get('bbox'),
+                line_id=field_data.get('line_index'),
+                semantic_section=field_data.get('semantic_section', 'UNKNOWN'),
+                anchor_label=field_data.get('source_label'),
+                anchor_relation=field_data.get('anchor_relation', AnchorRelation.SAME_LINE.value if field_data.get('source_label') else AnchorRelation.UNANCHORED.value),
+                candidate_field=f_name,
+                relevance_score=float(field_data.get('relevance_score') or 0.85),
+                validation_state=ValidationState.UNASSESSED.value,
+            )
+            field_data['evidence_candidate'] = ev_candidate.to_dict()
 
     logger.info(f"Extracted {len(fields)} declaration fields from OCR text")
     return fields

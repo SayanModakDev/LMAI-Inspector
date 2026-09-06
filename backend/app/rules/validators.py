@@ -10,6 +10,8 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from app.extraction.cleaner import is_artifact_token
+
 logger = logging.getLogger(__name__)
 
 # Minimum OCR confidence threshold to consider evidence verifiable
@@ -992,8 +994,9 @@ def validate_batch_number_present(
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
     cleaned = re.sub(r'^(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)[:\s-]*', '', raw_val, flags=re.IGNORECASE).strip()
 
-    invalid_batch_tokens = {"no", "number", "num", "code", "lot", "batch", "b", "none", "n/a", "n.a.", "null"}
-    if not cleaned or cleaned.lower() in invalid_batch_tokens or len(re.sub(r'[^A-Za-z0-9]', '', cleaned)) < 1:
+    invalid_batch_tokens = {"no", "number", "num", "code", "lot", "batch", "b", "none", "n/a", "n.a.", "null", "image", "placeholder", "[image]", "undefined"}
+    is_art, _ = is_artifact_token(cleaned)
+    if not cleaned or is_art or cleaned.lower() in invalid_batch_tokens or len(re.sub(r'[^A-Za-z0-9]', '', cleaned)) < 1:
         return ValidationResult(
             status="FAIL",
             binary=0,

@@ -135,7 +135,7 @@ async def perform_scan(
             for item in ocr_items:
                 item['image_index'] = image_index
             if raw_text:
-                combined_text_parts.append(f"[IMAGE {image_index + 1}]\n{raw_text}")
+                combined_text_parts.append(raw_text)
             combined_ocr_items.extend(ocr_items)
             img_fields = extract_declarations(raw_text, ocr_items)
             for f_cand in img_fields.values():
@@ -170,7 +170,7 @@ async def perform_scan(
             timings['product_lookup_ms'] = round((time.perf_counter() - lookup_started) * 1000)
 
         extraction_started = time.perf_counter()
-        extracted_fields = merge_extracted_fields(per_image_fields + [extract_declarations(raw_text, ocr_items)])
+        extracted_fields = merge_extracted_fields(per_image_fields)
         extracted_fields = merge_product_evidence(extracted_fields, raw_text, ocr_items, barcode_result)
         timings['declaration_extraction_ms'] = round((time.perf_counter() - extraction_started) * 1000)
 
