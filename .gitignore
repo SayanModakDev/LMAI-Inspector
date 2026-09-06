@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment files
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads and generated files
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/generated_reports/*
+!backend/generated_reports/.gitkeep
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# PaddleOCR models (downloaded at runtime)
+~/.paddleocr/
+
+# Test coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Local development database
+backend/*.db
+*.sqlite
+*.sqlite3
+
+# Local npm CLI/cache
+frontend/.npm-cli/
