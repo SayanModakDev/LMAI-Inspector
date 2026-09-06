@@ -115,11 +115,13 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
         if status == 'FAIL':
             has_fail = True
 
-        results.append({
+        res_item: Dict[str, Any] = {
             'rule_id': rule_id,
             'parameter': parameter,
             'status': status,
+            'binary': val_result.binary,
             'message': message,
+            'reason': message,
             'evidence_data': evidence_data,
             'rule_version': rule.get('rule_version'),
             'regulatory_source': rule.get('regulatory_source', 'LEGAL_METROLOGY'),
@@ -127,7 +129,23 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'review_required': status in ['FAIL', 'NOT_VERIFIABLE'],
             'severity': severity,
             'validation_result': val_result.to_dict(),
-        })
+        }
+
+        # Expose structured quantity/unit attributes directly on result if available
+        if val_result.raw_value is not None:
+            res_item['raw_value'] = val_result.raw_value
+        if val_result.value is not None:
+            res_item['value'] = val_result.value
+        if val_result.unit is not None or val_result.unit_present is not None:
+            res_item['unit'] = val_result.unit
+        if val_result.quantity_present is not None:
+            res_item['quantity_present'] = val_result.quantity_present
+        if val_result.unit_present is not None:
+            res_item['unit_present'] = val_result.unit_present
+        if val_result.quantity_unit_valid is not None:
+            res_item['quantity_unit_valid'] = val_result.quantity_unit_valid
+
+        results.append(res_item)
 
     if has_fail:
         overall_result = 'NON-COMPLIANT'

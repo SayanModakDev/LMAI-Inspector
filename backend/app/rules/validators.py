@@ -67,6 +67,14 @@ class ValidationResult:
     normalized_value: Optional[str] = None
     evidence: Optional[Dict[str, Any]] = None
 
+    # Structured quantity & unit pair attributes
+    raw_value: Optional[str] = None
+    value: Optional[Any] = None
+    unit: Optional[str] = None
+    quantity_present: Optional[bool] = None
+    unit_present: Optional[bool] = None
+    quantity_unit_valid: Optional[bool] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert validation result to dictionary representation."""
         data: Dict[str, Any] = {
@@ -78,6 +86,18 @@ class ValidationResult:
             data["normalized_value"] = self.normalized_value
         if self.evidence is not None:
             data["evidence"] = self.evidence
+        if self.raw_value is not None:
+            data["raw_value"] = self.raw_value
+        if self.value is not None:
+            data["value"] = self.value
+        if self.unit is not None:
+            data["unit"] = self.unit
+        if self.quantity_present is not None:
+            data["quantity_present"] = self.quantity_present
+        if self.unit_present is not None:
+            data["unit_present"] = self.unit_present
+        if self.quantity_unit_valid is not None:
+            data["quantity_unit_valid"] = self.quantity_unit_valid
         return data
 
 
@@ -193,88 +213,235 @@ def validate_text_present(
 
 
 @register_validator("VALUE_AND_UNIT_PRESENT")
+@register_validator("QUANTITY_UNIT_PAIR")
 def validate_value_and_unit_present(
     evidence: Optional[Dict[str, Any]],
     rule: Dict[str, Any],
     all_fields: Dict[str, Any],
 ) -> ValidationResult:
-    """Validate that declared net quantity includes both a positive number and recognized legal unit."""
-    pre = _check_preconditions(evidence, rule)
-    if pre:
-        return pre
+    """Validate declared net quantity and unit pair.
+    
+    Verifies that the label declaration printed on the package contains both a
+    positive numeric quantity and a recognized Legal Metrology unit of measure.
+    Does NOT claim that image OCR measures actual physical weight.
+    """
+    parameter = rule.get("parameter", "DECLARED_NET_QUANTITY")
+    required = rule.get("required", True)
 
-    raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
-    qty_val = evidence.get("quantity_value")  # type: ignore[union-attr]
-    qty_unit = evidence.get("quantity_unit")  # type: ignore[union-attr]
+    # 1. Missing evidence
+    if not evidence or evidence.get("value") is None or not str(evidence.get("value", "")).strip():
+        if required:
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=f"Required declaration '{parameter}' was not detected in OCR evidence.",
+                raw_value=None,
+                value=None,
+                unit=None,
+                quantity_present=False,
+                unit_present=False,
+                quantity_unit_valid=False,
+                evidence=None,
+            )
+        return ValidationResult(
+            status="NOT_APPLICABLE",
+            binary=None,
+            reason=f"Optional declaration '{parameter}' not identified and not required.",
+            raw_value=None,
+            value=None,
+            unit=None,
+            quantity_present=False,
+            unit_present=False,
+            quantity_unit_valid=False,
+            evidence=None,
+        )
 
-    # Attempt to extract quantity value and unit from raw text if missing from structured evidence
-    if not qty_val or not qty_unit:
-        match = re.search(
-            r'([+-]?\d+(?:\.\d+)?)\s*([A-Za-z]+(?:\s+[A-Za-z]+)?)',
+    raw_val = str(evidence.get("raw_value") or evidence.get("value", "")).strip()
+
+    # 2. Clearly invalid flag explicitly set
+    if evidence.get("clearly_invalid"):
+        return ValidationResult(
+            status="FAIL",
+            binary=0,
+            reason=evidence.get("failure_reason") or f"Declared net quantity is invalid: '{raw_val}'.",
+            normalized_value=raw_val,
+            raw_value=raw_val,
+            value=None,
+            unit=None,
+            quantity_present=evidence.get("quantity_present", False),
+            unit_present=evidence.get("unit_present", False),
+            quantity_unit_valid=False,
+            evidence=evidence,
+        )
+
+    # 3. Weak OCR confidence
+    confidence = evidence.get("confidence")
+    if confidence is not None and float(confidence) < MIN_OCR_CONFIDENCE:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                f"Evidence detected for '{parameter}' has low OCR confidence ({float(confidence):.2f}) "
+                f"below threshold {MIN_OCR_CONFIDENCE}; cannot confirm compliance legally."
+            ),
+            normalized_value=raw_val,
+            raw_value=raw_val,
+            value=None,
+            unit=None,
+            quantity_present=evidence.get("quantity_present", False),
+            unit_present=evidence.get("unit_present", False),
+            quantity_unit_valid=False,
+            evidence=evidence,
+        )
+
+    # 4. Extract or parse quantity value and unit token
+    qty_val = evidence.get("quantity_value")
+    qty_unit = evidence.get("quantity_unit") or evidence.get("raw_unit")
+
+    # If missing from structured evidence, parse candidate string
+    if qty_val is None or qty_unit is None:
+        num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', raw_val)
+        unit_match = re.search(
+            r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
             raw_val,
+            re.IGNORECASE,
         )
-        if match:
-            qty_val = match.group(1)
-            qty_unit = match.group(2).strip()
+        if qty_val is None and num_match:
+            qty_val = num_match.group(1)
+        if qty_unit is None and unit_match:
+            qty_unit = unit_match.group(1)
 
-    if not qty_val or not qty_unit:
+    # Check presence flags
+    quantity_present = bool(qty_val is not None and str(qty_val).strip() != "")
+    unit_present = bool(qty_unit is not None and str(qty_unit).strip() != "")
+
+    # Normalize unit:
+    # gm / g -> g
+    # kg -> kg
+    # ml / mL -> ml
+    # l / L -> L
+    normalized_unit: Optional[str] = None
+    if unit_present:
+        lowered_unit = str(qty_unit).lower().strip()
+        if lowered_unit in {'g', 'gm', 'gms', 'gram', 'grams'}:
+            normalized_unit = 'g'
+        elif lowered_unit in {'kg', 'kgs', 'kilogram', 'kilograms'}:
+            normalized_unit = 'kg'
+        elif lowered_unit in {'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters'}:
+            normalized_unit = 'ml'
+        elif lowered_unit in {'l', 'ltr', 'litre', 'litres', 'liter', 'liters'}:
+            normalized_unit = 'L'
+        else:
+            normalized_unit = ALL_LEGAL_UNITS.get(lowered_unit, lowered_unit)
+
+    # Parse numeric quantity
+    numeric_val: Optional[Any] = None
+    if quantity_present:
+        try:
+            flt = float(qty_val)
+            numeric_val = int(flt) if flt.is_integer() else flt
+        except ValueError:
+            quantity_present = False
+            numeric_val = None
+
+    is_legal_unit = bool(normalized_unit and (normalized_unit in ALL_LEGAL_UNITS.values() or normalized_unit.lower() in ALL_LEGAL_UNITS.keys()))
+
+    # Determine compliance
+    if not quantity_present and not unit_present:
         return ValidationResult(
-            status="FAIL",
+            status="NOT_VERIFIABLE",
             binary=0,
-            reason=(
-                f"Net quantity declaration must contain both a numeric quantity and a standard legal unit. "
-                f"Extracted: '{raw_val}'."
-            ),
+            reason=f"Neither numeric quantity nor unit detected in: '{raw_val}'.",
             normalized_value=raw_val,
+            raw_value=raw_val,
+            value=None,
+            unit=None,
+            quantity_present=False,
+            unit_present=False,
+            quantity_unit_valid=False,
             evidence=evidence,
         )
 
-    # Validate numeric component
-    try:
-        numeric_val = float(qty_val)
-    except ValueError:
+    if quantity_present and not unit_present:
         return ValidationResult(
             status="FAIL",
             binary=0,
-            reason=f"Net quantity contains non-numeric quantity value: '{qty_val}'.",
-            normalized_value=raw_val,
+            reason=f"Declared quantity is missing a legal unit of measurement: '{raw_val}' (value={numeric_val}, unit=null).",
+            normalized_value=str(numeric_val),
+            raw_value=raw_val,
+            value=numeric_val,
+            unit=None,
+            quantity_present=True,
+            unit_present=False,
+            quantity_unit_valid=False,
             evidence=evidence,
         )
 
-    if numeric_val <= 0:
+    if not quantity_present and unit_present:
         return ValidationResult(
             status="FAIL",
             binary=0,
-            reason=f"Net quantity must be a positive non-zero quantity, found: {numeric_val}.",
-            normalized_value=raw_val,
+            reason=f"Unit of measurement is present ('{normalized_unit}') but numeric quantity is missing from declaration: '{raw_val}'.",
+            normalized_value=normalized_unit,
+            raw_value=raw_val,
+            value=None,
+            unit=normalized_unit,
+            quantity_present=False,
+            unit_present=True,
+            quantity_unit_valid=False,
             evidence=evidence,
         )
 
-    # Validate unit of measurement against Legal Metrology recognized units
-    normalized_unit = ALL_LEGAL_UNITS.get(str(qty_unit).lower())
-    if not normalized_unit:
+    # Both quantity_present and unit_present are True
+    if numeric_val is not None and numeric_val <= 0:
         return ValidationResult(
             status="FAIL",
             binary=0,
-            reason=(
-                f"Net quantity unit '{qty_unit}' is not a recognized legal unit of weight, "
-                f"measure, or number under Legal Metrology Rules."
-            ),
-            normalized_value=raw_val,
+            reason=f"Invalid declared quantity: must be positive non-zero, found {numeric_val} {normalized_unit}.",
+            normalized_value=f"{numeric_val} {normalized_unit}",
+            raw_value=raw_val,
+            value=numeric_val,
+            unit=normalized_unit,
+            quantity_present=True,
+            unit_present=True,
+            quantity_unit_valid=False,
             evidence=evidence,
         )
 
-    # Format normalized string (e.g. "500 g" or "1 kg")
-    formatted_num = int(numeric_val) if numeric_val.is_integer() else numeric_val
-    normalized_value = f"{formatted_num} {normalized_unit}"
+    if not is_legal_unit:
+        return ValidationResult(
+            status="FAIL",
+            binary=0,
+            reason=f"Net quantity unit '{qty_unit}' is not a recognized legal unit of weight, measure, or number under Legal Metrology Rules.",
+            normalized_value=f"{numeric_val} {qty_unit}",
+            raw_value=raw_val,
+            value=numeric_val,
+            unit=qty_unit,
+            quantity_present=True,
+            unit_present=True,
+            quantity_unit_valid=False,
+            evidence=evidence,
+        )
 
+    # Valid quantity + unit declaration on package
+    normalized_value = f"{numeric_val} {normalized_unit}"
     return ValidationResult(
         status="PASS",
         binary=1,
-        reason=f"Detected valid declared net quantity: {normalized_value}",
+        reason="Valid declared quantity and unit",
         normalized_value=normalized_value,
+        raw_value=raw_val,
+        value=numeric_val,
+        unit=normalized_unit,
+        quantity_present=True,
+        unit_present=True,
+        quantity_unit_valid=True,
         evidence=evidence,
     )
+
+
+# Dedicated alias export
+validate_quantity_unit_pair = validate_value_and_unit_present
 
 
 @register_validator("MRP_PRESENT")

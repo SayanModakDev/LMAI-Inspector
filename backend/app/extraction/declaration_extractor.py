@@ -325,7 +325,7 @@ NET_QTY_UNITS_MAP = {
 }
 
 NET_QTY_LABEL_RE = re.compile(
-    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents?)\s*[:\s-]*\s*([^\n,;]+)',
+    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents?)\s*[:.]*\s*(?:-\s+)?([^\n,;]+)',
     re.IGNORECASE,
 )
 
@@ -492,17 +492,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if mrp_value:
         fields['MRP'] = {'value': f'₹{mrp_value.replace(",", "")}', 'confidence': 0.85, 'source': 'OCR'}
 
-    qty_match = None
-    for pattern in NET_QTY_PATTERNS:
-        qty_match = re.search(pattern, normalized, re.IGNORECASE)
-        if qty_match:
-            break
-    if qty_match:
-        qty_value = qty_match.group(1)
-        qty_unit = qty_match.group(2).lower()
-        unit_map = {'g': 'g', 'gm': 'g', 'gms': 'g', 'kg': 'kg', 'kgs': 'kg', 'ml': 'ml', 'l': 'L', 'ltr': 'L', 'litre': 'L', 'liter': 'L', 'liters': 'L', 'oz': 'oz', 'lb': 'lb', 'pc': 'pieces', 'pcs': 'pieces', 'piece': 'pieces', 'pieces': 'pieces', 'tablet': 'tablets', 'tablets': 'tablets', 'capsule': 'capsules', 'capsules': 'capsules'}
-        normalized_unit = unit_map.get(qty_unit, qty_unit)
-        fields['DECLARED_NET_QUANTITY'] = {'value': f'{qty_value} {normalized_unit}', 'quantity_value': qty_value, 'quantity_unit': normalized_unit, 'confidence': 0.8, 'source': 'OCR'}
+    qty_field = _extract_net_quantity_field(normalized)
+    if qty_field:
+        fields['DECLARED_NET_QUANTITY'] = qty_field
 
     for line_index, line in enumerate(lines):
         lower = line.lower()

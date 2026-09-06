@@ -244,8 +244,13 @@ const Result = () => {
                     
                     {/* Net Qty */}
                     <tr>
-                      <td><strong>Net Quantity</strong></td>
-                      <td>{inspection.extracted_fields.find(f => f.field_name === 'DECLARED_NET_QUANTITY')?.field_value || 'Not Found'}</td>
+                      <td>
+                        <strong>Declared Net Quantity</strong>
+                        <div className="text-xs text-muted" style={{ fontSize: '0.75rem', color: '#6b7280' }}>Printed label declaration (OCR)</div>
+                      </td>
+                      <td>
+                        <div>{inspection.extracted_fields.find(f => f.field_name === 'DECLARED_NET_QUANTITY')?.field_value || 'Not Found'}</div>
+                      </td>
                       {isEditing && (
                         <td>
                           <input 
@@ -340,6 +345,11 @@ const Result = () => {
                         {rule.status === 'MANUAL_CHECK' && <span className="badge badge-warning"><AlertTriangle size={12} className="mr-1"/> REVIEW</span>}
                         {rule.status === 'NOT_VERIFIABLE' && <span className="badge badge-warning"><AlertTriangle size={12} className="mr-1"/> NOT VERIFIABLE</span>}
                         {rule.status === 'NOT_APPLICABLE' && <span className="badge badge-gray">NOT APPLICABLE</span>}
+                        {rule.binary !== undefined && rule.binary !== null && (
+                          <span className="badge badge-gray ml-1" title="Binary Compliance Score" style={{ fontSize: '0.7rem', padding: '1px 5px' }}>
+                            Score: {rule.binary}
+                          </span>
+                        )}
                       </td>
                       <td className="text-sm">{rule.regulatory_source || 'LEGAL_METROLOGY'}</td>
                       <td className="text-sm">{rule.evidence_data?.value || '—'}</td>

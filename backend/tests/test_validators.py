@@ -494,3 +494,219 @@ def test_evaluate_rules_returns_structured_validation_result():
     assert "validation_result" in results[1]
     assert results[1]["validation_result"]["status"] == "FAIL"
     assert results[1]["validation_result"]["binary"] == 0
+
+
+# ---------------------------------------------------------------------------
+# MENTOR CORE REQUIREMENTS: DECLARED NET QUANTITY STRUCTURED MODEL
+# ---------------------------------------------------------------------------
+from app.extraction.declaration_extractor import extract_declarations
+from app.rules.validators import validate_quantity_unit_pair
+
+
+def test_mentor_example_net_wt_500_g_passes_with_binary_1():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+    evidence = {
+        "raw_value": "Net Wt 500 g",
+        "value": "500 g",
+        "quantity_value": "500",
+        "quantity_unit": "g",
+        "confidence": 0.9,
+    }
+    res = validate_quantity_unit_pair(evidence, rule, {})
+
+    assert res.value == 500
+    assert res.unit == "g"
+    assert res.quantity_present is True
+    assert res.unit_present is True
+    assert res.quantity_unit_valid is True
+    assert res.binary == 1
+    assert res.status == "PASS"
+    assert res.reason == "Valid declared quantity and unit"
+
+
+def test_mentor_example_net_wt_500_missing_unit_fails_with_binary_0():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+    evidence = {
+        "raw_value": "Net Wt 500",
+        "value": "500",
+        "quantity_value": "500",
+        "quantity_unit": None,
+        "confidence": 0.9,
+    }
+    res = validate_quantity_unit_pair(evidence, rule, {})
+
+    assert res.value == 500
+    assert res.unit is None
+    assert res.quantity_present is True
+    assert res.unit_present is False
+    assert res.quantity_unit_valid is False
+    assert res.binary == 0
+    assert res.status == "FAIL"
+    assert res.status != "PASS"
+
+
+def test_mentor_example_net_wt_g_missing_value_fails_with_binary_0():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+    evidence = {
+        "raw_value": "Net Wt g",
+        "value": "g",
+        "quantity_value": None,
+        "quantity_unit": "g",
+        "confidence": 0.9,
+    }
+    res = validate_quantity_unit_pair(evidence, rule, {})
+
+    assert res.value is None
+    assert res.unit == "g"
+    assert res.quantity_present is False
+    assert res.unit_present is True
+    assert res.quantity_unit_valid is False
+    assert res.binary == 0
+    assert res.status == "FAIL"
+
+
+def test_mentor_example_net_wt_0_g_fails_as_invalid():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+    evidence = {
+        "raw_value": "Net Wt 0 g",
+        "value": "0 g",
+        "quantity_value": "0",
+        "quantity_unit": "g",
+        "confidence": 0.9,
+    }
+    res = validate_quantity_unit_pair(evidence, rule, {})
+
+    assert res.value == 0
+    assert res.unit == "g"
+    assert res.quantity_unit_valid is False
+    assert res.binary == 0
+    assert res.status == "FAIL"
+    assert "positive" in res.reason.lower()
+
+
+def test_mentor_example_net_wt_negative_5_g_fails_as_invalid():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+    evidence = {
+        "raw_value": "Net Wt -5 g",
+        "value": "-5 g",
+        "quantity_value": "-5",
+        "quantity_unit": "g",
+        "confidence": 0.9,
+    }
+    res = validate_quantity_unit_pair(evidence, rule, {})
+
+    assert res.value == -5
+    assert res.unit == "g"
+    assert res.quantity_unit_valid is False
+    assert res.binary == 0
+    assert res.status == "FAIL"
+    assert "positive" in res.reason.lower()
+
+
+def test_unit_normalization_without_inventing_data():
+    rule = {"rule_id": "PC-ALL-002", "parameter": "DECLARED_NET_QUANTITY", "required": True}
+
+    # gm / g -> normalized g
+    res_gm = validate_quantity_unit_pair({"value": "Net Wt 500 gm", "confidence": 0.9}, rule, {})
+    assert res_gm.unit == "g"
+    assert res_gm.value == 500
+    assert res_gm.binary == 1
+
+    # kg -> kg
+    res_kg = validate_quantity_unit_pair({"value": "Net Wt 2 kg", "confidence": 0.9}, rule, {})
+    assert res_kg.unit == "kg"
+    assert res_kg.value == 2
+    assert res_kg.binary == 1
+
+    # ml / mL -> ml
+    res_ml = validate_quantity_unit_pair({"value": "Net Vol 250 mL", "confidence": 0.9}, rule, {})
+    assert res_ml.unit == "ml"
+    assert res_ml.value == 250
+    assert res_ml.binary == 1
+
+    # l / L -> L
+    res_l = validate_quantity_unit_pair({"value": "Net Vol 1 l", "confidence": 0.9}, rule, {})
+    assert res_l.unit == "L"
+    assert res_l.value == 1
+    assert res_l.binary == 1
+
+
+def test_extraction_pipeline_separates_raw_ocr_from_normalized_values():
+    # Net Wt 500 gm
+    fields1 = extract_declarations("Net Wt 500 gm\nMRP Rs 50")
+    q1 = fields1["DECLARED_NET_QUANTITY"]
+    assert q1["raw_value"] == "Net Wt 500 gm"
+    assert q1["quantity_value"] == "500"
+    assert q1["quantity_unit"] == "g"
+    assert q1["raw_unit"] == "gm"
+    assert q1["quantity_present"] is True
+    assert q1["unit_present"] is True
+    assert q1["quantity_unit_valid"] is True
+
+    # Net Wt 500 (missing unit)
+    fields2 = extract_declarations("Net Wt 500\nMRP Rs 50")
+    q2 = fields2["DECLARED_NET_QUANTITY"]
+    assert q2["raw_value"] == "Net Wt 500"
+    assert q2["quantity_value"] == "500"
+    assert q2["quantity_unit"] is None
+    assert q2["quantity_present"] is True
+    assert q2["unit_present"] is False
+    assert q2["quantity_unit_valid"] is False
+
+    # Net Wt g (missing value)
+    fields3 = extract_declarations("Net Wt g\nMRP Rs 50")
+    q3 = fields3["DECLARED_NET_QUANTITY"]
+    assert q3["raw_value"] == "Net Wt g"
+    assert q3["quantity_value"] is None
+    assert q3["quantity_unit"] == "g"
+    assert q3["quantity_present"] is False
+    assert q3["unit_present"] is True
+    assert q3["quantity_unit_valid"] is False
+
+    # Net Wt 0 g
+    fields4 = extract_declarations("Net Wt 0 g\nMRP Rs 50")
+    q4 = fields4["DECLARED_NET_QUANTITY"]
+    assert q4["quantity_value"] == "0"
+    assert q4["quantity_unit_valid"] is False
+
+    # Net Wt -5 g
+    fields5 = extract_declarations("Net Wt -5 g\nMRP Rs 50")
+    q5 = fields5["DECLARED_NET_QUANTITY"]
+    assert q5["quantity_value"] == "-5"
+    assert q5["quantity_unit_valid"] is False
+
+
+def test_evaluate_rules_exposes_mentor_result_schema():
+    rules = [
+        {
+            "rule_id": "PC-ALL-002",
+            "parameter": "DECLARED_NET_QUANTITY",
+            "validation_method": "VALUE_AND_UNIT_PRESENT",
+            "required": True,
+        }
+    ]
+    extracted = {
+        "DECLARED_NET_QUANTITY": {
+            "raw_value": "Net Wt 500 gm",
+            "value": "500 g",
+            "quantity_value": "500",
+            "quantity_unit": "g",
+            "confidence": 0.9,
+        }
+    }
+
+    results, overall = evaluate_rules(rules, extracted)
+    r = results[0]
+
+    assert r["parameter"] == "DECLARED_NET_QUANTITY"
+    assert r["raw_value"] == "Net Wt 500 gm"
+    assert r["value"] == 500
+    assert r["unit"] == "g"
+    assert r["quantity_present"] is True
+    assert r["unit_present"] is True
+    assert r["quantity_unit_valid"] is True
+    assert r["binary"] == 1
+    assert r["status"] == "PASS"
+    assert r["reason"] == "Valid declared quantity and unit"
+    assert overall == "COMPLIANT"
+
