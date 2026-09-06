@@ -106,6 +106,10 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             field_data = extracted_fields.get('EXPIRY_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
         elif not field_data and parameter == 'EXPIRY_DATE':
             field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
+        elif not field_data and parameter == 'DECLARED_NET_QUANTITY':
+            field_data = extracted_fields.get('NET_QUANTITY')
+        elif not field_data and parameter == 'NET_QUANTITY':
+            field_data = extracted_fields.get('DECLARED_NET_QUANTITY')
 
         # Dispatch to deterministic validator
         validation_method = rule.get('validation_method')
