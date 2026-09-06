@@ -79,9 +79,12 @@ async def perform_scan(
             if raw_text:
                 combined_text_parts.append(f"[IMAGE {image_index + 1}]\n{raw_text}")
             combined_ocr_items.extend(ocr_items)
-            # Extract while image boundaries still exist; this makes a clear
-            # declaration-panel value outrank weak text from another view.
-            per_image_fields.append(extract_declarations(raw_text, ocr_items))
+            img_fields = extract_declarations(raw_text, ocr_items)
+            for f_cand in img_fields.values():
+                if isinstance(f_cand, dict):
+                    f_cand.setdefault('source_image_index', image_index)
+                    f_cand.setdefault('source', f'OCR_IMAGE_{image_index + 1}')
+            per_image_fields.append(img_fields)
             total_processing_time += ocr_result_data.get('processing_time_ms', 0)
             barcode_started = time.perf_counter()
             image_barcode = decode_barcodes(processed_path, raw_text)
@@ -208,6 +211,10 @@ async def perform_scan(
             source_index = field_data.get('source_image_index')
             if source_index in image_index_to_id:
                 field_data['source_image_id'] = image_index_to_id[source_index]
+            for cand in field_data.get('candidates', []):
+                c_idx = cand.get('source_image_index')
+                if c_idx in image_index_to_id:
+                    cand['source_image_id'] = image_index_to_id[c_idx]
 
         db_product = models.Product(
             inspection_id=db_inspection.id,
@@ -257,7 +264,7 @@ async def perform_scan(
             db.add(models.Evidence(
                 inspection_id=db_inspection.id,
                 parameter=field_name,
-                evidence_type=field_data.get('source', 'OCR'),
+                evidence_type=field_data.get('evidence_type', field_data.get('source', 'OCR')),
                 text_content=str(field_data.get('value', '')),
                 bbox=field_data.get('bbox'),
                 confidence=field_data.get('confidence'),

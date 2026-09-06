@@ -161,15 +161,39 @@ const Result = () => {
           
           {barcode && (
             <div className="card mb-4">
-              <div className="card-header">Barcode Lookup</div>
+              <div className="card-header flex-between">
+                <span>Barcode Lookup</span>
+                <span className="badge badge-gray" style={{ fontSize: '0.7rem' }}>SUPPLEMENTARY EVIDENCE</span>
+              </div>
               <div className="card-body">
                 <table className="detail-table">
                   <tbody>
                     <tr><th>Code:</th><td>{barcode.value || 'Not detected'}</td></tr>
                     <tr><th>Detection:</th><td>{barcode.source === 'OCR_BARCODE_TEXT' ? 'OCR fallback' : barcode.type || 'Unknown'}</td></tr>
                     <tr><th>Product lookup:</th><td>{barcode.lookup?.status || 'Not performed'}</td></tr>
-                    {barcode.lookup?.product_name && <tr><th>Product name:</th><td>{barcode.lookup.product_name}</td></tr>}
+                    {barcode.lookup?.product_name && (
+                      <tr>
+                        <th>Product name:</th>
+                        <td>
+                          {barcode.lookup.product_name}
+                          {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'CONFLICTS' && (
+                            <span className="badge badge-danger ml-2" title="Conflicts with printed OCR label">CONFLICT WITH OCR</span>
+                          )}
+                          {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'AGREES' && (
+                            <span className="badge badge-success ml-2" title="Corroborates printed OCR label">AGREES WITH OCR</span>
+                          )}
+                        </td>
+                      </tr>
+                    )}
                     {barcode.lookup?.brands && <tr><th>Brand:</th><td>{barcode.lookup.brands}</td></tr>}
+                    {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'CONFLICTS' && (
+                      <tr>
+                        <td colSpan="2" className="text-danger text-xs p-2" style={{ backgroundColor: '#fef2f2', borderRadius: '4px' }}>
+                          <AlertTriangle size={14} className="inline mr-1" />
+                          Notice: Barcode database name contradicts printed OCR. Database lookups cannot override legal label evidence.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -221,14 +245,32 @@ const Result = () => {
                     {/* Product identity */}
                     <tr>
                       <td><strong>Product Name</strong></td>
-                      <td>{inspection.extracted_fields.find(f => f.field_name === 'PRODUCT_NAME')?.field_value || 'Not Found'}</td>
+                      <td>
+                        {(() => {
+                          const f = inspection.extracted_fields.find(f => f.field_name === 'PRODUCT_NAME');
+                          if (!f || !f.field_value) return 'Not Found';
+                          if (f.field_value.startsWith('CONFLICT:')) {
+                            return <><span className="badge badge-danger mr-1" style={{ fontSize: '0.7rem' }}>CONFLICT</span><span className="text-danger">{f.field_value}</span></>;
+                          }
+                          return f.field_value;
+                        })()}
+                      </td>
                       {isEditing && <td><input className="form-control" value={manualData.field_overrides.PRODUCT_NAME ?? ''} onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, PRODUCT_NAME: e.target.value}})} placeholder="Correct product name" /></td>}
                     </tr>
 
                     {/* MRP */}
                     <tr>
                       <td><strong>MRP</strong></td>
-                      <td>{inspection.extracted_fields.find(f => f.field_name === 'MRP')?.field_value || 'Not Found'}</td>
+                      <td>
+                        {(() => {
+                          const f = inspection.extracted_fields.find(f => f.field_name === 'MRP');
+                          if (!f || !f.field_value) return 'Not Found';
+                          if (f.field_value.startsWith('CONFLICT:')) {
+                            return <><span className="badge badge-danger mr-1" style={{ fontSize: '0.7rem' }}>CONFLICT</span><span className="text-danger">{f.field_value}</span></>;
+                          }
+                          return f.field_value;
+                        })()}
+                      </td>
                       {isEditing && (
                         <td>
                           <input 

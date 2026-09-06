@@ -1,5 +1,5 @@
 import pytest
-from app.extraction.declaration_extractor import extract_declarations, merge_product_evidence
+from app.extraction.declaration_extractor import extract_declarations, merge_product_evidence, merge_extracted_fields
 from app.classification.category_classifier import classify_category
 from app.rules.applicability import get_applicable_rules
 from app.rules.rule_engine import evaluate_rules, build_inspection_findings
@@ -778,6 +778,172 @@ def test_visual_candidate_alone_never_becomes_legal_pass():
     missing_result = validate_veg_nonveg_present(None, rule, {})
     assert missing_result.status == "NOT_VERIFIABLE"
     assert missing_result.binary == 0
+
+
+def test_conflicting_mrp_multi_image():
+    """Conflicting MRP values across images must NOT silently choose one;
+    must produce status=CONFLICTING_EVIDENCE, list distinct values, preserve candidate metadata,
+    and rule evaluation must require review (NOT_VERIFIABLE, binary 0).
+    """
+    img1_fields = {
+        'MRP': {'value': '₹120', 'confidence': 0.82, 'source': 'OCR_IMAGE_1', 'source_image_index': 0}
+    }
+    img2_fields = {
+        'MRP': {'value': '₹140', 'confidence': 0.81, 'source': 'OCR_IMAGE_2', 'source_image_index': 1}
+    }
+    merged = merge_extracted_fields([img1_fields, img2_fields])
+    mrp = merged.get('MRP', {})
+    assert mrp.get('status') == 'CONFLICTING_EVIDENCE'
+    assert mrp.get('has_conflict') is True
+    assert set(mrp.get('values', [])) == {'₹120', '₹140'}
+    assert len(mrp.get('candidates', [])) == 2
+    assert mrp['candidates'][0]['source_image_index'] == 0
+    assert mrp['candidates'][1]['source_image_index'] == 1
+
+    # Rule evaluation must require review and never silently PASS
+    rule = {'rule_id': 'PC-ALL-002', 'parameter': 'MRP', 'required': True, 'validation_method': 'MRP_PRESENT'}
+    results, overall = evaluate_rules([rule], merged)
+    assert results[0]['status'] == 'NOT_VERIFIABLE'
+    assert results[0]['binary'] == 0
+    assert results[0]['review_required'] is True
+    assert overall == 'NOT_VERIFIABLE'
+    findings = build_inspection_findings(results)
+    assert len(findings['needs_review']) == 1
+
+
+def test_conflicting_product_name_multi_image():
+    """Conflicting product names across package views must be flagged as CONFLICTING_EVIDENCE
+    and require human review.
+    """
+    img1_fields = {
+        'PRODUCT_NAME': {'value': 'Tata Salt', 'confidence': 0.88, 'source': 'OCR_IMAGE_1', 'source_image_index': 0}
+    }
+    img2_fields = {
+        'PRODUCT_NAME': {'value': 'Aashirvaad Atta', 'confidence': 0.85, 'source': 'OCR_IMAGE_2', 'source_image_index': 1}
+    }
+    merged = merge_extracted_fields([img1_fields, img2_fields])
+    pname = merged.get('PRODUCT_NAME', {})
+    assert pname.get('status') == 'CONFLICTING_EVIDENCE'
+    assert pname.get('has_conflict') is True
+    assert set(pname.get('values', [])) == {'Tata Salt', 'Aashirvaad Atta'}
+    assert len(pname.get('candidates', [])) == 2
+
+    rule = {'rule_id': 'PC-ALL-001', 'parameter': 'PRODUCT_NAME', 'required': True, 'validation_method': 'TEXT_PRESENT'}
+    results, overall = evaluate_rules([rule], merged)
+    assert results[0]['status'] == 'NOT_VERIFIABLE'
+    assert results[0]['binary'] == 0
+    assert results[0]['review_required'] is True
+    assert overall == 'NOT_VERIFIABLE'
+    findings = build_inspection_findings(results)
+    assert len(findings['needs_review']) == 1
+
+
+def test_barcode_agrees_with_ocr():
+    """When barcode lookup corroborates OCR product name, OCR source is preserved,
+    barcode metadata is attached as supplementary evidence, and barcode_match is AGREES.
+    """
+    ocr_fields = {
+        'PRODUCT_NAME': {'value': 'Tata Salt', 'confidence': 0.90, 'source': 'OCR'}
+    }
+    barcode_result = {
+        'value': '8904043901015',
+        'confidence': 1.0,
+        'lookup': {
+            'status': 'FOUND',
+            'product_name': 'Tata Salt',
+            'brands': 'Tata',
+        }
+    }
+    merged = merge_product_evidence(ocr_fields, '', [], barcode_result)
+    pname = merged.get('PRODUCT_NAME', {})
+    assert pname.get('value') == 'Tata Salt'
+    assert pname.get('source') == 'OCR'
+    assert pname.get('barcode_match') == 'AGREES'
+    assert pname.get('supplementary_evidence', {}).get('source') == 'BARCODE_LOOKUP'
+    assert pname.get('supplementary_evidence', {}).get('evidence_type') == 'SUPPLEMENTARY'
+    assert merged.get('BARCODE_METADATA', {}).get('evidence_type') == 'SUPPLEMENTARY'
+
+
+def test_barcode_conflicts_with_ocr():
+    """When barcode lookup contradicts printed OCR, OCR is NOT overwritten;
+    the contradiction is exposed as CONFLICTING_EVIDENCE with barcode_match=CONFLICTS,
+    and rule evaluation requires review.
+    """
+    ocr_fields = {
+        'PRODUCT_NAME': {'value': 'Aashirvaad Atta', 'confidence': 0.90, 'source': 'OCR'}
+    }
+    barcode_result = {
+        'value': '8904043901015',
+        'confidence': 1.0,
+        'lookup': {
+            'status': 'FOUND',
+            'product_name': 'Tata Salt',
+            'brands': 'Tata',
+        }
+    }
+    merged = merge_product_evidence(ocr_fields, '', [], barcode_result)
+    pname = merged.get('PRODUCT_NAME', {})
+    assert pname.get('status') == 'CONFLICTING_EVIDENCE'
+    assert pname.get('has_conflict') is True
+    assert pname.get('barcode_match') == 'CONFLICTS'
+    assert pname.get('ocr_value') == 'Aashirvaad Atta'
+    assert pname.get('barcode_value') == 'Tata Salt'
+    assert set(pname.get('values', [])) == {'Aashirvaad Atta', 'Tata Salt'}
+
+    rule = {'rule_id': 'PC-ALL-001', 'parameter': 'PRODUCT_NAME', 'required': True, 'validation_method': 'TEXT_PRESENT'}
+    results, _ = evaluate_rules([rule], merged)
+    assert results[0]['status'] == 'NOT_VERIFIABLE'
+    assert results[0]['binary'] == 0
+    assert results[0]['review_required'] is True
+
+
+def test_barcode_lookup_unavailable():
+    """When barcode lookup is UNAVAILABLE or NOT_FOUND, the scan proceeds with OCR evidence
+    without crashing or raising false conflicts.
+    """
+    ocr_fields = {
+        'PRODUCT_NAME': {'value': 'Britannia Good Day', 'confidence': 0.88, 'source': 'OCR'}
+    }
+    barcode_result = {
+        'value': '8901030383424',
+        'confidence': 1.0,
+        'lookup': {
+            'status': 'UNAVAILABLE',
+            'source': 'Open Food Facts',
+        }
+    }
+    merged = merge_product_evidence(ocr_fields, '', [], barcode_result)
+    pname = merged.get('PRODUCT_NAME', {})
+    assert pname.get('value') == 'Britannia Good Day'
+    assert pname.get('source') == 'OCR'
+    assert pname.get('status') != 'CONFLICTING_EVIDENCE'
+    assert pname.get('has_conflict') is not True
+
+
+def test_multi_image_higher_confidence_vs_lower_confidence_conflict():
+    """A higher-confidence candidate (.92) must NOT silently overwrite or discard a
+    differing lower-confidence candidate (.65). Both must be captured as CONFLICTING_EVIDENCE.
+    """
+    img1_fields = {
+        'MRP': {'value': '₹250', 'confidence': 0.92, 'source': 'OCR_IMAGE_1', 'source_image_index': 0}
+    }
+    img2_fields = {
+        'MRP': {'value': '₹280', 'confidence': 0.65, 'source': 'OCR_IMAGE_2', 'source_image_index': 1}
+    }
+    merged = merge_extracted_fields([img1_fields, img2_fields])
+    mrp = merged.get('MRP', {})
+    assert mrp.get('status') == 'CONFLICTING_EVIDENCE'
+    assert mrp.get('has_conflict') is True
+    assert mrp.get('value') != '₹250'
+    assert set(mrp.get('values', [])) == {'₹250', '₹280'}
+    assert len(mrp.get('candidates', [])) == 2
+
+    rule = {'rule_id': 'PC-ALL-002', 'parameter': 'MRP', 'required': True, 'validation_method': 'MRP_PRESENT'}
+    results, _ = evaluate_rules([rule], merged)
+    assert results[0]['status'] == 'NOT_VERIFIABLE'
+    assert results[0]['binary'] == 0
+    assert results[0]['review_required'] is True
+
 
 
 

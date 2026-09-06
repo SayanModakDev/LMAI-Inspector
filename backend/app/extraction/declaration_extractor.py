@@ -431,47 +431,323 @@ def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]
     return max(scored, default=(0, None), key=lambda item: item[0])[1]
 
 
-def merge_product_evidence(fields: Dict[str, Any], raw_text: str, ocr_items: Optional[List[Dict[str, Any]]], barcode_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Merge verified barcode metadata with contextual OCR, without overwriting stronger evidence blindly."""
+def _extract_price_number(text: str) -> Optional[float]:
+    """Extract numeric price value from price string e.g. '₹120', 'Rs 140.50'."""
+    if not text:
+        return None
+    cleaned = str(text).replace(',', '')
+    match = re.search(r'(\d+(?:\.\d{1,2})?)', cleaned)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _product_names_conflict(s1: str, s2: str) -> bool:
+    """Determine whether two product or brand names contradict each other."""
+    c1 = re.sub(r'[^\w\s]', '', str(s1).lower()).strip()
+    c2 = re.sub(r'[^\w\s]', '', str(s2).lower()).strip()
+    if not c1 or not c2 or c1 == c2:
+        return False
+    stop_words = {'the', 'a', 'an', 'and', '&', 'net', 'pack', 'package', 'pouch', 'bottle', 'box'}
+    words1 = [w for w in c1.split() if w not in stop_words]
+    words2 = [w for w in c2.split() if w not in stop_words]
+    if not words1 or not words2:
+        return False
+    set1, set2 = set(words1), set(words2)
+    if set1 == set2:
+        return False
+    overlap = set1.intersection(set2)
+    union = set1.union(set2)
+    similarity = len(overlap) / len(union) if union else 1.0
+    return similarity < 0.6
+
+
+def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, Any]) -> bool:
+    """Determine whether two candidate extractions for the same field represent conflicting evidence."""
+    v1 = cand1.get('value')
+    v2 = cand2.get('value')
+    if v1 is None or v2 is None:
+        return False
+    s1 = str(v1).strip()
+    s2 = str(v2).strip()
+    if not s1 or not s2:
+        return False
+    if s1.lower() == s2.lower():
+        return False
+
+    # 1. Price / MRP comparison
+    if field_name == 'MRP':
+        p1 = _extract_price_number(s1)
+        p2 = _extract_price_number(s2)
+        if p1 is not None and p2 is not None:
+            return abs(p1 - p2) > 0.01
+        return s1.lower() != s2.lower()
+
+    # 2. Declared Net Quantity comparison
+    if field_name == 'DECLARED_NET_QUANTITY':
+        qv1 = cand1.get('quantity_value')
+        qv2 = cand2.get('quantity_value')
+        qu1 = str(cand1.get('quantity_unit') or '').lower().strip()
+        qu2 = str(cand2.get('quantity_unit') or '').lower().strip()
+        if qv1 is not None and qv2 is not None:
+            try:
+                if abs(float(qv1) - float(qv2)) > 0.001:
+                    return True
+                if qu1 and qu2 and qu1 != qu2:
+                    return True
+                return False
+            except (ValueError, TypeError):
+                pass
+        p1 = _extract_price_number(s1)
+        p2 = _extract_price_number(s2)
+        if p1 is not None and p2 is not None and abs(p1 - p2) > 0.001:
+            return True
+        return s1.lower() != s2.lower()
+
+    # 3. Dates comparison (month/year)
+    if field_name in (
+        'MONTH_YEAR_MANUFACTURE', 'MANUFACTURE_DATE', 'PACKING_DATE',
+        'BEST_BEFORE_USE_BY', 'USE_BEFORE_DATE', 'EXPIRY_DATE'
+    ):
+        m1 = cand1.get('month') or cand1.get('extracted_month')
+        y1 = cand1.get('year') or cand1.get('extracted_year')
+        m2 = cand2.get('month') or cand2.get('extracted_month')
+        y2 = cand2.get('year') or cand2.get('extracted_year')
+        if m1 and m2 and y1 and y2:
+            return (m1, y1) != (m2, y2)
+        d1_m = re.findall(r'\b(0?[1-9]|1[0-2])[/-](\d{2,4})\b', s1)
+        d2_m = re.findall(r'\b(0?[1-9]|1[0-2])[/-](\d{2,4})\b', s2)
+        if d1_m and d2_m:
+            return d1_m[0] != d2_m[0]
+        return s1.lower() != s2.lower()
+
+    # 4. Product Name and Brand
+    if field_name in ('PRODUCT_NAME', 'BRAND'):
+        return _product_names_conflict(s1, s2)
+
+    # 5. FSSAI License Number (digits)
+    if field_name == 'FSSAI_LICENSE':
+        dig1 = re.findall(r'\d{14}', s1)
+        dig2 = re.findall(r'\d{14}', s2)
+        if dig1 and dig2:
+            return dig1[0] != dig2[0]
+        return s1.lower() != s2.lower()
+
+    # Default fallback: cleaned alphanumeric comparison
+    c1 = re.sub(r'[^\w\s]', '', s1.lower()).strip()
+    c2 = re.sub(r'[^\w\s]', '', s2.lower()).strip()
+    return c1 != c2
+
+
+def merge_product_evidence(
+    fields: Dict[str, Any],
+    raw_text: str,
+    ocr_items: Optional[List[Dict[str, Any]]],
+    barcode_result: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Merge barcode lookup as supplementary evidence without silently overwriting OCR or product identity."""
     lookup = (barcode_result or {}).get('lookup') or {}
     barcode_value = (barcode_result or {}).get('value')
     if barcode_value:
-        fields['BARCODE'] = {'value': barcode_value, 'confidence': (barcode_result or {}).get('confidence', 0.7), 'source': (barcode_result or {}).get('source', 'BARCODE')}
+        fields['BARCODE'] = {
+            'value': barcode_value,
+            'confidence': (barcode_result or {}).get('confidence', 0.7),
+            'source': (barcode_result or {}).get('source', 'BARCODE'),
+        }
+
     if lookup.get('status') != 'FOUND':
         return fields
+
     product_name = str(lookup.get('product_name') or '').strip()
     brand = str(lookup.get('brands') or '').split(',')[0].strip()
-    # External metadata is corroborating evidence, but has priority over a weak
-    # generic OCR candidate such as "Balanced".
+
+    # External database lookup is supplementary evidence, never legal proof
+    fields['BARCODE_METADATA'] = {
+        'product_name': product_name,
+        'brand': brand,
+        'source': 'BARCODE_LOOKUP',
+        'evidence_type': 'SUPPLEMENTARY',
+        'status': 'FOUND',
+    }
+
+    # Handle PRODUCT_NAME
     if product_name:
-        current = fields.get('PRODUCT_NAME', {})
-        if not current or float(current.get('confidence') or 0) < 0.85 or current.get('value', '').lower() in MARKETING_TERMS:
-            fields['PRODUCT_NAME'] = {'value': product_name[:200], 'confidence': 0.92, 'source': 'BARCODE_LOOKUP+OCR'}
+        current = fields.get('PRODUCT_NAME')
+        if not current or not str(current.get('value', '')).strip():
+            fields['PRODUCT_NAME'] = {
+                'value': product_name[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        elif current.get('value', '').lower() in MARKETING_TERMS:
+            fields['PRODUCT_NAME'] = {
+                'value': product_name[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        else:
+            if _values_conflict('PRODUCT_NAME', current, {'value': product_name}):
+                # Barcode lookup contradicts printed OCR - surface contradiction without replacing OCR
+                ocr_val = current.get('value')
+                current['status'] = 'CONFLICTING_EVIDENCE'
+                current['has_conflict'] = True
+                current['barcode_match'] = 'CONFLICTS'
+                current['values'] = [ocr_val, product_name]
+                current['ocr_value'] = ocr_val
+                current['barcode_value'] = product_name
+                current['candidates'] = [
+                    dict(current),
+                    {
+                        'value': product_name,
+                        'source': 'BARCODE_LOOKUP',
+                        'evidence_type': 'SUPPLEMENTARY',
+                        'confidence': 0.75,
+                    },
+                ]
+                current['conflict_reason'] = (
+                    f"Printed OCR product name '{ocr_val}' contradicts barcode database lookup '{product_name}'."
+                )
+            else:
+                current['barcode_match'] = 'AGREES'
+                current['supplementary_evidence'] = {
+                    'value': product_name,
+                    'source': 'BARCODE_LOOKUP',
+                    'evidence_type': 'SUPPLEMENTARY',
+                }
+
+    # Handle BRAND
     if brand:
-        current = fields.get('BRAND', {})
-        if not current or float(current.get('confidence') or 0) < 0.85:
-            fields['BRAND'] = {'value': brand[:200], 'confidence': 0.92, 'source': 'BARCODE_LOOKUP+OCR'}
+        current = fields.get('BRAND')
+        if not current or not str(current.get('value', '')).strip():
+            fields['BRAND'] = {
+                'value': brand[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        elif current.get('value', '').lower() in MARKETING_TERMS:
+            fields['BRAND'] = {
+                'value': brand[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        else:
+            if _values_conflict('BRAND', current, {'value': brand}):
+                ocr_val = current.get('value')
+                current['status'] = 'CONFLICTING_EVIDENCE'
+                current['has_conflict'] = True
+                current['barcode_match'] = 'CONFLICTS'
+                current['values'] = [ocr_val, brand]
+                current['ocr_value'] = ocr_val
+                current['barcode_value'] = brand
+                current['candidates'] = [
+                    dict(current),
+                    {
+                        'value': brand,
+                        'source': 'BARCODE_LOOKUP',
+                        'evidence_type': 'SUPPLEMENTARY',
+                        'confidence': 0.75,
+                    },
+                ]
+                current['conflict_reason'] = (
+                    f"Printed OCR brand '{ocr_val}' contradicts barcode database lookup '{brand}'."
+                )
+            else:
+                current['barcode_match'] = 'AGREES'
+                current['supplementary_evidence'] = {
+                    'value': brand,
+                    'source': 'BARCODE_LOOKUP',
+                    'evidence_type': 'SUPPLEMENTARY',
+                }
+
     if product_name and 'GENERIC_NAME' not in fields:
-        tokens = [token for token in re.findall(r'[A-Za-z]+', product_name) if token.lower() not in {word.lower() for word in brand.split()}]
+        tokens = [
+            token for token in re.findall(r'[A-Za-z]+', product_name)
+            if token.lower() not in {word.lower() for word in brand.split()}
+        ]
         if tokens:
-            fields['GENERIC_NAME'] = {'value': tokens[-1].upper(), 'confidence': 0.78, 'source': 'BARCODE_LOOKUP+OCR'}
+            fields['GENERIC_NAME'] = {
+                'value': tokens[-1].upper(),
+                'confidence': 0.78,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+            }
+
     return fields
 
 
 def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Keep the strongest traceable field from all package views.
+    """Merge extracted declarations across multiple package views with explicit conflict detection.
 
-    A declaration panel should not be overwritten by a lower-confidence front
-    image merely because it is processed later.
+    Instead of silently favoring the highest-confidence candidate when package views
+    disagree, conflicting values are explicitly flagged with status CONFLICTING_EVIDENCE,
+    and all candidate metadata (source, confidence, image index) is preserved.
     """
     merged: Dict[str, Any] = {}
+    candidates_by_field: Dict[str, List[Dict[str, Any]]] = {}
+
     for field_set in field_sets:
+        if not field_set or not isinstance(field_set, dict):
+            continue
         for name, candidate in field_set.items():
-            if not candidate or not str(candidate.get('value', '')).strip():
+            if not candidate or not isinstance(candidate, dict):
                 continue
-            previous = merged.get(name)
-            if not previous or float(candidate.get('confidence') or 0) > float(previous.get('confidence') or 0):
-                merged[name] = candidate
+            val = candidate.get('value')
+            if val is None or not str(val).strip():
+                continue
+            candidates_by_field.setdefault(name, []).append(dict(candidate))
+
+    for name, candidates in candidates_by_field.items():
+        if not candidates:
+            continue
+
+        if len(candidates) == 1:
+            merged[name] = candidates[0]
+            continue
+
+        # Group candidates by value equivalence using _values_conflict
+        groups: List[List[Dict[str, Any]]] = []
+        for cand in candidates:
+            matched_group = False
+            for group in groups:
+                if not _values_conflict(name, cand, group[0]):
+                    group.append(cand)
+                    matched_group = True
+                    break
+            if not matched_group:
+                groups.append([cand])
+
+        if len(groups) == 1:
+            # All candidates agree across images
+            best = max(groups[0], key=lambda c: float(c.get('confidence') or 0))
+            agreed = dict(best)
+            agreed['candidates'] = candidates
+            merged[name] = agreed
+        else:
+            # Contradictory evidence detected between package views!
+            distinct_values = [str(g[0].get('value')) for g in groups]
+            highest_conf = max((float(c.get('confidence') or 0) for c in candidates), default=0.8)
+            merged[name] = {
+                'status': 'CONFLICTING_EVIDENCE',
+                'has_conflict': True,
+                'values': distinct_values,
+                'value': f"CONFLICT: {' vs '.join(distinct_values)}",
+                'confidence': round(highest_conf, 2),
+                'source': 'MULTI_IMAGE_CONFLICT',
+                'candidates': candidates,
+                'conflict_reason': f"Conflicting declarations detected across package views for '{name}': {distinct_values}",
+            }
+
     return merged
 
 

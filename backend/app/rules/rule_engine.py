@@ -134,7 +134,10 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'rule_version': rule.get('rule_version'),
             'regulatory_source': rule.get('regulatory_source', 'LEGAL_METROLOGY'),
             'rule_reference': rule.get('rule_reference'),
-            'review_required': status in ['FAIL', 'NOT_VERIFIABLE'],
+            'review_required': (
+                status in ['FAIL', 'NOT_VERIFIABLE']
+                or bool(evidence_data and (evidence_data.get('status') == 'CONFLICTING_EVIDENCE' or evidence_data.get('has_conflict')))
+            ),
             'severity': severity,
             'validation_result': val_result.to_dict(),
         }

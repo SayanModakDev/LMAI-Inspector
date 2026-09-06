@@ -125,12 +125,30 @@ def _check_preconditions(
     evidence: Optional[Dict[str, Any]],
     rule: Dict[str, Any],
 ) -> Optional[ValidationResult]:
-    """Check common preconditions: missing evidence, clearly_invalid flag, and confidence.
+    """Check common preconditions: missing evidence, clearly_invalid flag, confidence, and conflicting evidence.
 
     Returns a ValidationResult if a terminal state is reached, else None to continue validation.
     """
     parameter = rule.get("parameter", "UNKNOWN")
     required = rule.get("required", True)
+
+    # 0. Conflicting evidence across views/sources requires manual review, never silently PASS
+    if evidence and (
+        evidence.get("status") == "CONFLICTING_EVIDENCE"
+        or evidence.get("has_conflict") is True
+    ):
+        conflicting_vals = evidence.get("values") or [evidence.get("value")]
+        vals_str = ", ".join(str(v) for v in conflicting_vals)
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                f"Conflicting evidence detected across package views for '{parameter}': "
+                f"[{vals_str}]. Manual inspection and review required."
+            ),
+            normalized_value=str(evidence.get("value", "")),
+            evidence=evidence,
+        )
 
     # 1. Missing evidence or empty value
     if not evidence or evidence.get("value") is None or not str(evidence.get("value", "")).strip():
@@ -227,6 +245,29 @@ def validate_value_and_unit_present(
     """
     parameter = rule.get("parameter", "DECLARED_NET_QUANTITY")
     required = rule.get("required", True)
+
+    # 0. Conflicting evidence check
+    if evidence and (
+        evidence.get("status") == "CONFLICTING_EVIDENCE"
+        or evidence.get("has_conflict") is True
+    ):
+        conflicting_vals = evidence.get("values") or [evidence.get("value")]
+        vals_str = ", ".join(str(v) for v in conflicting_vals)
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                f"Conflicting evidence detected across package views for '{parameter}': "
+                f"[{vals_str}]. Manual inspection and review required."
+            ),
+            raw_value=str(evidence.get("value", "")),
+            value=None,
+            unit=None,
+            quantity_present=evidence.get("quantity_present", False),
+            unit_present=evidence.get("unit_present", False),
+            quantity_unit_valid=False,
+            evidence=evidence,
+        )
 
     # 1. Missing evidence
     if not evidence or evidence.get("value") is None or not str(evidence.get("value", "")).strip():
@@ -1126,6 +1167,25 @@ def dispatch_validator(
     Fails safely as NOT_VERIFIABLE if validation_method is unknown.
     Never declares PASS merely because a field exists.
     """
+    # Intercept conflicting evidence upfront across all rules
+    if evidence and (
+        evidence.get("status") == "CONFLICTING_EVIDENCE"
+        or evidence.get("has_conflict") is True
+    ):
+        conflicting_vals = evidence.get("values") or [evidence.get("value")]
+        vals_str = ", ".join(str(v) for v in conflicting_vals)
+        parameter = rule.get("parameter", "UNKNOWN")
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                f"Conflicting evidence detected across package views for '{parameter}': "
+                f"[{vals_str}]. Manual inspection and review required."
+            ),
+            normalized_value=str(evidence.get("value", "")),
+            evidence=evidence,
+        )
+
     method = validation_method
 
     # If method is missing, fallback to default for this parameter if known
