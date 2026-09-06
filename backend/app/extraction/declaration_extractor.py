@@ -4,6 +4,18 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.ontology import (
+    CanonicalDeclarationField,
+    QuantityType,
+    LEGAL_MASS_UNITS,
+    LEGAL_VOLUME_UNITS,
+    LEGAL_COUNT_UNITS,
+    LEGAL_LENGTH_AREA_UNITS,
+    build_quantity_candidate,
+    infer_quantity_type,
+    normalize_unit,
+)
+
 logger = logging.getLogger(__name__)
 
 MRP_PATTERNS = [
@@ -54,6 +66,12 @@ MANUFACTURER_KEYWORDS = [
     'marketed by', 'packed at', 'packed by', 'puckea by',
     'packer', 'manufacturer', 'made by',
 ]
+PACKER_KEYWORDS = [
+    'manufactured & packed by', 'manufactured and packed by', 'manufactured/packed by',
+    'packed & marketed by', 'packed and marketed by',
+    'packed by', 'packed at', 'pkd by', 'pkd at', 'pkg by', 'pkg at', 'puckea by',
+    'packaged by', 'packer',
+]
 IMPORTER_KEYWORDS = ['imported by', 'importer', 'import by']
 INGREDIENT_KEYWORDS = ['ingredients', 'composition', 'ingredient list']
 NUTRITIONAL_KEYWORDS = ['nutritional information', 'nutrition facts', 'energy', 'protein', 'carbohydrate', 'fat', 'calories', 'per serving']
@@ -65,20 +83,26 @@ EXPIRY_KEYWORDS = ['expiry date', 'expiration date', 'exp date', 'exp. date', 'e
 MFG_DATE_KEYWORDS = ['date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date', 'mfg date', 'mfd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd']
 PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date', 'pkg date', 'pkd date', 'packed on', 'pkd:', 'pkd.', 'pkd']
 MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
+
 # Semantic section classifications
+SECTION_FRONT_PRODUCT = "FRONT_PRODUCT"
 SECTION_DECLARED_QUANTITY = "DECLARED_QUANTITY"
-SECTION_NUTRITION = "NUTRITION"
-SECTION_SERVING_SIZE = "SERVING_SIZE"
-SECTION_INGREDIENTS = "INGREDIENTS"
-SECTION_MANUFACTURER = "MANUFACTURER"
-SECTION_ADDRESS = "ADDRESS"
 SECTION_MRP = "MRP"
+SECTION_MANUFACTURER = "MANUFACTURER"
+SECTION_PACKER = "PACKER"
+SECTION_ADDRESS = "ADDRESS"
 SECTION_DATE = "DATE"
-SECTION_CONSUMER_CARE = "CONSUMER_CARE"
+SECTION_BATCH = "BATCH"
+SECTION_NUTRITION = "NUTRITION"
+SECTION_INGREDIENTS = "INGREDIENTS"
+SECTION_SERVING_SIZE = "SERVING_SIZE"
 SECTION_FSSAI = "FSSAI"
+SECTION_CONSUMER_CARE = "CONSUMER_CARE"
+SECTION_BARCODE = "BARCODE"
 SECTION_STORAGE = "STORAGE"
 SECTION_MARKETING = "MARKETING"
 SECTION_FRONT_TITLE = "FRONT_TITLE"
+SECTION_INSTRUCTIONS = "INSTRUCTIONS"
 SECTION_OTHER = "OTHER"
 
 NET_QTY_POSITIVE_CONTEXT_RE = re.compile(
@@ -229,6 +253,8 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
         return SECTION_DECLARED_QUANTITY
     if INGREDIENTS_LINE_RE.search(cleaned):
         return SECTION_INGREDIENTS
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in PACKER_KEYWORDS) and re.search(r'\b(?:packed|pkd|pkg|packer)\b', cleaned, re.I):
+        return SECTION_PACKER
     if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MANUFACTURER_KEYWORDS) or COMPANY_SUFFIX_RE.search(cleaned):
         return SECTION_MANUFACTURER
     if CONSUMER_CARE_STOP_RE.search(cleaned):
@@ -241,8 +267,14 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
         return SECTION_MRP
     if re.search(r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?)\b', cleaned, re.I):
         return SECTION_FSSAI
+    if re.search(r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b', cleaned, re.I):
+        return SECTION_BATCH
     if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in ALL_DATE_LABELS):
         return SECTION_DATE
+    if re.search(r'\b(?:directions?\s+for\s+use|how\s+to\s+use|instructions?)\b', cleaned, re.I):
+        return SECTION_INSTRUCTIONS
+    if re.search(r'\b(?:barcode|ean|upc)\b', cleaned, re.I):
+        return SECTION_BARCODE
 
     # Section continuity
     if current_section == SECTION_NUTRITION:
@@ -250,11 +282,41 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
             return SECTION_NUTRITION
         if re.fullmatch(r'[\d.,\s/%+-]+', cleaned) or len(cleaned.split()) <= 4:
             return SECTION_NUTRITION
-    elif current_section in (SECTION_MANUFACTURER, SECTION_ADDRESS):
+    elif current_section in (SECTION_MANUFACTURER, SECTION_PACKER, SECTION_ADDRESS):
         if re.search(r'(?:plot|survey|sector|phase|road|street|bldg|building|floor|estate|industrial|gidc|district|dist|pin|india)', cleaned, re.I):
             return SECTION_ADDRESS
 
     return SECTION_OTHER
+
+
+def detect_semantic_sections(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Segment document text lines into semantic packaging sections with bounding boxes and metadata."""
+    current_sec = SECTION_OTHER
+    annotated: List[Dict[str, Any]] = []
+    for idx, line in enumerate(lines):
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        sec = classify_line_section(line_clean, current_sec)
+        current_sec = sec
+        bbox = None
+        conf = 0.8
+        if ocr_items:
+            matching_item = next(
+                (item for item in ocr_items if line_clean.lower() in str(item.get('text', '')).lower()),
+                None,
+            )
+            if matching_item:
+                bbox = matching_item.get('bbox')
+                conf = float(matching_item.get('confidence') or 0.8)
+        annotated.append({
+            'line_index': idx,
+            'text': line_clean,
+            'section_type': sec,
+            'bbox': bbox,
+            'confidence': conf,
+        })
+    return annotated
 
 
 def _normalize_text(raw_text: str) -> str:
@@ -1534,25 +1596,31 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
     return None
 
 
-NET_QTY_UNITS_MAP = {
-    'g': 'g', 'gm': 'g', 'gms': 'g', 'gram': 'g', 'grams': 'g',
-    'kg': 'kg', 'kgs': 'kg', 'kilogram': 'kg', 'kilograms': 'kg',
-    'mg': 'mg', 'milligram': 'mg', 'milligrams': 'mg',
-    'ml': 'ml', 'millilitre': 'ml', 'millilitres': 'ml', 'milliliter': 'ml', 'milliliters': 'ml',
-    'l': 'L', 'ltr': 'L', 'litre': 'L', 'litres': 'L', 'liter': 'L', 'liters': 'L',
-    'oz': 'oz', 'lb': 'lb', 'lbs': 'lb',
-    'pc': 'pieces', 'pcs': 'pieces', 'piece': 'pieces', 'pieces': 'pieces',
-    'tablet': 'tablets', 'tablets': 'tablets',
-    'capsule': 'capsules', 'capsules': 'capsules',
+NET_QTY_UNITS_MAP: Dict[str, str] = {
+    **LEGAL_MASS_UNITS,
+    **LEGAL_VOLUME_UNITS,
+    **LEGAL_COUNT_UNITS,
+    **LEGAL_LENGTH_AREA_UNITS,
 }
 
 NET_QTY_LABEL_RE = re.compile(
-    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents?)\s*[:.]*\s*(?:-\s+)?([^\n,;]+)',
+    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume|mass)|quantity|contents?)(?:\s*[:.=]|\s+[-–](?=\s))*\s*([^\n,;]+)',
     re.IGNORECASE,
 )
 
+QUANTITY_UNITS_CHOICES = (
+    r'g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|'
+    r'ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|cl|'
+    r'oz|lb|lbs|'
+    r'pc|pcs|piece|pieces|tablet|tablets|tab|tabs|capsule|capsules|cap|caps|'
+    r'unit|units|n|no|nos|number|numbers|wipes?|sheets?|pouches?|sachets?|rolls?|sticks?|bars?|bags?|'
+    r'm|meter|meters|metre|metres|cm|centimeter|centimeters|centimetre|centimetres|mm|sq\s*m|sq\s*cm'
+)
+
+NET_QTY_UNIT_PATTERN = rf'\b({QUANTITY_UNITS_CHOICES})\b'
+
 STANDALONE_QTY_RE = re.compile(
-    r'\b([+-]?\d+(?:\.\d+)?)\s*(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
+    rf'\b([+-]?\d+(?:\.\d+)?)\s*({QUANTITY_UNITS_CHOICES})\b',
     re.IGNORECASE,
 )
 
@@ -1560,7 +1628,7 @@ STANDALONE_QTY_RE = re.compile(
 def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     """Extract structured declared net quantity with semantic section scoping.
     Distinguishes declared package quantity from nutritional table values, serving sizes,
-    and unrelated section numbers. Preserves ignored candidates for auditability."""
+    and unrelated section numbers across mass, volume, and count units. Preserves ignored candidates for auditability."""
     if not text:
         return None
 
@@ -1588,52 +1656,23 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
             raw_span = label_match.group(0).strip()
             after_label = label_match.group(1).strip()
             num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
-            unit_match = re.search(
-                r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
-                after_label,
-                re.IGNORECASE,
-            )
+            unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
 
             qty_val = num_match.group(1) if num_match else None
-            quantity_present = qty_val is not None
             raw_unit = unit_match.group(1) if unit_match else None
-            unit_present = raw_unit is not None
-            norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower()) if raw_unit else None
 
-            if quantity_present or unit_present:
-                try:
-                    num_float = float(qty_val) if qty_val is not None else None
-                    num_valid = num_float is not None and num_float > 0
-                except ValueError:
-                    num_valid = False
-
-                quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
-
-                if quantity_present and unit_present:
-                    display_val = f"{qty_val} {norm_unit}"
-                elif quantity_present:
-                    display_val = f"{qty_val}"
-                elif unit_present:
-                    display_val = f"{norm_unit}"
-                else:
-                    display_val = raw_span
-
-                cand = {
-                    'raw_value': raw_span,
-                    'value': display_val,
-                    'quantity_value': qty_val,
-                    'quantity_unit': norm_unit,
-                    'raw_unit': raw_unit,
-                    'quantity_present': quantity_present,
-                    'unit_present': unit_present,
-                    'quantity_unit_valid': quantity_unit_valid,
-                    'confidence': 0.9 if quantity_unit_valid else 0.8,
-                    'source': 'OCR',
-                    'semantic_section': SECTION_DECLARED_QUANTITY,
-                    'relevance': 'high',
-                    'relevance_score': 0.95 if quantity_unit_valid else 0.85,
-                    'source_context': line_clean,
-                }
+            if qty_val is not None or raw_unit is not None:
+                cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.9 if (qty_val and raw_unit) else 0.8,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.95 if (qty_val and raw_unit) else 0.85,
+                    source_context=line_clean,
+                    source="OCR",
+                )
                 valid_candidates.append(cand)
                 continue
 
@@ -1641,15 +1680,7 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         for sm in STANDALONE_QTY_RE.finditer(line_clean):
             qty_val = sm.group(1)
             raw_unit = sm.group(2)
-            norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower(), raw_unit.lower())
             raw_span = sm.group(0).strip()
-
-            try:
-                num_float = float(qty_val)
-                num_valid = num_float > 0
-            except ValueError:
-                num_valid = False
-            quantity_unit_valid = bool(num_valid and norm_unit in NET_QTY_UNITS_MAP.values())
 
             is_nutrition = (
                 sec == SECTION_NUTRITION
@@ -1662,83 +1693,67 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                 or bool(SERVING_SIZE_RE.search(line_clean))
             )
             is_other_section = (
-                sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS)
+                sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS, SECTION_FSSAI, SECTION_BATCH)
                 or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
                 or bool(STORAGE_STOP_RE.search(line_clean))
                 or bool(MARKETING_STOP_RE.search(line_clean))
             )
 
             if is_nutrition:
-                ignored_candidates.append({
-                    'raw_value': raw_span,
-                    'value': f"{qty_val} {norm_unit}",
-                    'quantity_value': qty_val,
-                    'quantity_unit': norm_unit,
-                    'raw_unit': raw_unit,
-                    'quantity_present': True,
-                    'unit_present': True,
-                    'quantity_unit_valid': quantity_unit_valid,
-                    'confidence': 0.7,
-                    'source': 'OCR',
-                    'semantic_section': SECTION_NUTRITION,
-                    'relevance': 'rejected_as_irrelevant',
-                    'relevance_score': 0.0,
-                    'rejection_reason': 'Value belongs to nutritional table, not declared net quantity',
-                    'source_context': line_clean,
-                })
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_NUTRITION,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                )
+                ignored_cand['rejection_reason'] = "Value belongs to nutritional table, not declared net quantity"
+                ignored_candidates.append(ignored_cand)
             elif is_serving:
-                ignored_candidates.append({
-                    'raw_value': raw_span,
-                    'value': f"{qty_val} {norm_unit}",
-                    'quantity_value': qty_val,
-                    'quantity_unit': norm_unit,
-                    'raw_unit': raw_unit,
-                    'quantity_present': True,
-                    'unit_present': True,
-                    'quantity_unit_valid': quantity_unit_valid,
-                    'confidence': 0.7,
-                    'source': 'OCR',
-                    'semantic_section': SECTION_SERVING_SIZE,
-                    'relevance': 'rejected_as_irrelevant',
-                    'relevance_score': 0.0,
-                    'rejection_reason': 'Value is serving size, not package declared net quantity',
-                    'source_context': line_clean,
-                })
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_SERVING_SIZE,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                )
+                ignored_cand['rejection_reason'] = "Value is serving size, not package declared net quantity"
+                ignored_candidates.append(ignored_cand)
             elif is_other_section:
-                ignored_candidates.append({
-                    'raw_value': raw_span,
-                    'value': f"{qty_val} {norm_unit}",
-                    'quantity_value': qty_val,
-                    'quantity_unit': norm_unit,
-                    'raw_unit': raw_unit,
-                    'quantity_present': True,
-                    'unit_present': True,
-                    'quantity_unit_valid': quantity_unit_valid,
-                    'confidence': 0.5,
-                    'source': 'OCR',
-                    'semantic_section': sec,
-                    'relevance': 'rejected_as_irrelevant',
-                    'relevance_score': 0.0,
-                    'rejection_reason': f"Value belongs to {sec} section, not declared net quantity",
-                    'source_context': line_clean,
-                })
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=sec,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                )
+                ignored_cand['rejection_reason'] = f"Value belongs to {sec} section, not declared net quantity"
+                ignored_candidates.append(ignored_cand)
             else:
-                fallback_candidates.append({
-                    'raw_value': raw_span,
-                    'value': f"{qty_val} {norm_unit}",
-                    'quantity_value': qty_val,
-                    'quantity_unit': norm_unit,
-                    'raw_unit': raw_unit,
-                    'quantity_present': True,
-                    'unit_present': True,
-                    'quantity_unit_valid': quantity_unit_valid,
-                    'confidence': 0.75,
-                    'source': 'OCR',
-                    'semantic_section': SECTION_OTHER,
-                    'relevance': 'standalone_fallback',
-                    'relevance_score': 0.6,
-                    'source_context': line_clean,
-                })
+                fallback_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.75,
+                    semantic_section=SECTION_OTHER,
+                    relevance="standalone_fallback",
+                    relevance_score=0.6,
+                    source_context=line_clean,
+                    source="OCR",
+                )
+                fallback_candidates.append(fallback_cand)
 
     # If valid positive-context candidates exist, pick the best one
     if valid_candidates:
@@ -1758,39 +1773,21 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         raw_span = label_match_norm.group(0).strip()
         after_label = label_match_norm.group(1).strip()
         num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
-        unit_match = re.search(
-            r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
-            after_label,
-            re.IGNORECASE,
-        )
+        unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
         qty_val = num_match.group(1) if num_match else None
         raw_unit = unit_match.group(1) if unit_match else None
-        norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower()) if raw_unit else None
-        quantity_present = qty_val is not None
-        unit_present = raw_unit is not None
-        try:
-            num_float = float(qty_val) if qty_val is not None else None
-            num_valid = num_float is not None and num_float > 0
-        except ValueError:
-            num_valid = False
-        quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
-        display_val = f"{qty_val} {norm_unit}" if (quantity_present and unit_present) else (qty_val or norm_unit or raw_span)
-        winner = {
-            'raw_value': raw_span,
-            'value': display_val,
-            'quantity_value': qty_val,
-            'quantity_unit': norm_unit,
-            'raw_unit': raw_unit,
-            'quantity_present': quantity_present,
-            'unit_present': unit_present,
-            'quantity_unit_valid': quantity_unit_valid,
-            'confidence': 0.85,
-            'source': 'OCR',
-            'semantic_section': SECTION_DECLARED_QUANTITY,
-            'relevance': 'high',
-            'relevance_score': 0.9,
-            'source_context': raw_span,
-        }
+
+        winner = build_quantity_candidate(
+            qty_val=qty_val,
+            raw_unit=raw_unit,
+            raw_span=raw_span,
+            confidence=0.85,
+            semantic_section=SECTION_DECLARED_QUANTITY,
+            relevance="high",
+            relevance_score=0.9,
+            source_context=raw_span,
+            source="OCR",
+        )
         if ignored_candidates:
             winner['ignored_candidates'] = ignored_candidates
         return winner
@@ -1803,6 +1800,66 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         return winner
 
     return None
+
+
+def _extract_packer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Extract packer name and address when packed by/pkd by is declared."""
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        matched_kw = None
+        for kw in PACKER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'packer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'packer', max_lines=6)
+
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                return name, address or None
+
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                    return name, address or None
+
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
+                elif cleaned_after:
+                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    address = _clean_address_text(', '.join(cont_lines))
+                else:
+                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                address = _clean_address_text(vendor['address']) or None
+                return name or None, address
+
+    return None, None
 
 
 def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None, category: Optional[str] = None) -> Dict[str, Any]:
@@ -1892,6 +1949,16 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.8, 'source': 'OCR'}
     if mfg_addr:
         fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.7, 'source': 'OCR'}
+
+    packer_name, packer_addr = _extract_packer_and_address(lines)
+    if packer_name:
+        fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.8, 'source': 'OCR'}
+        if 'MANUFACTURER_NAME' not in fields:
+            fields['MANUFACTURER_NAME'] = {'value': packer_name, 'confidence': 0.78, 'source': 'OCR', 'entity_type': 'PACKER'}
+    if packer_addr:
+        fields['PACKER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.7, 'source': 'OCR'}
+        if 'MANUFACTURER_ADDRESS' not in fields:
+            fields['MANUFACTURER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.68, 'source': 'OCR', 'entity_type': 'PACKER'}
 
     for line_index, line in enumerate(lines):
         lower = line.lower()

@@ -71,6 +71,7 @@ class ValidationResult:
     raw_value: Optional[str] = None
     value: Optional[Any] = None
     unit: Optional[str] = None
+    quantity_type: Optional[str] = None
     quantity_present: Optional[bool] = None
     unit_present: Optional[bool] = None
     quantity_unit_valid: Optional[bool] = None
@@ -92,6 +93,8 @@ class ValidationResult:
             data["value"] = self.value
         if self.unit is not None:
             data["unit"] = self.unit
+        if self.quantity_type is not None:
+            data["quantity_type"] = self.quantity_type
         if self.quantity_present is not None:
             data["quantity_present"] = self.quantity_present
         if self.unit_present is not None:
@@ -401,6 +404,19 @@ def validate_value_and_unit_present(
 
     is_legal_unit = bool(normalized_unit and (normalized_unit in ALL_LEGAL_UNITS.values() or normalized_unit.lower() in ALL_LEGAL_UNITS.keys()))
 
+    # Infer or extract quantity type (MASS, VOLUME, COUNT, LENGTH_AREA)
+    qty_type_str = evidence.get("quantity_type")
+    if not qty_type_str and normalized_unit:
+        lowered_u = normalized_unit.lower()
+        if lowered_u in LEGAL_WEIGHT_UNITS or lowered_u in LEGAL_WEIGHT_UNITS.values():
+            qty_type_str = "MASS"
+        elif lowered_u in LEGAL_VOLUME_UNITS or lowered_u in LEGAL_VOLUME_UNITS.values():
+            qty_type_str = "VOLUME"
+        elif lowered_u in LEGAL_COUNT_UNITS or lowered_u in LEGAL_COUNT_UNITS.values():
+            qty_type_str = "COUNT"
+        elif lowered_u in LEGAL_LENGTH_AREA_UNITS or lowered_u in LEGAL_LENGTH_AREA_UNITS.values():
+            qty_type_str = "LENGTH_AREA"
+
     # Determine compliance
     if not quantity_present and not unit_present:
         return ValidationResult(
@@ -411,6 +427,7 @@ def validate_value_and_unit_present(
             raw_value=raw_val,
             value=None,
             unit=None,
+            quantity_type=qty_type_str,
             quantity_present=False,
             unit_present=False,
             quantity_unit_valid=False,
@@ -426,6 +443,7 @@ def validate_value_and_unit_present(
             raw_value=raw_val,
             value=numeric_val,
             unit=None,
+            quantity_type=qty_type_str,
             quantity_present=True,
             unit_present=False,
             quantity_unit_valid=False,
@@ -441,6 +459,7 @@ def validate_value_and_unit_present(
             raw_value=raw_val,
             value=None,
             unit=normalized_unit,
+            quantity_type=qty_type_str,
             quantity_present=False,
             unit_present=True,
             quantity_unit_valid=False,
@@ -457,6 +476,7 @@ def validate_value_and_unit_present(
             raw_value=raw_val,
             value=numeric_val,
             unit=normalized_unit,
+            quantity_type=qty_type_str,
             quantity_present=True,
             unit_present=True,
             quantity_unit_valid=False,
@@ -472,11 +492,33 @@ def validate_value_and_unit_present(
             raw_value=raw_val,
             value=numeric_val,
             unit=qty_unit,
+            quantity_type=qty_type_str,
             quantity_present=True,
             unit_present=True,
             quantity_unit_valid=False,
             evidence=evidence,
         )
+
+    # Count declarations must be whole numbers (integers)
+    if qty_type_str == "COUNT" and numeric_val is not None:
+        try:
+            if not float(numeric_val).is_integer():
+                return ValidationResult(
+                    status="FAIL",
+                    binary=0,
+                    reason=f"Declared count quantity must be a whole number (integer), found: {numeric_val} {normalized_unit}.",
+                    normalized_value=f"{numeric_val} {normalized_unit}",
+                    raw_value=raw_val,
+                    value=numeric_val,
+                    unit=normalized_unit,
+                    quantity_type=qty_type_str,
+                    quantity_present=True,
+                    unit_present=True,
+                    quantity_unit_valid=False,
+                    evidence=evidence,
+                )
+        except (ValueError, TypeError):
+            pass
 
     # Valid quantity + unit declaration on package
     normalized_value = f"{numeric_val} {normalized_unit}"
@@ -488,6 +530,7 @@ def validate_value_and_unit_present(
         raw_value=raw_val,
         value=numeric_val,
         unit=normalized_unit,
+        quantity_type=qty_type_str,
         quantity_present=True,
         unit_present=True,
         quantity_unit_valid=True,

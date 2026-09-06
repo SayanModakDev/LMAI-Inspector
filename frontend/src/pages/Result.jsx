@@ -265,9 +265,18 @@ const Result = () => {
       binaryClass = 'qty-binary-na';
     }
 
+    let quantityType = rule?.quantity_type ?? rule?.evidence_data?.quantity_type ?? field?.quantity_type ?? field?.field_data?.quantity_type ?? null;
+    if (!quantityType && unit) {
+      const u = String(unit).toLowerCase();
+      if (['g', 'gm', 'gms', 'kg', 'mg'].includes(u)) quantityType = 'MASS';
+      else if (['ml', 'l', 'ltr', 'cl'].includes(u)) quantityType = 'VOLUME';
+      else if (['pieces', 'piece', 'pcs', 'tablets', 'capsules', 'units', 'numbers'].includes(u)) quantityType = 'COUNT';
+    }
+
     return {
       val: val || '—',
       unit: unit || '—',
+      quantityType: quantityType || '—',
       rawVal,
       displayValUnit,
       qtyPresent,
@@ -400,7 +409,7 @@ const Result = () => {
           <div className="declared-qty-val-box">
             <span className="qty-headline-label">Declared Net Quantity</span>
             <div className="qty-headline-value">{netQtyDecomposition.displayValUnit}</div>
-            <div className="text-xs text-muted">Value: {netQtyDecomposition.val} | Unit: {netQtyDecomposition.unit}</div>
+            <div className="text-xs text-muted">Value: {netQtyDecomposition.val} | Unit: {netQtyDecomposition.unit} | Type: {netQtyDecomposition.quantityType}</div>
           </div>
           <div className="declared-qty-checks">
             <div className="qty-check-item">

@@ -1,0 +1,246 @@
+"""
+Canonical Packaging Declaration Ontology and Measurement Models.
+
+Defines standardized fields, field groups, quantity measurement types (Mass, Volume, Count, Length/Area),
+and legal unit mappings under the Legal Metrology (Packaged Commodities) Rules, 2011.
+"""
+
+from enum import Enum
+from typing import Any, Dict, Optional, Tuple, Union
+
+
+class CanonicalDeclarationField(str, Enum):
+    """Canonical declaration fields recognized across all packaged commodities."""
+    # Identity
+    PRODUCT_NAME = "PRODUCT_NAME"
+    BRAND = "BRAND"
+    GENERIC_NAME = "GENERIC_NAME"
+    PRODUCT_TYPE = "PRODUCT_TYPE"
+
+    # Quantity & Pricing
+    DECLARED_NET_QUANTITY = "DECLARED_NET_QUANTITY"
+    MRP = "MRP"
+
+    # Responsible Parties
+    MANUFACTURER_NAME = "MANUFACTURER_NAME"
+    MANUFACTURER_ADDRESS = "MANUFACTURER_ADDRESS"
+    PACKER_NAME = "PACKER_NAME"
+    PACKER_ADDRESS = "PACKER_ADDRESS"
+    IMPORTER_NAME_ADDRESS = "IMPORTER_NAME_ADDRESS"
+    COUNTRY_OF_ORIGIN = "COUNTRY_OF_ORIGIN"
+
+    # Dates
+    MANUFACTURE_DATE = "MANUFACTURE_DATE"
+    PACKING_DATE = "PACKING_DATE"
+    EXPIRY_DATE = "EXPIRY_DATE"
+    BEST_BEFORE_USE_BY = "BEST_BEFORE_USE_BY"
+    USE_BEFORE_DATE = "USE_BEFORE_DATE"
+    MONTH_YEAR_MANUFACTURE = "MONTH_YEAR_MANUFACTURE"
+
+    # Traceability & Consumer Care
+    BATCH_NUMBER = "BATCH_NUMBER"
+    CONSUMER_CARE = "CONSUMER_CARE"
+    BARCODE = "BARCODE"
+
+    # Category-Specific & Composition
+    FSSAI_LICENSE = "FSSAI_LICENSE"
+    INGREDIENTS_LIST = "INGREDIENTS_LIST"
+    NUTRITIONAL_INFO = "NUTRITIONAL_INFO"
+    VEG_NONVEG_SYMBOL = "VEG_NONVEG_SYMBOL"
+
+
+class DeclarationGroup(str, Enum):
+    """Functional groupings for declarations."""
+    IDENTITY = "IDENTITY"
+    QUANTITY = "QUANTITY"
+    PRICING = "PRICING"
+    RESPONSIBLE_PARTY = "RESPONSIBLE_PARTY"
+    ORIGIN = "ORIGIN"
+    DATES = "DATES"
+    TRACEABILITY = "TRACEABILITY"
+    CONSUMER_SUPPORT = "CONSUMER_SUPPORT"
+    SAFETY_COMPLIANCE = "SAFETY_COMPLIANCE"
+    SPECIFICATION = "SPECIFICATION"
+
+
+FIELD_TO_GROUP: Dict[str, DeclarationGroup] = {
+    CanonicalDeclarationField.PRODUCT_NAME: DeclarationGroup.IDENTITY,
+    CanonicalDeclarationField.BRAND: DeclarationGroup.IDENTITY,
+    CanonicalDeclarationField.GENERIC_NAME: DeclarationGroup.IDENTITY,
+    CanonicalDeclarationField.PRODUCT_TYPE: DeclarationGroup.IDENTITY,
+    CanonicalDeclarationField.DECLARED_NET_QUANTITY: DeclarationGroup.QUANTITY,
+    CanonicalDeclarationField.MRP: DeclarationGroup.PRICING,
+    CanonicalDeclarationField.MANUFACTURER_NAME: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.MANUFACTURER_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.PACKER_NAME: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.PACKER_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.IMPORTER_NAME_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.COUNTRY_OF_ORIGIN: DeclarationGroup.ORIGIN,
+    CanonicalDeclarationField.MANUFACTURE_DATE: DeclarationGroup.DATES,
+    CanonicalDeclarationField.PACKING_DATE: DeclarationGroup.DATES,
+    CanonicalDeclarationField.EXPIRY_DATE: DeclarationGroup.DATES,
+    CanonicalDeclarationField.BEST_BEFORE_USE_BY: DeclarationGroup.DATES,
+    CanonicalDeclarationField.USE_BEFORE_DATE: DeclarationGroup.DATES,
+    CanonicalDeclarationField.MONTH_YEAR_MANUFACTURE: DeclarationGroup.DATES,
+    CanonicalDeclarationField.BATCH_NUMBER: DeclarationGroup.TRACEABILITY,
+    CanonicalDeclarationField.BARCODE: DeclarationGroup.TRACEABILITY,
+    CanonicalDeclarationField.CONSUMER_CARE: DeclarationGroup.CONSUMER_SUPPORT,
+    CanonicalDeclarationField.FSSAI_LICENSE: DeclarationGroup.SAFETY_COMPLIANCE,
+    CanonicalDeclarationField.INGREDIENTS_LIST: DeclarationGroup.SPECIFICATION,
+    CanonicalDeclarationField.NUTRITIONAL_INFO: DeclarationGroup.SPECIFICATION,
+    CanonicalDeclarationField.VEG_NONVEG_SYMBOL: DeclarationGroup.SAFETY_COMPLIANCE,
+}
+
+
+class QuantityType(str, Enum):
+    """Physical dimension / measurement type under Legal Metrology."""
+    MASS = "MASS"
+    VOLUME = "VOLUME"
+    COUNT = "COUNT"
+    LENGTH_AREA = "LENGTH_AREA"
+
+
+# Standard Legal Metrology units mapping and normalizations
+LEGAL_MASS_UNITS: Dict[str, str] = {
+    'g': 'g', 'gm': 'g', 'gms': 'g', 'gram': 'g', 'grams': 'g',
+    'kg': 'kg', 'kgs': 'kg', 'kilogram': 'kg', 'kilograms': 'kg',
+    'mg': 'mg', 'milligram': 'mg', 'milligrams': 'mg',
+}
+
+LEGAL_VOLUME_UNITS: Dict[str, str] = {
+    'ml': 'ml', 'millilitre': 'ml', 'millilitres': 'ml', 'milliliter': 'ml', 'milliliters': 'ml',
+    'l': 'L', 'ltr': 'L', 'litre': 'L', 'litres': 'L', 'liter': 'L', 'liters': 'L',
+    'cl': 'cl',
+}
+
+LEGAL_COUNT_UNITS: Dict[str, str] = {
+    'piece': 'pieces', 'pieces': 'pieces', 'pc': 'pieces', 'pcs': 'pieces', 'units': 'pieces', 'unit': 'pieces',
+    'tablet': 'tablets', 'tablets': 'tablets', 'tab': 'tablets', 'tabs': 'tablets',
+    'capsule': 'capsules', 'capsules': 'capsules', 'cap': 'capsules', 'caps': 'capsules',
+    'n': 'pieces', 'no': 'pieces', 'nos': 'pieces', 'numbers': 'pieces', 'number': 'pieces',
+    'wipes': 'pieces', 'wipe': 'pieces', 'sheets': 'pieces', 'sheet': 'pieces',
+    'sticks': 'pieces', 'stick': 'pieces', 'rolls': 'pieces', 'roll': 'pieces',
+    'pouches': 'pieces', 'pouch': 'pieces', 'sachets': 'pieces', 'sachet': 'pieces',
+    'bags': 'pieces', 'bag': 'pieces', 'bars': 'pieces', 'bar': 'pieces',
+}
+
+LEGAL_LENGTH_AREA_UNITS: Dict[str, str] = {
+    'm': 'm', 'metre': 'm', 'metres': 'm', 'meter': 'm', 'meters': 'm',
+    'cm': 'cm', 'centimetre': 'cm', 'centimetres': 'cm', 'centimeter': 'cm', 'centimeters': 'cm',
+    'mm': 'mm', 'millimetre': 'mm', 'millimetres': 'mm', 'millimeter': 'mm', 'millimeters': 'mm',
+    'sq m': 'sq m', 'sq. m': 'sq m', 'sq cm': 'sq cm', 'sq. cm': 'sq cm',
+}
+
+UNIT_TO_QUANTITY_TYPE: Dict[str, QuantityType] = {}
+for u in LEGAL_MASS_UNITS:
+    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.MASS
+for u in LEGAL_VOLUME_UNITS:
+    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.VOLUME
+for u in LEGAL_COUNT_UNITS:
+    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.COUNT
+for u in LEGAL_LENGTH_AREA_UNITS:
+    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.LENGTH_AREA
+
+
+def infer_quantity_type(unit_str: Optional[str]) -> QuantityType:
+    """Infer physical QuantityType from unit string, defaulting to MASS if unrecognized."""
+    if not unit_str:
+        return QuantityType.MASS
+    norm_u = unit_str.strip().lower()
+    return UNIT_TO_QUANTITY_TYPE.get(norm_u, QuantityType.MASS)
+
+
+def normalize_unit(unit_str: Optional[str]) -> Tuple[Optional[str], Optional[QuantityType]]:
+    """Normalize unit to canonical abbreviation and determine QuantityType."""
+    if not unit_str:
+        return None, None
+    raw_clean = unit_str.strip().lower()
+    if raw_clean in LEGAL_MASS_UNITS:
+        return LEGAL_MASS_UNITS[raw_clean], QuantityType.MASS
+    if raw_clean in LEGAL_VOLUME_UNITS:
+        return LEGAL_VOLUME_UNITS[raw_clean], QuantityType.VOLUME
+    if raw_clean in LEGAL_COUNT_UNITS:
+        return LEGAL_COUNT_UNITS[raw_clean], QuantityType.COUNT
+    if raw_clean in LEGAL_LENGTH_AREA_UNITS:
+        return LEGAL_LENGTH_AREA_UNITS[raw_clean], QuantityType.LENGTH_AREA
+    return raw_clean, None
+
+
+def build_quantity_candidate(
+    qty_val: Optional[Union[str, int, float]],
+    raw_unit: Optional[str],
+    raw_span: str,
+    confidence: float = 0.85,
+    semantic_section: str = "DECLARED_QUANTITY",
+    relevance: str = "high",
+    relevance_score: float = 0.9,
+    source_context: str = "",
+    source: str = "OCR",
+) -> Dict[str, Any]:
+    """
+    Construct a canonical quantity candidate dictionary preserving full backwards compatibility
+    with existing tests while populating the complete typed quantity data model.
+    """
+    norm_unit, qty_type = normalize_unit(raw_unit)
+    if qty_type is None and raw_unit:
+        qty_type = infer_quantity_type(raw_unit)
+
+    quantity_present = qty_val is not None and str(qty_val).strip() != ""
+    unit_present = norm_unit is not None and str(norm_unit).strip() != ""
+
+    num_float: Optional[float] = None
+    num_val: Optional[Union[int, float]] = None
+    num_valid = False
+
+    if quantity_present:
+        try:
+            num_float = float(qty_val)
+            num_val = int(num_float) if num_float.is_integer() else num_float
+            num_valid = num_float > 0
+            if qty_type == QuantityType.COUNT:
+                # Count declarations must be whole numbers under PCR rules
+                num_valid = num_valid and num_float.is_integer()
+        except (ValueError, TypeError):
+            num_valid = False
+
+    quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
+
+    str_val = str(qty_val) if qty_val is not None else None
+    if quantity_present and unit_present:
+        display_val = f"{str_val} {norm_unit}"
+    elif quantity_present:
+        display_val = str_val or raw_span
+    elif unit_present:
+        display_val = norm_unit or raw_span
+    else:
+        display_val = raw_span
+
+    return {
+        # Canonical & display values (for backwards compatibility with tests expecting '20 g', '300 g')
+        "value": display_val,
+        "raw_value": raw_span,
+        "raw_text": raw_span,
+
+        # Typed quantity model
+        "numeric_value": num_val,
+        "normalized_value": num_val,
+        "unit": norm_unit,
+        "normalized_unit": norm_unit,
+        "raw_unit": raw_unit,
+        "quantity_type": qty_type.value if qty_type else None,
+
+        # Legacy decomposition fields for rule engine / tests
+        "quantity_value": str_val,
+        "quantity_unit": norm_unit,
+        "quantity_present": quantity_present,
+        "unit_present": unit_present,
+        "quantity_unit_valid": quantity_unit_valid,
+
+        # Scoring & provenance
+        "confidence": confidence,
+        "source": source,
+        "semantic_section": semantic_section,
+        "relevance": relevance,
+        "relevance_score": relevance_score,
+        "source_context": source_context,
+    }
