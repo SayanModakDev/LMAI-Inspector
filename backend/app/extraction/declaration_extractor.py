@@ -1,4 +1,4 @@
-﻿"""Declaration extractor for packaged-commodity OCR text."""
+"""Declaration extractor for packaged-commodity OCR text."""
 
 import logging
 import re
@@ -310,6 +310,108 @@ def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
         if len(first) > 3 and len(first) <= 200:
             return {'name': first.strip(), 'address': second.strip()}
     return {'name': value[:200], 'address': ''}
+
+
+NET_QTY_UNITS_MAP = {
+    'g': 'g', 'gm': 'g', 'gms': 'g', 'gram': 'g', 'grams': 'g',
+    'kg': 'kg', 'kgs': 'kg', 'kilogram': 'kg', 'kilograms': 'kg',
+    'mg': 'mg', 'milligram': 'mg', 'milligrams': 'mg',
+    'ml': 'ml', 'millilitre': 'ml', 'millilitres': 'ml', 'milliliter': 'ml', 'milliliters': 'ml',
+    'l': 'L', 'ltr': 'L', 'litre': 'L', 'litres': 'L', 'liter': 'L', 'liters': 'L',
+    'oz': 'oz', 'lb': 'lb', 'lbs': 'lb',
+    'pc': 'pieces', 'pcs': 'pieces', 'piece': 'pieces', 'pieces': 'pieces',
+    'tablet': 'tablets', 'tablets': 'tablets',
+    'capsule': 'capsules', 'capsules': 'capsules',
+}
+
+NET_QTY_LABEL_RE = re.compile(
+    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents?)\s*[:\s-]*\s*([^\n,;]+)',
+    re.IGNORECASE,
+)
+
+STANDALONE_QTY_RE = re.compile(
+    r'\b([+-]?\d+(?:\.\d+)?)\s*(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
+    re.IGNORECASE,
+)
+
+
+def _extract_net_quantity_field(normalized: str) -> Optional[Dict[str, Any]]:
+    """Extract structured declared net quantity, separating raw OCR text from normalized numbers/units."""
+    label_match = NET_QTY_LABEL_RE.search(normalized)
+    if label_match:
+        raw_span = label_match.group(0).strip()
+        after_label = label_match.group(1).strip()
+        num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+        unit_match = re.search(
+            r'\b(g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|oz|lb|lbs|pc|pcs|piece|pieces|tablet|tablets|capsule|capsules)\b',
+            after_label,
+            re.IGNORECASE,
+        )
+
+        qty_val = num_match.group(1) if num_match else None
+        quantity_present = qty_val is not None
+        raw_unit = unit_match.group(1) if unit_match else None
+        unit_present = raw_unit is not None
+        norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower()) if raw_unit else None
+
+        if quantity_present or unit_present:
+            try:
+                num_float = float(qty_val) if qty_val is not None else None
+                num_valid = num_float is not None and num_float > 0
+            except ValueError:
+                num_valid = False
+
+            quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
+
+            if quantity_present and unit_present:
+                display_val = f"{qty_val} {norm_unit}"
+            elif quantity_present:
+                display_val = f"{qty_val}"
+            elif unit_present:
+                display_val = f"{norm_unit}"
+            else:
+                display_val = raw_span
+
+            return {
+                'raw_value': raw_span,
+                'value': display_val,
+                'quantity_value': qty_val,
+                'quantity_unit': norm_unit,
+                'raw_unit': raw_unit,
+                'quantity_present': quantity_present,
+                'unit_present': unit_present,
+                'quantity_unit_valid': quantity_unit_valid,
+                'confidence': 0.8,
+                'source': 'OCR',
+            }
+
+    # Standalone quantity + unit fallback
+    standalone_match = STANDALONE_QTY_RE.search(normalized)
+    if standalone_match:
+        raw_span = standalone_match.group(0).strip()
+        qty_val = standalone_match.group(1)
+        raw_unit = standalone_match.group(2)
+        norm_unit = NET_QTY_UNITS_MAP.get(raw_unit.lower(), raw_unit.lower())
+        try:
+            num_float = float(qty_val)
+            num_valid = num_float > 0
+        except ValueError:
+            num_valid = False
+        quantity_unit_valid = bool(num_valid and norm_unit in NET_QTY_UNITS_MAP.values())
+        return {
+            'raw_value': raw_span,
+            'value': f"{qty_val} {norm_unit}",
+            'quantity_value': qty_val,
+            'quantity_unit': norm_unit,
+            'raw_unit': raw_unit,
+            'quantity_present': True,
+            'unit_present': True,
+            'quantity_unit_valid': quantity_unit_valid,
+            'confidence': 0.8,
+            'source': 'OCR',
+        }
+
+    return None
 
 
 def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:

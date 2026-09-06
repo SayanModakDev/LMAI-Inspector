@@ -75,7 +75,9 @@ def sync_rules_to_db() -> None:
 
 
 def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
-    """Evaluate the applicable rules using extracted evidence and never treat missing OCR as an automatic legal FAIL."""
+    """Evaluate applicable rules via deterministic validators and never treat missing OCR as an automatic legal FAIL."""
+    from app.rules.validators import dispatch_validator
+
     results: List[Dict[str, Any]] = []
     has_fail = False
     has_not_verifiable = False
@@ -86,41 +88,26 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
         required = rule.get('required', True)
         severity = rule.get('severity', 'HIGH')
         verification_type = rule.get('verification_type', 'IMAGE_VERIFIABLE')
+
+        # Resolve aliases if the primary parameter is not present in extracted fields
         field_data = extracted_fields.get(parameter)
         if not field_data and parameter == 'MONTH_YEAR_MANUFACTURE':
             field_data = extracted_fields.get('PACKING_DATE') or extracted_fields.get('MONTH_YEAR_MANUFACTURE')
         if not field_data and parameter == 'BEST_BEFORE_USE_BY':
             field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
 
-        if verification_type == 'PHYSICAL_VERIFICATION_REQUIRED':
-            if field_data:
-                status = 'PASS'
-                message = f"Physical verification available: {field_data.get('value')}"
-                evidence_data = field_data
-            else:
-                status = 'NOT_VERIFIABLE'
-                message = 'Physical verification is required before this requirement can be confirmed.'
-                evidence_data = None
-                has_not_verifiable = True
-        elif field_data and field_data.get('clearly_invalid'):
-            status = 'FAIL'
-            message = field_data.get('failure_reason') or f"Available evidence indicates this requirement is not satisfied: {parameter}."
-            evidence_data = field_data
-            has_fail = True
-        elif field_data and _is_usable_evidence(field_data):
-            status = 'PASS'
-            message = f"Detected in OCR evidence: {field_data.get('value')}"
-            evidence_data = field_data
-        else:
-            if required:
-                status = 'NOT_VERIFIABLE'
-                message = f"Required parameter not detected in the available OCR evidence: {parameter}."
-                evidence_data = None
-                has_not_verifiable = True
-            else:
-                status = 'NOT_APPLICABLE'
-                message = f"Optional parameter not identified and not required for this context: {parameter}."
-                evidence_data = None
+        # Dispatch to deterministic validator
+        validation_method = rule.get('validation_method')
+        val_result = dispatch_validator(
+            validation_method=validation_method,
+            evidence=field_data,
+            rule=rule,
+            all_fields=extracted_fields,
+        )
+
+        status = val_result.status
+        message = val_result.reason
+        evidence_data = val_result.evidence
 
         if required and status == 'NOT_VERIFIABLE':
             has_not_verifiable = True
@@ -139,6 +126,7 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'rule_reference': rule.get('rule_reference'),
             'review_required': status in ['FAIL', 'NOT_VERIFIABLE'],
             'severity': severity,
+            'validation_result': val_result.to_dict(),
         })
 
     if has_fail:
