@@ -1034,3 +1034,111 @@ def test_inspection_detail_serializes_binary_and_quantity_fields():
         assert rule_res["quantity_unit_valid"] is True
     finally:
         db.close()
+
+
+def test_history_filter_and_counts_each_status():
+    """Verify get_history filters each status (COMPLIANT, NON_COMPLIANT, NOT_VERIFIABLE,
+    NOT_APPLICABLE) and returns package_type and import_status matching actual record.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.database.connection import SessionLocal
+    from app.database import models
+
+    client = TestClient(app)
+    db = SessionLocal()
+    try:
+        # Create records across all canonical and legacy states
+        i_comp = models.Inspection(
+            product_name="Product Compliant",
+            category="FOOD",
+            package_type="RETAIL",
+            import_status="DOMESTIC",
+            overall_result="COMPLIANT"
+        )
+        i_non_comp1 = models.Inspection(
+            product_name="Product Non-Compliant Underscore",
+            category="FOOD",
+            package_type="WHOLESALE",
+            import_status="IMPORTED",
+            overall_result="NON_COMPLIANT"
+        )
+        i_non_comp2 = models.Inspection(
+            product_name="Product Non-Compliant Hyphen",
+            category="COSMETIC",
+            package_type="INSTITUTIONAL",
+            import_status="DOMESTIC",
+            overall_result="NON-COMPLIANT"
+        )
+        i_review = models.Inspection(
+            product_name="Product Review",
+            category="FOOD",
+            package_type="RETAIL",
+            import_status="DOMESTIC",
+            overall_result="NOT_VERIFIABLE"
+        )
+        i_na = models.Inspection(
+            product_name="Product NA",
+            category="COSMETIC",
+            package_type="RETAIL",
+            import_status="DOMESTIC",
+            overall_result="NOT_APPLICABLE"
+        )
+        db.add_all([i_comp, i_non_comp1, i_non_comp2, i_review, i_na])
+        db.commit()
+        for rec in [i_comp, i_non_comp1, i_non_comp2, i_review, i_na]:
+            db.refresh(rec)
+
+        # 1. Filter COMPLIANT
+        resp = client.get("/api/history?status=COMPLIANT")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert i_comp.id in ids
+        assert i_non_comp1.id not in ids
+
+        # 2. Filter NON_COMPLIANT (must match BOTH canonical NON_COMPLIANT and legacy NON-COMPLIANT)
+        resp = client.get("/api/history?status=NON_COMPLIANT")
+        assert resp.status_code == 200
+        items = resp.json()
+        ids = [item["id"] for item in items]
+        assert i_non_comp1.id in ids
+        assert i_non_comp2.id in ids
+        assert i_comp.id not in ids
+        # Verify package_type and import_status match actual record
+        item_non1 = next(item for item in items if item["id"] == i_non_comp1.id)
+        assert item_non1["package_type"] == "WHOLESALE"
+        assert item_non1["import_status"] == "IMPORTED"
+        assert item_non1["overall_result"] == "NON_COMPLIANT"
+
+        # 3. Filter NOT_VERIFIABLE
+        resp = client.get("/api/history?status=NOT_VERIFIABLE")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert i_review.id in ids
+        assert i_comp.id not in ids
+
+        # 4. Filter NOT_APPLICABLE
+        resp = client.get("/api/history?status=NOT_APPLICABLE")
+        assert resp.status_code == 200
+        ids = [item["id"] for item in resp.json()]
+        assert i_na.id in ids
+
+        # 5. Verify Dashboard Counts
+        dash_resp = client.get("/api/dashboard")
+        assert dash_resp.status_code == 200
+        stats = dash_resp.json()
+        assert stats["total_inspections"] >= 5
+        assert stats["compliant"] >= 1
+        assert stats["non_compliant"] >= 2  # Counts both NON_COMPLIANT and NON-COMPLIANT
+        assert stats["not_verifiable"] >= 1
+        assert stats["not_applicable"] >= 1
+
+        # Verify recent_inspections structure
+        assert len(stats["recent_inspections"]) > 0
+        recent_first = stats["recent_inspections"][0]
+        assert "package_type" in recent_first
+        assert "import_status" in recent_first
+        assert "result" in recent_first
+    finally:
+        db.close()
+

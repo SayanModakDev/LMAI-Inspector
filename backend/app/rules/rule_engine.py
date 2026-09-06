@@ -158,12 +158,14 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
 
         results.append(res_item)
 
+    from app.core.constants import InspectionStatus
+
     if has_fail:
-        overall_result = 'NON-COMPLIANT'
+        overall_result = InspectionStatus.NON_COMPLIANT
     elif has_not_verifiable:
-        overall_result = 'NOT_VERIFIABLE'
+        overall_result = InspectionStatus.NOT_VERIFIABLE
     else:
-        overall_result = 'COMPLIANT'
+        overall_result = InspectionStatus.COMPLIANT
 
     return results, overall_result
 

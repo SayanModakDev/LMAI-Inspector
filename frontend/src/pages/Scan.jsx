@@ -205,30 +205,36 @@ const Scan = () => {
           <div className="card-body">
             <form onSubmit={handleSubmit} className="scan-form">
               <div className="form-group">
-                <label className="form-label">Package Type</label>
+                <div className="flex-between">
+                  <label className="form-label">Package Type</label>
+                  <span className="text-xs text-muted" style={{ fontSize: '0.75rem' }}>Inspector-selected default: Retail</span>
+                </div>
                 <select 
                   className="form-control" 
                   value={packageType} 
                   onChange={(e) => setPackageType(e.target.value)}
                 >
-                  <option value="RETAIL">Retail Package (For direct consumer sale)</option>
+                  <option value="RETAIL">Retail Package (Inspector Default — For direct consumer sale)</option>
                   <option value="WHOLESALE">Wholesale Package</option>
                   <option value="INSTITUTIONAL">Institutional / Industrial</option>
                 </select>
-                <small className="form-help">Determines which rules are applicable (e.g., MRP is mandatory for Retail).</small>
+                <small className="form-help">Inspector parameter: Determines which rules are applicable (e.g., MRP is mandatory for Retail).</small>
               </div>
               
               <div className="form-group">
-                <label className="form-label">Origin Status</label>
+                <div className="flex-between">
+                  <label className="form-label">Import Status</label>
+                  <span className="text-xs text-muted" style={{ fontSize: '0.75rem' }}>Inspector-selected default: Domestic</span>
+                </div>
                 <select 
                   className="form-control" 
                   value={importStatus} 
                   onChange={(e) => setImportStatus(e.target.value)}
                 >
-                  <option value="DOMESTIC">Domestic (Manufactured in India)</option>
-                  <option value="IMPORTED">Imported</option>
+                  <option value="DOMESTIC">Domestic (Inspector Default — Manufactured in India)</option>
+                  <option value="IMPORTED">Imported (Requires importer details and Country of Origin)</option>
                 </select>
-                <small className="form-help">Imported products require specific importer details and Country of Origin.</small>
+                <small className="form-help">Inspector parameter: Imported products require specific importer details and Country of Origin.</small>
               </div>
 
               <div className="form-actions">

@@ -461,8 +461,24 @@ const Result = () => {
                   <tr><th>Product Type:</th><td>{inspection.product_type || 'UNKNOWN'}</td></tr>
                   <tr><th>Brand:</th><td>{inspection.brand || inspection.product?.brand || 'Not detected'}</td></tr>
                   <tr><th>Product Name:</th><td>{inspection.product_name || inspection.product?.product_name || 'Not detected'}</td></tr>
-                  <tr><th>Package Type:</th><td>{inspection.package_type}</td></tr>
-                  <tr><th>Import Status:</th><td>{inspection.import_status}</td></tr>
+                  <tr>
+                    <th>Package Type:</th>
+                    <td>
+                      {inspection.package_type || 'RETAIL'}
+                      <span className="text-xs text-muted ml-1" style={{ fontSize: '0.75rem' }}>
+                        {inspection.package_type === 'RETAIL' ? '(Inspector Default)' : '(Inspector Selected)'}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>Import Status:</th>
+                    <td>
+                      {inspection.import_status || 'DOMESTIC'}
+                      <span className="text-xs text-muted ml-1" style={{ fontSize: '0.75rem' }}>
+                        {inspection.import_status === 'DOMESTIC' ? '(Inspector Default)' : '(Inspector Selected)'}
+                      </span>
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>

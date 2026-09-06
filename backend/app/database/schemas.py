@@ -69,6 +69,8 @@ class InspectionSummary(BaseModel):
     inspection_date: Optional[datetime] = None
     product_name: Optional[str] = None
     category: Optional[str] = None
+    package_type: Optional[str] = "RETAIL"
+    import_status: Optional[str] = "DOMESTIC"
     overall_result: Optional[str] = None
     priority: str = "MEDIUM"
     inspector_name: Optional[str] = None
@@ -103,6 +105,7 @@ class DashboardStats(BaseModel):
     compliant: int = 0
     non_compliant: int = 0
     not_verifiable: int = 0
+    not_applicable: int = 0
     food_inspections: int = 0
     cosmetic_inspections: int = 0
     recent_inspections: List[dict] = []
