@@ -172,7 +172,7 @@ SECTION_BOUNDARY_RE = re.compile(
     r'\bpacked\s+(?:by|at)\b|\bmarketed\s+by\b|\bimported\s+by\b|\bcountry\s+of\s+origin\b|\bmade\s+in\b|'
     r'\bnet\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)\b|\bquantity\b|'
     r'\bm\.?\s*r\.?\s*p\.?|\bmaximum\s+retail\s+price\b|'
-    r'\bbatch\s*(?:no\.?|number)?\b|\bb\.?\s*no\.?\b|\blot\s*(?:no\.?|number)?\b|'
+    r'\bbatch\s*(?:no\.?|number)?\b|\bb\.?\s*no\.?\b|\blot\s+(?:no\.?|number)?\b|\blot\s*[:#]|'
     r'\buse\s*-?\s*(?:by|before)\b|\bbest\s+before\b|\bbest\s+by\b|\bconsume\s+before\b|'
     r'\bdate\s+of\s+(?:manufactur\w+|pack\w+)\b|\bmfg\s*date\b|\bmfd\s*date\b|\bpkd\s*date\b|\bpkg\s*date\b|\bpacked\s+on\b|'
     r'\bexpiry(?:\s+date)?\b|\bexp(?:\.|\s*date|:)|'
@@ -209,7 +209,7 @@ INLINE_SECTION_PATTERNS = {
         r'\b(?:rs\.?|₹|inr)\s*\d',
     ],
     'batch': [
-        r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b',
+        r'\b(?:batch\s*(?:no\.?|number)?|lot\s+(?:no\.?|number)?|lot\s*[:#]|b\.?\s*no\.?)\b',
     ],
     'date': [
         r'\b(?:date\s+of\s+(?:manufactur\w+|pack\w+)|mfg\s*date|mfd\s*date|pkd\s*date|pkg\s*date|packed\s+on|mfd[:.]|mfg[:.]|pkd[:.]|best\s+before|best\s+by|use\s*-?\s*(?:by|before)|consume\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date|:))\b',
@@ -616,8 +616,13 @@ def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]
             if item:
                 score += float(item.get('confidence') or 0)
                 bbox = item.get('bbox') or []
-                if len(bbox) == 4 and bbox[1] < 900:
-                    score += 0.5
+                if len(bbox) == 4:
+                    all_ys = [it.get('bbox')[1] for it in ocr_items if len(it.get('bbox') or []) == 4]
+                    max_y = max(all_ys) if all_ys else 1
+                    min_y = min(all_ys) if all_ys else 0
+                    y_range = max_y - min_y if max_y > min_y else 1
+                    if (bbox[1] - min_y) / y_range < 0.6:
+                        score += 0.5
         scored.append((score, line))
     return max(scored, default=(0, None), key=lambda item: item[0])[1]
 
@@ -927,7 +932,7 @@ def _fuzzy_ocr_similar(s1: str, s2: str, threshold: float = 0.65) -> bool:
     """Detect if two strings are OCR character-error variations of the same underlying text.
 
     Uses character-level bigram similarity (Dice coefficient).
-    E.g. 'CHISSYUMFOODS' vs 'SWISSYUM FOODS' vs 'WISSYUM FOODS' share most bigrams.
+    E.g. 'COMPANYFOODS' vs 'COMPANY FOODS' share most bigrams.
     """
     def _bigrams(s: str) -> list:
         cleaned = re.sub(r'[^a-z0-9]', '', s.lower())
@@ -1617,7 +1622,7 @@ QUANTITY_UNITS_CHOICES = (
     r'm|meter|meters|metre|metres|cm|centimeter|centimeters|centimetre|centimetres|mm|sq\s*m|sq\s*cm'
 )
 
-NET_QTY_UNIT_PATTERN = rf'\b({QUANTITY_UNITS_CHOICES})\b'
+NET_QTY_UNIT_PATTERN = rf'(?:(?<=\d)|(?<=\s)|^)\s*({QUANTITY_UNITS_CHOICES})\b'
 
 STANDALONE_QTY_RE = re.compile(
     rf'\b([+-]?\d+(?:\.\d+)?)\s*({QUANTITY_UNITS_CHOICES})\b',
@@ -1861,6 +1866,86 @@ def _extract_packer_and_address(lines: List[str]) -> Tuple[Optional[str], Option
 
     return None, None
 
+BATCH_LABEL_RE = re.compile(
+    r'\b(?:batch\s*(?:no\.?|number|num\.?|code)?|lot\s+(?:no\.?|number|num\.?|code)?|lot\s*[:#]|b\.?\s*no\.?|batch#)\b',
+    re.IGNORECASE,
+)
+INVALID_BATCH_TOKENS = {
+    'no', 'no.', 'number', 'num', 'num.', 'code', 'lot', 'batch', 'b', 'b.',
+    'date', 'mfd', 'pkd', 'exp', 'expiry', 'mrp', 'rs', 'inr', 'none', 'n/a', 'na', 'null'
+}
+
+
+def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+    """Extract batch or lot number, strictly separating label tokens from the actual identifier value."""
+    # 1. Search lines for explicit batch label
+    for index, line in enumerate(lines):
+        m = BATCH_LABEL_RE.search(line)
+        if not m:
+            continue
+
+        matched_label = m.group(0).strip()
+        after = line[m.end():].strip(' :;,-=#')
+
+        # Strip any redundant label continuation words like 'No:', 'Number:'
+        cleaned_after = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', after, flags=re.IGNORECASE).strip(' :;,-=#')
+
+        candidate = None
+        if cleaned_after:
+            tokens = cleaned_after.split()
+            first_token = tokens[0].strip(' ,;:')
+            if first_token.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 1:
+                candidate = first_token
+
+        # If not on same line, check immediate next line (e.g. Batch No:\nB104)
+        if not candidate and index + 1 < len(lines):
+            next_line = lines[index + 1].strip()
+            if not _is_section_boundary(next_line):
+                cleaned_next = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', next_line, flags=re.IGNORECASE).strip(' :;,-=#')
+                next_tokens = cleaned_next.split()
+                if next_tokens:
+                    cand = next_tokens[0].strip(' ,;:')
+                    if cand.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 1:
+                        candidate = cand
+
+        if candidate:
+            return {
+                'value': candidate[:100],
+                'raw_value': f"{matched_label}: {candidate}",
+                'raw_text': f"{matched_label}: {candidate}",
+                'normalized_value': candidate[:100],
+                'source_label': matched_label,
+                'semantic_section': 'BATCH',
+                'confidence': 0.85,
+                'source': 'OCR',
+            }
+
+    # 2. Check OCR bounding boxes / items if available
+    if ocr_items:
+        for item in ocr_items:
+            text = str(item.get('text', '')).strip()
+            m = BATCH_LABEL_RE.search(text)
+            if m:
+                after = text[m.end():].strip(' :;,-=#')
+                cleaned_after = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', after, flags=re.IGNORECASE).strip(' :;,-=#')
+                if cleaned_after:
+                    tok = cleaned_after.split()[0].strip(' ,;:')
+                    if tok.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', tok)) >= 1:
+                        return {
+                            'value': tok[:100],
+                            'raw_value': f"{m.group(0)}: {tok}",
+                            'raw_text': f"{m.group(0)}: {tok}",
+                            'normalized_value': tok[:100],
+                            'source_label': m.group(0),
+                            'semantic_section': 'BATCH',
+                            'confidence': float(item.get('confidence') or 0.8),
+                            'bbox': item.get('bbox'),
+                            'source_image_index': item.get('image_index'),
+                            'source': 'OCR',
+                        }
+
+    return None
+
 
 def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None, category: Optional[str] = None) -> Dict[str, Any]:
     if not raw_text:
@@ -1874,67 +1959,95 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if first_candidate:
         fields['PRODUCT_NAME'] = {'value': first_candidate[:200], 'confidence': 0.65, 'source': 'OCR'}
 
-    crystal_line = next((line for line in lines if re.search(r'\bcrystal\s+sugar\b', line, re.IGNORECASE)), None)
-    if crystal_line:
-        before_crystal = re.split(r'\bcrystal\s+sugar\b', crystal_line, maxsplit=1, flags=re.IGNORECASE)[0]
-        brand_tokens = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_crystal)
-        if len(brand_tokens) >= 2:
-            fields['BRAND'] = {'value': ' '.join(brand_tokens[-2:]).upper(), 'confidence': 0.8, 'source': 'OCR'}
-    if 'BRAND' not in fields:
-        normalized_lines = [re.sub(r'[^a-z]', '', line.lower()) for line in lines]
-        if any(line == 'supreme' for line in normalized_lines) and any(line == 'harvest' for line in normalized_lines):
-            fields['BRAND'] = {'value': 'SUPREME HARVEST', 'confidence': 0.78, 'source': 'OCR'}
-    # A front panel often has an uppercase brand on the line immediately above
-    # a generic product term (for example, brand / SALT). Combine that layout
-    # evidence generically instead of promoting nearby claims.
-    for index, line in enumerate(lines[:-1]):
-        next_line = lines[index + 1]
-        brand_words = re.findall(r'[A-Za-z][A-Za-z&-]*', line)
-        product_words = re.findall(r'[A-Za-z][A-Za-z&-]*', next_line)
-        if (1 <= len(brand_words) <= 3 and brand_words and line.upper() == line and
-                any(word.lower() in {'salt', 'sugar', 'soap', 'shampoo', 'biscuit', 'oil', 'tea'} for word in product_words)):
-            brand = ' '.join(word.title() for word in brand_words)
-            generic = ' '.join(product_words).title()
-            fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
-            fields['PRODUCT_NAME'] = {'value': f'{brand} {generic}', 'confidence': 0.86, 'source': 'OCR_LAYOUT'}
+    # Generalized Commodity & Brand Extraction
+    # Detect generic commodity descriptors across food, personal care, and household commodities.
+    # Combines front-panel layout (brand line above generic product name, or brand prefix
+    # on the same line before the generic commodity name) in a product-agnostic manner.
+    GENERIC_COMMODITY_VOCABULARY = [
+        (r'\b(?:crystal\s+sugar|granulated\s+sugar|white\s+sugar|refined\s+sugar)\b', 'CRYSTAL SUGAR', 'SUGAR'),
+        (r'\b(?:sugar)\b', 'SUGAR', 'SUGAR'),
+        (r'\b(?:iodized?\s+salt|rock\s+salt|sea\s+salt|black\s+salt|table\s+salt|salt)\b', 'SALT', 'SALT'),
+        (r'\b(?:sunflower\s+oil|mustard\s+oil|refined\s+oil|edible\s+oil|vegetable\s+oil|coconut\s+oil|olive\s+oil|groundnut\s+oil|cooking\s+oil)\b', 'EDIBLE OIL', 'OIL'),
+        (r'\b(?:green\s+tea|black\s+tea|leaf\s+tea|dust\s+tea|tea)\b', 'TEA', 'BEVERAGE'),
+        (r'\b(?:instant\s+coffee|filter\s+coffee|coffee)\b', 'COFFEE', 'BEVERAGE'),
+        (r'\b(?:wheat\s+flour|whole\s+wheat\s+atta|atta|maida|besan|flour)\b', 'FLOUR', 'GRAIN_PRODUCT'),
+        (r'\b(?:basmati\s+rice|rice)\b', 'RICE', 'GRAIN_PRODUCT'),
+        (r'\b(?:biscuits?|cookies?)\b', 'BISCUIT', 'BISCUIT'),
+        (r'\b(?:garam\s+masala|turmeric\s+powder|chilli\s+powder|coriander\s+powder|cumin\s+powder|spices?|masala|pepper)\b', 'SPICE', 'SPICE'),
+        (r'\b(?:talcum\s+powder|body\s+talc|soft\s+talc|face\s+powder|talc)\b', 'TALCUM POWDER', 'TALCUM_POWDER'),
+        (r'\b(?:shampoo|hair\s+cleanser)\b', 'SHAMPOO', 'PERSONAL_CARE'),
+        (r'\b(?:conditioner|hair\s+conditioner)\b', 'CONDITIONER', 'PERSONAL_CARE'),
+        (r'\b(?:body\s+wash|shower\s+gel|toilet\s+soap|bathing\s+soap|soap)\b', 'SOAP', 'PERSONAL_CARE'),
+        (r'\b(?:body\s+lotion|face\s+cream|moisturizing\s+cream|cold\s+cream|skin\s+cream|deodorant)\b', 'SKIN CARE', 'PERSONAL_CARE'),
+        (r'\b(?:toothpaste|tooth\s+paste|dental\s+cream)\b', 'TOOTHPASTE', 'PERSONAL_CARE'),
+        (r'\b(?:detergent\s+powder|washing\s+powder|liquid\s+detergent|detergent)\b', 'DETERGENT', 'HOUSEHOLD_CLEANING'),
+        (r'\b(?:disinfectant\s+cleaner|floor\s+cleaner|toilet\s+cleaner|dishwash\s+liquid|surface\s+cleaner|cleaner)\b', 'CLEANER', 'HOUSEHOLD_CLEANING'),
+    ]
+
+    matched_generic = None
+    matched_type = None
+
+    # 1. Scan lines from top of package, skipping ingredient, nutrition, and address sections
+    for idx, line in enumerate(lines[:12]):
+        sec = classify_line_section(line)
+        if sec in (SECTION_INGREDIENTS, SECTION_NUTRITION, SECTION_ADDRESS, SECTION_CONSUMER_CARE, SECTION_STORAGE):
+            continue
+        if re.search(r'\b(?:manufactured|packed|marketed|ingredients|nutrition|mrp|batch|consumer)\b', line, re.I):
+            continue
+
+        for pat, gen_name, prod_type in GENERIC_COMMODITY_VOCABULARY:
+            m_gen = re.search(pat, line, re.IGNORECASE)
+            if m_gen:
+                matched_generic = gen_name
+                matched_type = prod_type
+                fields['GENERIC_NAME'] = {'value': gen_name, 'confidence': 0.85, 'source': 'OCR'}
+                fields['PRODUCT_TYPE'] = {'value': prod_type, 'confidence': 0.85, 'source': 'OCR'}
+
+                # Check if brand tokens appear before the generic match on the same line
+                before_text = line[:m_gen.start()].strip()
+                brand_tokens = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text)
+                if len(brand_tokens) >= 1 and not any(t.lower() in MARKETING_TERMS for t in brand_tokens):
+                    cand_brand = ' '.join(brand_tokens).title()
+                    fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR'}
+                    fields['PRODUCT_NAME'] = {'value': f"{cand_brand} {gen_name.title()}", 'confidence': 0.85, 'source': 'OCR'}
+                elif idx > 0 and 'BRAND' not in fields:
+                    # Check preceding line for brand name
+                    prev_line = lines[idx - 1].strip()
+                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
+                    if 1 <= len(prev_words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in prev_words) and not _is_section_boundary(prev_line):
+                        cand_brand = ' '.join(prev_words).title()
+                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                        fields['PRODUCT_NAME'] = {'value': f"{cand_brand} {gen_name.title()}", 'confidence': 0.85, 'source': 'OCR_LAYOUT'}
+                break
+        if matched_generic:
             break
-    if re.search(r'\bcrystal\s+sugar\b|\bgranulated\s+sugar\b|\bsugar\b', normalized, re.IGNORECASE):
-        fields['PRODUCT_TYPE'] = {'value': 'SUGAR', 'confidence': 0.85, 'source': 'OCR'}
-        fields['GENERIC_NAME'] = {'value': 'CRYSTAL SUGAR' if re.search(r'crystal\s+sugar', normalized, re.IGNORECASE) else 'SUGAR', 'confidence': 0.8, 'source': 'OCR'}
-    elif re.search(r'\biodized?\s+salt\b|\bsalt\b', normalized, re.IGNORECASE):
-        fields['PRODUCT_TYPE'] = {'value': 'SALT', 'confidence': 0.8, 'source': 'OCR'}
-        fields['GENERIC_NAME'] = {'value': 'SALT', 'confidence': 0.75, 'source': 'OCR'}
-    elif re.search(r'\bbiscuit|cookie', normalized, re.IGNORECASE):
-        fields['PRODUCT_TYPE'] = {'value': 'BISCUIT', 'confidence': 0.78, 'source': 'OCR'}
-    elif re.search(r'\bspice|masala|pepper|turmeric|chilli', normalized, re.IGNORECASE):
-        fields['PRODUCT_TYPE'] = {'value': 'SPICE', 'confidence': 0.75, 'source': 'OCR'}
-    elif re.search(r'\b(?:talcum\s+powder|body\s+talc|soft\s+talc|face\s+powder|talc)\b', normalized, re.IGNORECASE):
-        fields['PRODUCT_TYPE'] = {'value': 'TALCUM_POWDER', 'confidence': 0.86, 'source': 'OCR'}
-        fields['GENERIC_NAME'] = {'value': 'TALCUM POWDER', 'confidence': 0.82, 'source': 'OCR'}
 
-    if crystal_line and 'GENERIC_NAME' in fields:
-        brand_value = fields.get('BRAND', {}).get('value')
-        fields['PRODUCT_NAME'] = {
-            'value': f"{brand_value} {fields['GENERIC_NAME']['value']}" if brand_value else fields['GENERIC_NAME']['value'],
-            'confidence': 0.82,
-            'source': 'OCR',
-        }
+    # 2. Front panel uppercase brand above generic line layout fallback
+    if 'BRAND' not in fields:
+        for index, line in enumerate(lines[:-1]):
+            next_line = lines[index + 1]
+            brand_words = re.findall(r'[A-Za-z][A-Za-z&-]*', line)
+            product_words = re.findall(r'[A-Za-z][A-Za-z&-]*', next_line)
+            if (1 <= len(brand_words) <= 3 and brand_words and line.upper() == line and
+                    not any(w.lower() in MARKETING_TERMS for w in brand_words) and
+                    any(word.lower() in {'salt', 'sugar', 'soap', 'shampoo', 'biscuit', 'oil', 'tea', 'powder', 'cream', 'cleaner', 'flour', 'rice'} for word in product_words)):
+                brand = ' '.join(word.title() for word in brand_words)
+                generic = ' '.join(product_words).title()
+                fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
+                if 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('confidence', 0) < 0.8:
+                    fields['PRODUCT_NAME'] = {'value': f'{brand} {generic}', 'confidence': 0.86, 'source': 'OCR_LAYOUT'}
+                break
 
-    # For labels where the logo and generic description are separated, prefer
-    # the generic line as product identity and its preceding short logo line as
-    # brand; promotional banners are excluded above.
-    generic_line = next((line for line in lines if re.search(r'\b(?:talcum\s+powder|body\s+talc|soft\s+talc|shampoo|conditioner|deodorant|body\s+lotion|face\s+cream)\b', line, re.I)), None)
-    if generic_line:
-        generic = re.search(r'(talcum\s+powder|body\s+talc|soft\s+talc|shampoo|conditioner|deodorant|body\s+lotion|face\s+cream)', generic_line, re.I).group(1)
-        fields['GENERIC_NAME'] = {'value': 'TALCUM POWDER' if 'talc' in generic.lower() else generic.upper(), 'confidence': .82, 'source': 'OCR'}
-        candidate_index = lines.index(generic_line)
-        nearby = [line for line in lines[max(0, candidate_index - 2):candidate_index] if re.fullmatch(r'[A-Za-z][A-Za-z& -]{1,30}', line.strip()) and not any(token in MARKETING_TERMS for token in line.lower().split())]
-        if nearby:
-            brand = nearby[-1].strip().title()
-            fields['BRAND'] = {'value': brand, 'confidence': .76, 'source': 'OCR_LAYOUT'}
-            fields['PRODUCT_NAME'] = {'value': f'{brand} {generic.title()}', 'confidence': .8, 'source': 'OCR_LAYOUT'}
-        elif 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('value', '').lower() in MARKETING_TERMS:
-            fields['PRODUCT_NAME'] = {'value': generic.title(), 'confidence': .75, 'source': 'OCR'}
+    # 3. If product name is still missing or low confidence, combine available brand + generic
+    if 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('confidence', 0) < 0.7:
+        if 'BRAND' in fields and 'GENERIC_NAME' in fields:
+            fields['PRODUCT_NAME'] = {
+                'value': f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
+                'confidence': 0.82,
+                'source': 'OCR',
+            }
+        elif first_candidate:
+            fields['PRODUCT_NAME'] = {'value': first_candidate[:200], 'confidence': 0.65, 'source': 'OCR'}
 
     mrp_field = _extract_mrp_structured(normalized, raw_text, lines)
     if mrp_field:
@@ -1984,18 +2097,73 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
 
     mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS)
     if mfg_date:
-        fields['MANUFACTURE_DATE'] = {'value': mfg_date, 'raw_value': mfg_date, 'normalized_value': mfg_date, 'confidence': 0.75, 'source': 'OCR'}
-        fields['MONTH_YEAR_MANUFACTURE'] = {'value': mfg_date, 'raw_value': mfg_date, 'normalized_value': mfg_date, 'confidence': 0.75, 'source': 'OCR'}
+        fields['MANUFACTURE_DATE'] = {
+            'value': mfg_date,
+            'raw_value': mfg_date,
+            'raw_date': mfg_date,
+            'normalized_value': mfg_date,
+            'normalized_date': mfg_date,
+            'source_label': 'MFD',
+            'semantic_type': 'MANUFACTURE_DATE',
+            'evidence': {'raw_text': mfg_date, 'label': 'MFD'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
+        fields['MONTH_YEAR_MANUFACTURE'] = {
+            'value': mfg_date,
+            'raw_value': mfg_date,
+            'raw_date': mfg_date,
+            'normalized_value': mfg_date,
+            'normalized_date': mfg_date,
+            'source_label': 'MFD',
+            'semantic_type': 'MONTH_YEAR_MANUFACTURE',
+            'evidence': {'raw_text': mfg_date, 'label': 'MFD'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
 
     packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS)
     if packing_date:
-        fields['PACKING_DATE'] = {'value': packing_date, 'raw_value': packing_date, 'normalized_value': packing_date, 'confidence': 0.75, 'source': 'OCR'}
+        fields['PACKING_DATE'] = {
+            'value': packing_date,
+            'raw_value': packing_date,
+            'raw_date': packing_date,
+            'normalized_value': packing_date,
+            'normalized_date': packing_date,
+            'source_label': 'PKD',
+            'semantic_type': 'PACKING_DATE',
+            'evidence': {'raw_text': packing_date, 'label': 'PKD'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
         if 'MONTH_YEAR_MANUFACTURE' not in fields:
-            fields['MONTH_YEAR_MANUFACTURE'] = {'value': packing_date, 'raw_value': packing_date, 'normalized_value': packing_date, 'confidence': 0.75, 'source': 'OCR'}
+            fields['MONTH_YEAR_MANUFACTURE'] = {
+                'value': packing_date,
+                'raw_value': packing_date,
+                'raw_date': packing_date,
+                'normalized_value': packing_date,
+                'normalized_date': packing_date,
+                'source_label': 'PKD',
+                'semantic_type': 'MONTH_YEAR_MANUFACTURE',
+                'evidence': {'raw_text': packing_date, 'label': 'PKD'},
+                'confidence': 0.75,
+                'source': 'OCR',
+            }
 
     best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS)
     if best_before:
-        fields['BEST_BEFORE_USE_BY'] = {'value': best_before, 'raw_value': best_before, 'normalized_value': best_before, 'confidence': 0.75, 'source': 'OCR'}
+        fields['BEST_BEFORE_USE_BY'] = {
+            'value': best_before,
+            'raw_value': best_before,
+            'raw_date': best_before,
+            'normalized_value': best_before,
+            'normalized_date': best_before,
+            'source_label': 'BEST_BEFORE',
+            'semantic_type': 'BEST_BEFORE',
+            'evidence': {'raw_text': best_before, 'label': 'BEST_BEFORE'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
     else:
         for line in lines:
             line_lower = line.lower()
@@ -2003,12 +2171,34 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
                 if dur_match:
                     dur_val = dur_match.group(1).strip()
-                    fields['BEST_BEFORE_USE_BY'] = {'value': dur_val, 'raw_value': dur_val, 'normalized_value': dur_val, 'confidence': 0.75, 'source': 'OCR'}
+                    fields['BEST_BEFORE_USE_BY'] = {
+                        'value': dur_val,
+                        'raw_value': dur_val,
+                        'raw_date': dur_val,
+                        'normalized_value': dur_val,
+                        'normalized_date': dur_val,
+                        'source_label': 'BEST_BEFORE',
+                        'semantic_type': 'BEST_BEFORE_PERIOD',
+                        'evidence': {'raw_text': dur_val, 'label': 'BEST_BEFORE'},
+                        'confidence': 0.75,
+                        'source': 'OCR',
+                    }
                     break
 
     use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS)
     if use_by:
-        fields['USE_BEFORE_DATE'] = {'value': use_by, 'raw_value': use_by, 'normalized_value': use_by, 'confidence': 0.75, 'source': 'OCR'}
+        fields['USE_BEFORE_DATE'] = {
+            'value': use_by,
+            'raw_value': use_by,
+            'raw_date': use_by,
+            'normalized_value': use_by,
+            'normalized_date': use_by,
+            'source_label': 'USE_BY',
+            'semantic_type': 'USE_BY',
+            'evidence': {'raw_text': use_by, 'label': 'USE_BY'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
     elif 'BEST_BEFORE_USE_BY' not in fields:
         for line in lines:
             line_lower = line.lower()
@@ -2016,12 +2206,34 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
                 if dur_match:
                     dur_val = dur_match.group(1).strip()
-                    fields['USE_BEFORE_DATE'] = {'value': dur_val, 'raw_value': dur_val, 'normalized_value': dur_val, 'confidence': 0.75, 'source': 'OCR'}
+                    fields['USE_BEFORE_DATE'] = {
+                        'value': dur_val,
+                        'raw_value': dur_val,
+                        'raw_date': dur_val,
+                        'normalized_value': dur_val,
+                        'normalized_date': dur_val,
+                        'source_label': 'USE_BY',
+                        'semantic_type': 'USE_BY_PERIOD',
+                        'evidence': {'raw_text': dur_val, 'label': 'USE_BY'},
+                        'confidence': 0.75,
+                        'source': 'OCR',
+                    }
                     break
 
     expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS)
     if expiry_date:
-        fields['EXPIRY_DATE'] = {'value': expiry_date, 'raw_value': expiry_date, 'normalized_value': expiry_date, 'confidence': 0.75, 'source': 'OCR'}
+        fields['EXPIRY_DATE'] = {
+            'value': expiry_date,
+            'raw_value': expiry_date,
+            'raw_date': expiry_date,
+            'normalized_value': expiry_date,
+            'normalized_date': expiry_date,
+            'source_label': 'EXPIRY',
+            'semantic_type': 'EXPIRY_DATE',
+            'evidence': {'raw_text': expiry_date, 'label': 'EXPIRY'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
 
     fssai = _search_patterns(normalized, FSSAI_PATTERNS)
     if fssai and 9 <= len(fssai) <= 14 and fssai.isdigit():
@@ -2063,9 +2275,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if cc_match and 'CONSUMER_CARE' not in fields:
         fields['CONSUMER_CARE'] = {'value': cc_match[:200], 'confidence': 0.7, 'source': 'OCR'}
 
-    batch_match = re.search(r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\s*[:\s-]*\s*([A-Za-z0-9][A-Za-z0-9\-/]*)', normalized, re.IGNORECASE)
-    if batch_match:
-        fields['BATCH_NUMBER'] = {'value': batch_match.group(1)[:100], 'confidence': 0.7, 'source': 'OCR'}
+    batch_field = _extract_batch_number(lines, normalized, ocr_items)
+    if batch_field:
+        fields['BATCH_NUMBER'] = batch_field
 
     for field_data in fields.values():
         value = str(field_data.get('value', '')).lower()
