@@ -945,5 +945,92 @@ def test_multi_image_higher_confidence_vs_lower_confidence_conflict():
     assert results[0]['review_required'] is True
 
 
+def test_history_filter_supports_both_hyphen_and_underscore_status():
+    """Verify backend get_history accepts both 'NON-COMPLIANT' and 'NON_COMPLIANT',
+    as well as 'NOT_VERIFIABLE' and 'NEEDS_REVIEW'.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.database.connection import SessionLocal
+    from app.database import models
+
+    client = TestClient(app)
+    db = SessionLocal()
+    try:
+        insp = models.Inspection(
+            product_name="Test Product Status Mismatch",
+            category="FOOD",
+            overall_result="NON-COMPLIANT"
+        )
+        db.add(insp)
+        db.commit()
+        db.refresh(insp)
+
+        # Test querying with NON_COMPLIANT
+        resp1 = client.get("/api/history?status=NON_COMPLIANT")
+        assert resp1.status_code == 200
+        ids1 = [item["id"] for item in resp1.json()]
+        assert insp.id in ids1
+
+        # Test querying with NON-COMPLIANT
+        resp2 = client.get("/api/history?status=NON-COMPLIANT")
+        assert resp2.status_code == 200
+        ids2 = [item["id"] for item in resp2.json()]
+        assert insp.id in ids2
+    finally:
+        db.close()
 
 
+def test_inspection_detail_serializes_binary_and_quantity_fields():
+    """Verify get_inspection_detail enriches rule results with binary,
+    quantity_present, unit_present, and quantity_unit_valid.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.database.connection import SessionLocal
+    from app.database import models
+
+    client = TestClient(app)
+    db = SessionLocal()
+    try:
+        insp = models.Inspection(
+            product_name="Test Detail Inspection",
+            category="FOOD",
+            overall_result="COMPLIANT"
+        )
+        db.add(insp)
+        db.commit()
+        db.refresh(insp)
+
+        rr = models.RuleResult(
+            inspection_id=insp.id,
+            rule_id="PC-G-001",
+            parameter="DECLARED_NET_QUANTITY",
+            status="PASS",
+            message="Valid quantity (500) and unit (g)",
+            evidence_data={
+                "value": "500",
+                "unit": "g",
+                "quantity_present": True,
+                "unit_present": True,
+                "quantity_unit_valid": True,
+                "binary": 1
+            }
+        )
+        db.add(rr)
+        db.commit()
+
+        resp = client.get(f"/api/inspection/{insp.id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "rule_results" in data
+        assert len(data["rule_results"]) > 0
+        rule_res = data["rule_results"][0]
+        assert rule_res["binary"] == 1
+        assert rule_res["value"] == "500"
+        assert rule_res["unit"] == "g"
+        assert rule_res["quantity_present"] is True
+        assert rule_res["unit_present"] is True
+        assert rule_res["quantity_unit_valid"] is True
+    finally:
+        db.close()
