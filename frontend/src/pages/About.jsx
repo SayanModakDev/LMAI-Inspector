@@ -12,7 +12,7 @@ const About = () => {
           <h3 className="mt-3 mb-2">How it works</h3>
           <ol style={{ paddingLeft: '1.5rem', marginBottom: '1.5rem' }}>
             <li className="mb-2"><strong>Scan:</strong> Upload an image of a packaged commodity label.</li>
-            <li className="mb-2"><strong>Extract:</strong> PaddleOCR extracts text, and the system identifies declarations (MRP, Net Qty, Dates).</li>
+            <li className="mb-2"><strong>Extract:</strong> PaddleOCR extracts text, and the system identifies declarations (MRP, Declared Net Quantity, Dates).</li>
             <li className="mb-2"><strong>Classify:</strong> The product is automatically classified into categories (e.g., FOOD, COSMETIC).</li>
             <li className="mb-2"><strong>Evaluate:</strong> A flexible rules engine validates the extracted declarations against Legal Metrology guidelines.</li>
             <li><strong>Report:</strong> The inspector can manually override incorrect extractions, re-evaluate, and generate a final PDF report.</li>

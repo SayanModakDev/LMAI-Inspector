@@ -329,13 +329,24 @@ async def perform_scan(
             ))
 
         for result in rule_results:
+            ev_data = dict(result.get('evidence_data') or {})
+            ev_data['binary'] = result.get('binary')
+            ev_data['reason'] = result.get('reason') or result.get('message')
+            ev_data['validation_result'] = result.get('validation_result')
+            ev_data['raw_value'] = result.get('raw_value')
+            ev_data['value'] = result.get('value')
+            ev_data['unit'] = result.get('unit')
+            ev_data['quantity_present'] = result.get('quantity_present')
+            ev_data['unit_present'] = result.get('unit_present')
+            ev_data['quantity_unit_valid'] = result.get('quantity_unit_valid')
+
             db.add(models.RuleResult(
                 inspection_id=db_inspection.id,
                 rule_id=result.get('rule_id'),
                 parameter=result.get('parameter'),
                 status=result.get('status'),
                 message=result.get('message'),
-                evidence_data=result.get('evidence_data'),
+                evidence_data=ev_data,
                 rule_version=result.get('rule_version'),
                 regulatory_source=result.get('regulatory_source'),
                 rule_reference=result.get('rule_reference'),

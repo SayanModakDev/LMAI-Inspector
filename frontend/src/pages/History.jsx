@@ -26,11 +26,17 @@ const History = () => {
   };
 
   const getStatusBadge = (status) => {
-    switch(status) {
-      case 'COMPLIANT': return <span className="badge badge-success">COMPLIANT</span>;
-      case 'NON_COMPLIANT': return <span className="badge badge-danger">NON-COMPLIANT</span>;
-      case 'NEEDS_REVIEW': return <span className="badge badge-warning">REVIEW</span>;
-      default: return <span className="badge badge-gray">{status}</span>;
+    const s = (status || '').replace('_', '-');
+    switch (s) {
+      case 'COMPLIANT':
+        return <span className="badge badge-success">1 — COMPLIANT</span>;
+      case 'NON-COMPLIANT':
+        return <span className="badge badge-danger">0 — NON-COMPLIANT</span>;
+      case 'NOT-VERIFIABLE':
+      case 'NEEDS-REVIEW':
+        return <span className="badge badge-warning">REVIEW</span>;
+      default:
+        return <span className="badge badge-gray">{status}</span>;
     }
   };
 
@@ -46,9 +52,9 @@ const History = () => {
             style={{ width: 'auto' }}
           >
             <option value="ALL">All Statuses</option>
-            <option value="COMPLIANT">Compliant</option>
-            <option value="NON_COMPLIANT">Non-Compliant</option>
-            <option value="NEEDS_REVIEW">Needs Review</option>
+            <option value="COMPLIANT">1 — Compliant</option>
+            <option value="NON-COMPLIANT">0 — Non-Compliant</option>
+            <option value="NOT_VERIFIABLE">REVIEW — Needs Evidence</option>
           </select>
           <Link to="/scan" className="btn btn-primary">New Scan</Link>
         </div>
