@@ -747,14 +747,44 @@ const Result = () => {
                       {/* 3. Extracted Value */}
                       <td>
                         <div className="rule-extracted-value">
-                          {String(extractedVal).startsWith('CONFLICT:') ? (
-                            <>
-                              <span className="badge badge-danger mr-1" style={{ fontSize: '0.65rem' }}>CONFLICT</span>
-                              <span className="text-danger">{extractedVal}</span>
-                            </>
-                          ) : (
-                            extractedVal
-                          )}
+                          {(() => {
+                            const classification = rule.candidate_classification || rule.evidence_data?.candidate_classification;
+                            if (classification === 'TRUE_CONFLICT') {
+                              return (
+                                <>
+                                  <span className="badge badge-danger mr-1" style={{ fontSize: '0.65rem' }}>TRUE CONFLICT</span>
+                                  <span className="text-danger">{extractedVal}</span>
+                                </>
+                              );
+                            }
+                            if (classification === 'OCR_VARIATION') {
+                              return (
+                                <>
+                                  <span className="badge badge-warning mr-1" style={{ fontSize: '0.65rem' }}>REVIEW</span>
+                                  <span>{extractedVal}</span>
+                                  <div className="text-xs text-muted mt-1">Likely OCR character variations across views</div>
+                                </>
+                              );
+                            }
+                            if (classification === 'MULTI_PANEL_EVIDENCE') {
+                              return (
+                                <>
+                                  <span className="badge mr-1" style={{ fontSize: '0.65rem', background: '#3b82f6', color: '#fff' }}>MULTI-PANEL</span>
+                                  <span>{extractedVal}</span>
+                                  <div className="text-xs text-muted mt-1">Additional evidence from other package views</div>
+                                </>
+                              );
+                            }
+                            if (String(extractedVal).startsWith('CONFLICT:')) {
+                              return (
+                                <>
+                                  <span className="badge badge-danger mr-1" style={{ fontSize: '0.65rem' }}>CONFLICT</span>
+                                  <span className="text-danger">{extractedVal}</span>
+                                </>
+                              );
+                            }
+                            return extractedVal;
+                          })()}
                         </div>
                       </td>
 

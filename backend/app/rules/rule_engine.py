@@ -143,10 +143,16 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'rule_reference': rule.get('rule_reference'),
             'review_required': (
                 status in ['FAIL', 'NOT_VERIFIABLE']
-                or bool(evidence_data and (evidence_data.get('status') == 'CONFLICTING_EVIDENCE' or evidence_data.get('has_conflict')))
+                or bool(evidence_data and (
+                    evidence_data.get('status') in ('CONFLICTING_EVIDENCE', 'REVIEW')
+                    or evidence_data.get('has_conflict')
+                ))
             ),
             'severity': severity,
             'validation_result': val_result.to_dict(),
+            'candidate_classification': (
+                evidence_data.get('candidate_classification') if evidence_data else None
+            ),
         }
 
         # Expose structured quantity/unit attributes directly on result if available

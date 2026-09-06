@@ -812,8 +812,8 @@ def test_conflicting_mrp_multi_image():
 
 
 def test_conflicting_product_name_multi_image():
-    """Conflicting product names across package views must be flagged as CONFLICTING_EVIDENCE
-    and require human review.
+    """Different product names across package views are classified as MULTI_PANEL_EVIDENCE
+    (not TRUE_CONFLICT) and require human review.
     """
     img1_fields = {
         'PRODUCT_NAME': {'value': 'Tata Salt', 'confidence': 0.88, 'source': 'OCR_IMAGE_1', 'source_image_index': 0}
@@ -823,8 +823,10 @@ def test_conflicting_product_name_multi_image():
     }
     merged = merge_extracted_fields([img1_fields, img2_fields])
     pname = merged.get('PRODUCT_NAME', {})
-    assert pname.get('status') == 'CONFLICTING_EVIDENCE'
-    assert pname.get('has_conflict') is True
+    # Product names from different images are classified as MULTI_PANEL_EVIDENCE
+    assert pname.get('status') == 'REVIEW'
+    assert pname.get('candidate_classification') == 'MULTI_PANEL_EVIDENCE'
+    assert pname.get('has_conflict') is False
     assert set(pname.get('values', [])) == {'Tata Salt', 'Aashirvaad Atta'}
     assert len(pname.get('candidates', [])) == 2
 

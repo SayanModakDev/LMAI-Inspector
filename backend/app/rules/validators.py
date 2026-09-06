@@ -150,6 +150,20 @@ def _check_preconditions(
             evidence=evidence,
         )
 
+    # 0b. Ambiguous / OCR variation evidence also requires review
+    if evidence and evidence.get("status") == "REVIEW":
+        review_reason = evidence.get("reason") or (
+            f"Multiple plausible evidence candidates detected for '{parameter}'. "
+            "Manual verification recommended."
+        )
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=review_reason,
+            normalized_value=str(evidence.get("value", "")),
+            evidence=evidence,
+        )
+
     # 1. Missing evidence or empty value
     if not evidence or evidence.get("value") is None or not str(evidence.get("value", "")).strip():
         if required:

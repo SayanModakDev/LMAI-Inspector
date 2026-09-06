@@ -686,12 +686,246 @@ def merge_product_evidence(
     return fields
 
 
-def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Merge extracted declarations across multiple package views with explicit conflict detection.
+# ---------------------------------------------------------------------------
+# Semantic context detection for candidate classification
+# ---------------------------------------------------------------------------
+NUTRITION_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bserv(?:e|ing)\s*size\b|\bper\s+(?:\d+\s*g|serving)\b|'
+    r'\bnutrition(?:al)?\s*(?:information|facts|value)?\b|'
+    r'\b(?:energy|protein|carbohydrate|fat|sugar|fibre|fiber|sodium|cholesterol|calcium|iron|vitamin)\s*[:\(]|'
+    r'\bkcal\b|\bkj\b|'
+    r'\btotal\s+(?:sugar|fat|carbohydrate|energy)\b|'
+    r'\bper\s+100\s*(?:g|ml)\b'
+    r')',
+    re.IGNORECASE,
+)
 
-    Instead of silently favoring the highest-confidence candidate when package views
-    disagree, conflicting values are explicitly flagged with status CONFLICTING_EVIDENCE,
-    and all candidate metadata (source, confidence, image index) is preserved.
+STORAGE_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away)\b|'
+    r'\bcool\s*(?:,|&|and)?\s*dry\s+place\b|\brefrigerat\w*\b|'
+    r'\bavoid\s+(?:direct\s+)?sunlight\b|\bdo\s+not\s+(?:store|keep)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+MARKETING_CONTEXT_RE = re.compile(
+    r'(?:'
+    r"\bsweet'?n\s*sour\b|\bcrispy\s*(?:&|and)\s*crunchy\b|"
+    r'\bdelicious\b|\btasty\b|\bpremium\s+quality\b|'
+    r'\b(?:100|pure)\s*%\s*(?:natural|pure|vegetarian)\b|'
+    r'\bno\s+added\s+(?:preservative|colour|flavor)\b|'
+    r'\b(?:new|improved)\s+(?:taste|formula|recipe)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+CONTACT_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bcall\s+us\s+at\b|\btoll\s*free\b|\b(?:phone|tel|fax)\s*[:\s]\b|'
+    r'\b(?:email|e-mail)\s*[:\s]\b|\bwww\.\b|\bhttp\b|'
+    r'\bconsumer\s*care\b|\bcustomer\s*care\b|\bhelpline\b|'
+    r'\bwrite\s+to\b|\bfeedback\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _fuzzy_ocr_similar(s1: str, s2: str, threshold: float = 0.65) -> bool:
+    """Detect if two strings are OCR character-error variations of the same underlying text.
+
+    Uses character-level bigram similarity (Dice coefficient).
+    E.g. 'CHISSYUMFOODS' vs 'SWISSYUM FOODS' vs 'WISSYUM FOODS' share most bigrams.
+    """
+    def _bigrams(s: str) -> list:
+        cleaned = re.sub(r'[^a-z0-9]', '', s.lower())
+        return [cleaned[i:i+2] for i in range(len(cleaned) - 1)] if len(cleaned) >= 2 else []
+
+    bg1 = _bigrams(s1)
+    bg2 = _bigrams(s2)
+    if not bg1 or not bg2:
+        return False
+    # Dice coefficient
+    from collections import Counter
+    c1, c2 = Counter(bg1), Counter(bg2)
+    overlap = sum((c1 & c2).values())
+    total = sum(c1.values()) + sum(c2.values())
+    similarity = (2.0 * overlap) / total if total else 0.0
+    return similarity >= threshold
+
+
+def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool:
+    """Check if a candidate value is contextually irrelevant for its claimed field.
+
+    Returns True if the candidate should be excluded from conflict evaluation.
+    """
+    val = str(candidate.get('value') or '').strip()
+    raw = str(candidate.get('raw_text') or candidate.get('value') or '').strip()
+    # Surrounding context from the source line/text
+    context = str(candidate.get('source_context') or raw)
+
+    if not val:
+        return True
+
+    if field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        # Reject nutrition/serving-size quantities
+        if NUTRITION_CONTEXT_RE.search(context):
+            return True
+        # Reject isolated single digits without units (OCR noise like "2")
+        if re.fullmatch(r'\d{1,2}', val) and not re.search(r'[a-zA-Z]', val):
+            return True
+        # Reject if the context line is clearly a nutrition row
+        if re.search(r'\b(?:sugar|protein|fat|carbohydrate|fibre|fiber|energy|cholesterol|sodium|calcium)\b', context, re.IGNORECASE):
+            return True
+        # Serving size indicator
+        if re.search(r'\bserv(?:e|ing)\s*size\b', context, re.IGNORECASE):
+            return True
+
+    elif field_name == 'MANUFACTURER_NAME':
+        # Reject marketing slogans, nutrition rows, storage instructions
+        if MARKETING_CONTEXT_RE.search(context) or NUTRITION_CONTEXT_RE.search(context):
+            return True
+        if STORAGE_CONTEXT_RE.search(context):
+            return True
+        if CONTACT_CONTEXT_RE.search(context):
+            return True
+
+    elif field_name == 'MANUFACTURER_ADDRESS':
+        # Reject storage instructions, marketing, contact lines
+        if STORAGE_CONTEXT_RE.search(val) or MARKETING_CONTEXT_RE.search(val):
+            return True
+        if CONTACT_CONTEXT_RE.search(val):
+            return True
+        # Reject if it looks like a nutrition/serving line
+        if NUTRITION_CONTEXT_RE.search(val):
+            return True
+
+    elif field_name == 'PRODUCT_NAME':
+        # Reject nutrition table rows
+        if NUTRITION_CONTEXT_RE.search(val):
+            return True
+        # Reject very short low-confidence fragments (likely OCR noise)
+        conf = float(candidate.get('confidence') or 0)
+        if len(val) <= 3 and conf < 0.7:
+            return True
+
+    return False
+
+
+def _classify_multi_image_evidence(
+    field_name: str,
+    groups: List[List[Dict[str, Any]]],
+    all_candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Classify multi-group evidence for a field into TRUE_CONFLICT, REVIEW, or MULTI_PANEL_EVIDENCE.
+
+    Args:
+        field_name: The declaration field being evaluated.
+        groups: Groups of candidates clustered by value equivalence.
+        all_candidates: All candidates (for metadata).
+
+    Returns:
+        A merged field dict with the appropriate status and classification.
+    """
+    distinct_values = [str(g[0].get('value')) for g in groups]
+    highest_conf = max((float(c.get('confidence') or 0) for c in all_candidates), default=0.8)
+
+    # Check if all groups are OCR variations of the same value (fuzzy match)
+    # Works for 2+ groups by checking all pairs
+    if len(groups) >= 2:
+        all_fuzzy_similar = True
+        for i in range(len(groups)):
+            for j in range(i + 1, len(groups)):
+                v_i = str(groups[i][0].get('value', ''))
+                v_j = str(groups[j][0].get('value', ''))
+                if not _fuzzy_ocr_similar(v_i, v_j):
+                    all_fuzzy_similar = False
+                    break
+            if not all_fuzzy_similar:
+                break
+
+        if all_fuzzy_similar:
+            # OCR character-level variations — pick the best candidate, flag for review
+            all_in_groups = [c for g in groups for c in g]
+            best = max(all_in_groups, key=lambda c: (float(c.get('confidence') or 0), len(str(c.get('value', '')))))
+            return {
+                'status': 'REVIEW',
+                'has_conflict': False,
+                'value': best.get('value'),
+                'selected_value': best.get('value'),
+                'values': distinct_values,
+                'confidence': round(float(best.get('confidence') or highest_conf), 2),
+                'source': best.get('source', 'OCR'),
+                'source_image_index': best.get('source_image_index'),
+                'candidates': all_candidates,
+                'review_required': True,
+                'candidate_classification': 'OCR_VARIATION',
+                'reason': (
+                    f"Multiple plausible evidence candidates detected across package views for '{field_name}': "
+                    f"{distinct_values}. Likely OCR character variations. Manual verification recommended."
+                ),
+            }
+
+    # For multi-group (3+ or non-fuzzy): check if there's one dominant, high-confidence group
+    if len(groups) >= 2:
+        # Check for multi-panel naming (e.g. front panel brand + side panel variant)
+        from_different_images = len(set(
+            c.get('source_image_index') for g in groups for c in g
+            if c.get('source_image_index') is not None
+        )) > 1
+        if from_different_images and field_name in ('PRODUCT_NAME', 'BRAND', 'GENERIC_NAME'):
+            # Product names from different panels may be complementary, not conflicting
+            best_group = max(groups, key=lambda g: max(float(c.get('confidence') or 0) for c in g))
+            best = max(best_group, key=lambda c: float(c.get('confidence') or 0))
+            return {
+                'status': 'REVIEW',
+                'has_conflict': False,
+                'value': best.get('value'),
+                'selected_value': best.get('value'),
+                'values': distinct_values,
+                'confidence': round(float(best.get('confidence') or highest_conf), 2),
+                'source': best.get('source', 'OCR'),
+                'source_image_index': best.get('source_image_index'),
+                'candidates': all_candidates,
+                'review_required': True,
+                'candidate_classification': 'MULTI_PANEL_EVIDENCE',
+                'reason': (
+                    f"Multiple product identification candidates detected across different package views for '{field_name}': "
+                    f"{distinct_values}. Manual verification recommended."
+                ),
+            }
+
+    # Default: TRUE_CONFLICT — genuinely contradictory declarations
+    return {
+        'status': 'CONFLICTING_EVIDENCE',
+        'has_conflict': True,
+        'values': distinct_values,
+        'value': f"CONFLICT: {' vs '.join(distinct_values)}",
+        'confidence': round(highest_conf, 2),
+        'source': 'MULTI_IMAGE_CONFLICT',
+        'candidates': all_candidates,
+        'review_required': True,
+        'candidate_classification': 'TRUE_CONFLICT',
+        'conflict_reason': f"Conflicting declarations detected across package views for '{field_name}': {distinct_values}",
+        'reason': (
+            f"Conflicting evidence detected across package views for '{field_name}': "
+            f"{distinct_values}. Inspector review required."
+        ),
+    }
+
+
+def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge extracted declarations across multiple package views with smart conflict classification.
+
+    Distinguishes between:
+    - TRUE_CONFLICT: Same semantic field & context, genuinely contradictory values.
+    - MULTI_PANEL_EVIDENCE: Complementary declarations from different package panels.
+    - REVIEW: Multiple plausible candidates or OCR character variations.
+    - OCR_NOISE / IRRELEVANT_CANDIDATE: Filtered out before conflict evaluation.
+
+    Never silently favors the highest-confidence candidate when values disagree.
+    All candidate metadata (source, confidence, image index) is preserved.
     """
     merged: Dict[str, Any] = {}
     candidates_by_field: Dict[str, List[Dict[str, Any]]] = {}
@@ -711,13 +945,31 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not candidates:
             continue
 
-        if len(candidates) == 1:
-            merged[name] = candidates[0]
+        # Phase 1: Filter out irrelevant/noise candidates
+        relevant = [c for c in candidates if not _is_irrelevant_candidate(name, c)]
+        noise = [c for c in candidates if _is_irrelevant_candidate(name, c)]
+
+        if not relevant:
+            # All candidates are noise — pick best anyway but mark as low-confidence
+            if candidates:
+                best = max(candidates, key=lambda c: float(c.get('confidence') or 0))
+                result = dict(best)
+                result['candidates'] = candidates
+                result['filtered_noise'] = noise
+                merged[name] = result
             continue
 
-        # Group candidates by value equivalence using _values_conflict
+        if len(relevant) == 1:
+            result = dict(relevant[0])
+            result['candidates'] = candidates
+            if noise:
+                result['filtered_noise'] = noise
+            merged[name] = result
+            continue
+
+        # Phase 2: Group relevant candidates by value equivalence
         groups: List[List[Dict[str, Any]]] = []
-        for cand in candidates:
+        for cand in relevant:
             matched_group = False
             for group in groups:
                 if not _values_conflict(name, cand, group[0]):
@@ -728,25 +980,21 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 groups.append([cand])
 
         if len(groups) == 1:
-            # All candidates agree across images
+            # All relevant candidates agree across images
             best = max(groups[0], key=lambda c: float(c.get('confidence') or 0))
             agreed = dict(best)
             agreed['candidates'] = candidates
+            if noise:
+                agreed['filtered_noise'] = noise
             merged[name] = agreed
         else:
-            # Contradictory evidence detected between package views!
-            distinct_values = [str(g[0].get('value')) for g in groups]
-            highest_conf = max((float(c.get('confidence') or 0) for c in candidates), default=0.8)
-            merged[name] = {
-                'status': 'CONFLICTING_EVIDENCE',
-                'has_conflict': True,
-                'values': distinct_values,
-                'value': f"CONFLICT: {' vs '.join(distinct_values)}",
-                'confidence': round(highest_conf, 2),
-                'source': 'MULTI_IMAGE_CONFLICT',
-                'candidates': candidates,
-                'conflict_reason': f"Conflicting declarations detected across package views for '{name}': {distinct_values}",
-            }
+            # Multiple distinct value groups — classify the evidence type
+            result = _classify_multi_image_evidence(name, groups, relevant)
+            if noise:
+                result['filtered_noise'] = noise
+            # Preserve all original candidates (including noise) for transparency
+            result['all_candidates'] = candidates
+            merged[name] = result
 
     return merged
 
