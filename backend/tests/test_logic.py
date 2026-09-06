@@ -570,3 +570,214 @@ def test_arbitrary_nearby_text_not_treated_as_manufacturer():
     assert 'MANUFACTURER_ADDRESS' not in fields
 
 
+def test_food_package_can_evaluate_food_specific_rule():
+    """Food packages must be eligible for food-specific rules (PC-FOOD-001..005) and evaluate them."""
+    import json
+    with open('data/rule_matrix.json', 'r', encoding='utf-8') as f:
+        all_rules = json.load(f)['rules']
+
+    food_text = (
+        "NUTRIVA CRISPY OATS COOKIES\n"
+        "Ingredients: Rolled Oats, Whole Wheat Flour, Sugar, Edible Vegetable Oil.\n"
+        "Nutritional Facts per 100g: Energy 480 kcal, Protein 8.5g\n"
+        "Net Weight: 250 g\n"
+        "MRP: Rs. 95.00\n"
+        "FSSAI Lic No: 10019022000456\n"
+        "Date of Manufacture: 11/2025\n"
+        "Best Before Date: 10/2026\n"
+        "Manufactured by: Healthy Foods India Pvt Ltd\n"
+        "Consumer Helpline: 1800-444-5555"
+    )
+    fields = extract_declarations(food_text)
+    classification = classify_category(food_text, fields)
+    assert classification['category'] == 'FOOD'
+
+    app_rules = get_applicable_rules(all_rules, category=classification['category'], product_type=classification['product_type'])
+    app_rule_ids = {r['rule_id'] for r in app_rules}
+
+    # Food-specific rules must be present
+    assert 'PC-FOOD-001' in app_rule_ids  # BEST_BEFORE_USE_BY
+    assert 'PC-FOOD-002' in app_rule_ids  # INGREDIENTS_LIST
+    assert 'PC-FOOD-003' in app_rule_ids  # NUTRITIONAL_INFO
+    assert 'PC-FOOD-004' in app_rule_ids  # FSSAI_LICENSE
+    assert 'PC-FOOD-005' in app_rule_ids  # VEG_NONVEG_SYMBOL
+
+    # Cosmetic rules must NOT be present
+    assert 'PC-COSM-001' not in app_rule_ids
+    assert 'PC-COSM-002' not in app_rule_ids
+    assert 'PC-COSM-003' not in app_rule_ids
+
+    # Evaluate rules
+    results, overall = evaluate_rules(app_rules, fields)
+    fssai_res = next(r for r in results if r['rule_id'] == 'PC-FOOD-004')
+    assert fssai_res['status'] == 'PASS'
+    assert fssai_res['binary'] == 1
+
+
+def test_cosmetic_package_does_not_receive_veg_nonveg_symbol():
+    """Cosmetic packages must NOT receive VEG_NONVEG_SYMBOL evidence or food rules."""
+    import json
+    with open('data/rule_matrix.json', 'r', encoding='utf-8') as f:
+        all_rules = json.load(f)['rules']
+
+    cosmetic_text = (
+        "LUMINA GLOW\n"
+        "Hydrating Face Cream\n"
+        "Personal Care Cosmetic Formulation\n"
+        "Ingredients: Aqua, Glycerin, Cetyl Alcohol, Fragrance.\n"
+        "Net Wt: 100 g\n"
+        "MRP: Rs. 250.00\n"
+        "Batch No: LG-402\n"
+        "Use before: 12/2026\n"
+        "Manufactured by: Lumina Personal Care Pvt Ltd, Mumbai 400001\n"
+        "Customer Care: 1800-111-2222"
+    )
+    # Even if text mentioned 'vegetarian' in a cosmetic marketing context:
+    text_with_veg_mention = cosmetic_text + "\n100% Vegetarian herbal extracts"
+    fields = extract_declarations(text_with_veg_mention, category='COSMETIC')
+    assert 'VEG_NONVEG_SYMBOL' not in fields
+
+    classification = classify_category(text_with_veg_mention, fields)
+    assert classification['category'] == 'COSMETIC'
+
+    app_rules = get_applicable_rules(all_rules, category=classification['category'], product_type=classification['product_type'])
+    app_rule_ids = {r['rule_id'] for r in app_rules}
+
+    # Food-specific rules must NOT apply to cosmetic
+    assert 'PC-FOOD-005' not in app_rule_ids
+    assert 'PC-FOOD-004' not in app_rule_ids
+    assert 'PC-FOOD-001' not in app_rule_ids
+
+    # Cosmetic rules must apply
+    assert 'PC-COSM-001' in app_rule_ids
+    assert 'PC-COSM-002' in app_rule_ids
+    assert 'PC-COSM-003' in app_rule_ids
+
+
+def test_cosmetic_talc_remains_cosmetic_talcum_powder():
+    """Cosmetic talc package remains firmly COSMETIC / TALCUM_POWDER with zero food rule applicability."""
+    import json
+    with open('data/rule_matrix.json', 'r', encoding='utf-8') as f:
+        all_rules = json.load(f)['rules']
+
+    talc_text = (
+        "GREAT DEAL\n"
+        "JIVE\n"
+        "Fragrant Soft Talc\n"
+        "Body Talcum Powder\n"
+        "Ingredients: Talc, Calcium Carbonate, Fragrance, Dipropylene Glycol.\n"
+        "Manufactured by: Premier Personal Care Pvt Ltd\n"
+        "Plot 10, Sector 5, IMT Manesar, Gurugram, Haryana - 122050\n"
+        "Net Qty: 300 g\n"
+        "MRP: ₹ 180.00\n"
+        "Batch No: B4019\n"
+        "MFD: 02/2026\n"
+        "Best Before: 36 months from mfg\n"
+        "Consumer Care: 1800-222-3333, feedback@premiercare.in"
+    )
+    fields = extract_declarations(talc_text)
+    cls = classify_category(talc_text, fields)
+
+    assert cls['category'] == 'COSMETIC'
+    assert cls['product_type'] == 'TALCUM_POWDER'
+    assert cls['confidence'] >= 0.8
+
+    app_rules = get_applicable_rules(all_rules, category=cls['category'], product_type=cls['product_type'])
+    app_rule_ids = {r['rule_id'] for r in app_rules}
+
+    assert 'PC-FOOD-005' not in app_rule_ids
+    assert 'PC-COSM-001' in app_rule_ids  # BATCH_NUMBER
+    assert 'PC-COSM-002' in app_rule_ids  # INGREDIENTS_LIST
+
+
+def test_non_food_packages_do_not_receive_food_only_checks():
+    """HOUSEHOLD, ELECTRONICS, and unconfident categories do not run food symbol checks or receive PC-FOOD-* rules."""
+    import json
+    with open('data/rule_matrix.json', 'r', encoding='utf-8') as f:
+        all_rules = json.load(f)['rules']
+
+    # 1. Household surface cleaner
+    hh_text = (
+        "SPARKLE CLEAN\n"
+        "Floor Cleaner & Surface Disinfectant\n"
+        "Keep out of reach of children\n"
+        "Net Volume: 1 L\n"
+        "MRP: Rs. 165.00\n"
+        "Manufactured by: Sparkle Hygiene Products Ltd, Hyderabad 500032\n"
+        "Consumer Support: 1800-555-6666"
+    )
+    hh_fields = extract_declarations(hh_text)
+    hh_cls = classify_category(hh_text, hh_fields)
+    assert hh_cls['category'] == 'HOUSEHOLD'
+
+    hh_rules = get_applicable_rules(all_rules, category=hh_cls['category'], product_type=hh_cls['product_type'])
+    hh_rule_ids = {r['rule_id'] for r in hh_rules}
+    assert 'PC-FOOD-005' not in hh_rule_ids
+    assert not any(rid.startswith('PC-FOOD') for rid in hh_rule_ids)
+
+    # 2. Electronics
+    elec_text = (
+        "VOLTMAX\n"
+        "Fast USB-C Charger Adapter\n"
+        "Input: 100-240V, Output: 65W\n"
+        "Serial Number: SN-998822\n"
+        "MRP: Rs. 1499.00\n"
+        "Manufactured by: Voltmax Technologies Pvt Ltd, Bengaluru 560001"
+    )
+    elec_fields = extract_declarations(elec_text)
+    elec_cls = classify_category(elec_text, elec_fields)
+    assert elec_cls['category'] == 'ELECTRONICS'
+
+    elec_rules = get_applicable_rules(all_rules, category=elec_cls['category'], product_type=elec_cls['product_type'])
+    elec_rule_ids = {r['rule_id'] for r in elec_rules}
+    assert 'PC-FOOD-005' not in elec_rule_ids
+    assert not any(rid.startswith('PC-FOOD') for rid in elec_rule_ids)
+
+    # 3. Unknown / unconfident category
+    unk_rules = get_applicable_rules(all_rules, category='UNKNOWN', product_type='UNKNOWN')
+    unk_rule_ids = {r['rule_id'] for r in unk_rules}
+    assert not any(rid.startswith('PC-FOOD') for rid in unk_rule_ids)
+    assert not any(rid.startswith('PC-COSM') for rid in unk_rule_ids)
+
+
+def test_visual_candidate_alone_never_becomes_legal_pass():
+    """Distinguish detector candidate vs verified evidence vs compliance result.
+    A visual detector candidate alone must NEVER evaluate to PASS.
+    """
+    from app.rules.validators import validate_veg_nonveg_present
+
+    rule = {"rule_id": "PC-FOOD-005", "parameter": "VEG_NONVEG_SYMBOL", "required": True}
+
+    # Case 1: Detector candidate from OpenCV
+    candidate_evidence = {
+        "value": "VEGETARIAN",
+        "symbol_type": "VEGETARIAN",
+        "source": "VISUAL_DETECTION",
+        "status": "CANDIDATE",
+        "is_candidate": True,
+        "confidence": 0.72,
+        "detection_method": "opencv_colored_dot_contour_with_boundary",
+    }
+    candidate_result = validate_veg_nonveg_present(candidate_evidence, rule, {})
+    assert candidate_result.status == "NOT_VERIFIABLE"
+    assert candidate_result.binary == 0
+    assert "candidate detected" in candidate_result.reason.lower()
+
+    # Case 2: Verified text evidence (OCR declaration)
+    verified_evidence = {
+        "value": "Vegetarian",
+        "source": "OCR",
+        "status": "VERIFIED",
+        "confidence": 0.85,
+    }
+    verified_result = validate_veg_nonveg_present(verified_evidence, rule, {})
+    assert verified_result.status == "PASS"
+    assert verified_result.binary == 1
+
+    # Case 3: Missing evidence
+    missing_result = validate_veg_nonveg_present(None, rule, {})
+    assert missing_result.status == "NOT_VERIFIABLE"
+    assert missing_result.binary == 0
+
+
+

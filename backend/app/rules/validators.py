@@ -938,6 +938,25 @@ def validate_veg_nonveg_present(
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
     lowered = raw_val.lower()
 
+    # Distinguish detector candidate vs verified evidence
+    is_candidate = bool(
+        evidence.get("status") == "CANDIDATE"  # type: ignore[union-attr]
+        or evidence.get("is_candidate") is True  # type: ignore[union-attr]
+        or (evidence.get("source") == "VISUAL_DETECTION" and evidence.get("status") != "VERIFIED")  # type: ignore[union-attr]
+    )
+
+    if is_candidate:
+        # A visual candidate alone must never become a legal PASS.
+        symbol_type = evidence.get("value") or evidence.get("symbol_type") or "symbol"  # type: ignore[union-attr]
+        det_method = evidence.get("detection_method", "visual detector")  # type: ignore[union-attr]
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=f"Visual candidate detected: {symbol_type} ({det_method}); requires inspector confirmation to verify compliance.",
+            normalized_value=str(symbol_type),
+            evidence=evidence,
+        )
+
     if any(k in lowered for k in ['vegetarian', 'non-vegetarian', 'non-veg', 'nonveg', 'veg symbol', 'veg']):
         status_label = "NON_VEG" if any(k in lowered for k in ['non-veg', 'nonveg', 'non-vegetarian']) else "VEG"
         return ValidationResult(

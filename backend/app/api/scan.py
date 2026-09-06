@@ -92,10 +92,11 @@ async def perform_scan(
                 'image_index': image_index,
                 'image_path': safe_filenames[image_index],
                 'processed_image_path': os.path.basename(processed_path),
+                'processed_full_path': processed_path,
                 'ocr_text': raw_text,
                 'ocr_items': ocr_items,
                 'barcode_result': image_barcode,
-                'visual_evidence': detect_food_symbol(processed_path),
+                'visual_evidence': None,
             })
             timings["images"].append({"image_index": image_index, "preprocess_ms": preprocess_ms, "ocr_ms": ocr_ms, "barcode_decode_ms": barcode_ms})
             logger.info("scan timing image=%s preprocess_ms=%s ocr_ms=%s barcode_decode_ms=%s", image_index, preprocess_ms, ocr_ms, barcode_ms)
@@ -111,25 +112,51 @@ async def perform_scan(
         extracted_fields = merge_extracted_fields(per_image_fields + [extract_declarations(raw_text, ocr_items)])
         extracted_fields = merge_product_evidence(extracted_fields, raw_text, ocr_items, barcode_result)
         timings['declaration_extraction_ms'] = round((time.perf_counter() - extraction_started) * 1000)
-        visual_candidates = [
-            (result['visual_evidence'], result['image_index'])
-            for result in image_results
-            if result.get('visual_evidence', {}).get('status') == 'CANDIDATE'
-        ]
-        if visual_candidates and 'VEG_NONVEG_SYMBOL' not in extracted_fields:
-            visual_evidence, image_index = max(visual_candidates, key=lambda item: item[0].get('confidence', 0))
-            extracted_fields['VEG_NONVEG_SYMBOL'] = {
-                'value': visual_evidence.get('symbol_type'),
-                'confidence': visual_evidence.get('confidence', 0),
-                'source': 'VISUAL_DETECTION',
-                'source_image_index': image_index,
-                'bbox': visual_evidence.get('bbox'),
-                'detection_method': visual_evidence.get('detection_method'),
-            }
+
+        # Classification precedes category-specific visual checks
         classification = classify_category(raw_text, extracted_fields, settings.CATEGORY_CONFIDENCE_THRESHOLD)
         category = classification.get('category', 'UNKNOWN')
         cat_confidence = classification.get('confidence', 0.0)
         product_type = classification.get('product_type') or extracted_fields.get('PRODUCT_TYPE', {}).get('value', 'UNKNOWN')
+
+        # Category-gated visual detection: only run food symbol detection for confident FOOD products.
+        is_confident_food = (
+            category == 'FOOD'
+            and cat_confidence >= settings.CATEGORY_CONFIDENCE_THRESHOLD
+        )
+
+        if is_confident_food:
+            visual_started = time.perf_counter()
+            visual_candidates = []
+            for image_res in image_results:
+                proc_img_path = image_res.get('processed_full_path')
+                if proc_img_path and os.path.exists(proc_img_path):
+                    vis_ev = detect_food_symbol(proc_img_path)
+                    image_res['visual_evidence'] = vis_ev
+                    if vis_ev.get('status') == 'CANDIDATE':
+                        visual_candidates.append((vis_ev, image_res['image_index']))
+            timings['visual_detection_ms'] = round((time.perf_counter() - visual_started) * 1000)
+
+            if visual_candidates and 'VEG_NONVEG_SYMBOL' not in extracted_fields:
+                visual_evidence, image_index = max(visual_candidates, key=lambda item: item[0].get('confidence', 0))
+                extracted_fields['VEG_NONVEG_SYMBOL'] = {
+                    'value': visual_evidence.get('symbol_type'),
+                    'symbol_type': visual_evidence.get('symbol_type'),
+                    'confidence': visual_evidence.get('confidence', 0),
+                    'source': 'VISUAL_DETECTION',
+                    'source_image_index': image_index,
+                    'bbox': visual_evidence.get('bbox'),
+                    'detection_method': visual_evidence.get('detection_method'),
+                    'status': 'CANDIDATE',
+                    'is_candidate': True,
+                    'candidate_status': 'CANDIDATE',
+                }
+        else:
+            # Non-food products (COSMETIC, HOUSEHOLD, ELECTRONICS, etc.) or unconfident category:
+            # Do NOT run food-symbol detection and do NOT retain VEG_NONVEG_SYMBOL evidence.
+            for image_res in image_results:
+                image_res['visual_evidence'] = None
+            extracted_fields.pop('VEG_NONVEG_SYMBOL', None)
 
         db_rules = db.query(models.Rule).filter(models.Rule.is_active == True).all()
         all_rules_dict = [{c.name: getattr(rule, c.name) for c in rule.__table__.columns} for rule in db_rules]

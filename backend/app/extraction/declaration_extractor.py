@@ -725,7 +725,7 @@ def _extract_net_quantity_field(normalized: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None, category: Optional[str] = None) -> Dict[str, Any]:
     if not raw_text:
         return {}
 
@@ -901,7 +901,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
             fields['NUTRITIONAL_INFO'] = {'value': panel[:2000], 'confidence': 0.65, 'source': 'OCR', 'regulatory_source': 'FSSAI_FOOD_LABELING'}
             break
 
-    if any(keyword in normalized.lower() for keyword in VEG_NONVEG_KEYWORDS):
+    if (category is None or category.upper() == 'FOOD') and any(keyword in normalized.lower() for keyword in VEG_NONVEG_KEYWORDS):
         fields['VEG_NONVEG_SYMBOL'] = {'value': 'Text mention detected', 'confidence': 0.5, 'source': 'OCR'}
 
     for line_index, line in enumerate(lines):

@@ -57,5 +57,6 @@ def detect_food_symbol(image_path: str) -> Dict[str, Any]:
         "bbox": bbox,
         "detection_method": "opencv_colored_dot_contour_with_boundary",
         "status": "CANDIDATE",
+        "is_candidate": True,
         "size_verification": "NOT_VERIFIABLE",
     }

@@ -58,9 +58,13 @@ def get_applicable_rules(
             continue
 
         # --- Product type filter ---
-        rule_product_type = rule.get('product_type', 'ALL').upper()
-        if rule_product_type not in {'ALL', 'UNKNOWN'} and rule_product_type != product_type.upper():
-            continue
+        rule_product_type = (rule.get('product_type') or 'ALL').upper()
+        if rule_product_type not in {'ALL', 'UNKNOWN'}:
+            if rule_product_type == 'OTHER_FOOD':
+                if category.upper() != 'FOOD' or product_type.upper() in {'SALT', 'SUGAR'}:
+                    continue
+            elif rule_product_type != product_type.upper():
+                continue
 
         # --- Condition filter ---
         condition = rule.get('condition', 'APPLICABLE').upper()
