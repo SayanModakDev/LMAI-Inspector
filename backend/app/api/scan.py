@@ -121,46 +121,74 @@ async def perform_scan(
 
         for image_index, original_path in enumerate(original_paths):
             image_started = time.perf_counter()
-            processed_path, prep_info = preprocess_image(
-                input_path=original_path,
-                output_dir=settings.UPLOAD_DIR,
-                filename_prefix=f"processed_{image_index}",
-            )
-            preprocess_ms = round((time.perf_counter() - image_started) * 1000)
-            ocr_started = time.perf_counter()
-            ocr_result_data = run_ocr(processed_path)
-            ocr_ms = round((time.perf_counter() - ocr_started) * 1000)
-            raw_text = ocr_result_data.get('raw_text', '')
-            ocr_items = ocr_result_data.get('ocr_items', [])
-            for item in ocr_items:
-                item['image_index'] = image_index
-            if raw_text:
-                combined_text_parts.append(raw_text)
-            combined_ocr_items.extend(ocr_items)
-            img_fields = extract_declarations(raw_text, ocr_items)
-            for f_cand in img_fields.values():
-                if isinstance(f_cand, dict):
-                    f_cand.setdefault('source_image_index', image_index)
-                    f_cand.setdefault('source', f'OCR_IMAGE_{image_index + 1}')
-            per_image_fields.append(img_fields)
-            total_processing_time += ocr_result_data.get('processing_time_ms', 0)
-            barcode_started = time.perf_counter()
-            image_barcode = decode_barcodes(processed_path, raw_text)
-            barcode_ms = round((time.perf_counter() - barcode_started) * 1000)
-            if image_barcode and image_barcode.get('value'):
-                barcode_result = image_barcode
-            image_results.append({
-                'image_index': image_index,
-                'image_path': safe_filenames[image_index],
-                'processed_image_path': os.path.basename(processed_path),
-                'processed_full_path': processed_path,
-                'ocr_text': raw_text,
-                'ocr_items': ocr_items,
-                'barcode_result': image_barcode,
-                'visual_evidence': None,
-            })
-            timings["images"].append({"image_index": image_index, "preprocess_ms": preprocess_ms, "ocr_ms": ocr_ms, "barcode_decode_ms": barcode_ms})
-            logger.info("scan timing image=%s preprocess_ms=%s ocr_ms=%s barcode_decode_ms=%s", image_index, preprocess_ms, ocr_ms, barcode_ms)
+            try:
+                processed_path, prep_info = preprocess_image(
+                    input_path=original_path,
+                    output_dir=settings.UPLOAD_DIR,
+                    filename_prefix=f"processed_{image_index}",
+                )
+                preprocess_ms = round((time.perf_counter() - image_started) * 1000)
+                ocr_started = time.perf_counter()
+                ocr_result_data = run_ocr(processed_path)
+                ocr_ms = round((time.perf_counter() - ocr_started) * 1000)
+                raw_text = ocr_result_data.get('raw_text', '')
+                ocr_items = ocr_result_data.get('ocr_items', [])
+                for item in ocr_items:
+                    item['image_index'] = image_index
+                if raw_text:
+                    combined_text_parts.append(raw_text)
+                combined_ocr_items.extend(ocr_items)
+                img_fields = extract_declarations(raw_text, ocr_items)
+                for f_cand in img_fields.values():
+                    if isinstance(f_cand, dict):
+                        f_cand.setdefault('source_image_index', image_index)
+                        f_cand.setdefault('source', f'OCR_IMAGE_{image_index + 1}')
+                per_image_fields.append(img_fields)
+                total_processing_time += ocr_result_data.get('processing_time_ms', 0)
+                barcode_started = time.perf_counter()
+                image_barcode = decode_barcodes(processed_path, raw_text)
+                barcode_ms = round((time.perf_counter() - barcode_started) * 1000)
+                if image_barcode and image_barcode.get('value'):
+                    barcode_result = image_barcode
+                image_results.append({
+                    'image_index': image_index,
+                    'image_path': safe_filenames[image_index],
+                    'processed_image_path': os.path.basename(processed_path),
+                    'processed_full_path': processed_path,
+                    'ocr_status': ocr_result_data.get('ocr_status', 'SUCCESS_WITH_TEXT' if raw_text else 'NO_TEXT_DETECTED'),
+                    'ocr_text': raw_text,
+                    'ocr_items': ocr_items,
+                    'ocr_diagnostics': {
+                        'status': ocr_result_data.get('ocr_status'),
+                        'attempt_count': ocr_result_data.get('attempt_count', 1),
+                        'detection_count': ocr_result_data.get('detection_count', len(ocr_items)),
+                        'preprocessing_variant': ocr_result_data.get('preprocessing_variant', 'original'),
+                        'engine': ocr_result_data.get('engine', 'PaddleOCR'),
+                        'engine_error': ocr_result_data.get('engine_error'),
+                    },
+                    'barcode_result': image_barcode,
+                    'visual_evidence': None,
+                })
+                timings["images"].append({"image_index": image_index, "preprocess_ms": preprocess_ms, "ocr_ms": ocr_ms, "barcode_decode_ms": barcode_ms})
+                logger.info("scan timing image=%s preprocess_ms=%s ocr_ms=%s barcode_decode_ms=%s", image_index, preprocess_ms, ocr_ms, barcode_ms)
+            except Exception as img_exc:
+                logger.error("Error processing scan image %s (%s): %s", image_index, original_path, img_exc)
+                image_results.append({
+                    'image_index': image_index,
+                    'image_path': safe_filenames[image_index],
+                    'processed_image_path': os.path.basename(original_path),
+                    'processed_full_path': original_path,
+                    'ocr_status': 'OCR_ENGINE_ERROR',
+                    'ocr_text': '',
+                    'ocr_items': [],
+                    'ocr_diagnostics': {
+                        'status': 'OCR_ENGINE_ERROR',
+                        'engine_error': str(img_exc),
+                    },
+                    'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},
+                    'visual_evidence': None,
+                })
+                per_image_fields.append({})
 
         raw_text = '\n\n'.join(combined_text_parts)
         ocr_items = combined_ocr_items
@@ -381,7 +409,13 @@ async def perform_scan(
             ocr_data=ocr_payload.get('ocr_items', []),
             image_url=f"/uploads/{safe_filenames[0]}",
             images=[
-                {"id": image_id, "image_index": index, "image_path": f"/uploads/{safe_filenames[index]}"}
+                {
+                    "id": image_id,
+                    "image_index": index,
+                    "image_path": f"/uploads/{safe_filenames[index]}",
+                    "ocr_status": image_results[index].get("ocr_status"),
+                    "ocr_diagnostics": image_results[index].get("ocr_diagnostics"),
+                }
                 for index, image_id in sorted(image_index_to_id.items())
             ],
             barcode_result=barcode_result,

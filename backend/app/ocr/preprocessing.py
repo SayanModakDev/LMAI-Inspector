@@ -1,9 +1,9 @@
 """
 Image preprocessing pipeline using OpenCV and Pillow.
 
-Applies basic corrections to improve OCR accuracy while preserving the original
-image. Multiple OCR-ready variants are generated to improve robustness on glare,
-shadows, low contrast, and rotated packaging labels.
+Applies corrections to improve OCR accuracy while preserving original image detail.
+Natural image fidelity is preserved for deep-learning OCR detection (PaddleOCR),
+with non-destructive variants generated on demand for challenging lighting/contrast.
 """
 
 import os
@@ -18,8 +18,22 @@ MAX_DIMENSION = 2048
 MIN_DIMENSION = 300
 
 
+def validate_image_file(input_path: str) -> bool:
+    """Validate that input_path exists, is non-empty, and can be opened as an image."""
+    if not input_path or not os.path.exists(input_path):
+        return False
+    try:
+        if os.path.getsize(input_path) == 0:
+            return False
+        with Image.open(input_path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
 def fix_orientation(image: Image.Image) -> Image.Image:
-    """Fix image orientation using EXIF data when the phone stores it there."""
+    """Fix image orientation using EXIF data when the camera/phone stores it there."""
     try:
         exif = image._getexif()
         if exif is None:
@@ -64,6 +78,7 @@ def convert_to_grayscale(image: np.ndarray) -> np.ndarray:
 
 
 def enhance_contrast(image: np.ndarray) -> np.ndarray:
+    """Apply mild CLAHE contrast enhancement in LAB color space."""
     if len(image.shape) == 3:
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
         l_channel, a, b = cv2.split(lab)
@@ -77,15 +92,16 @@ def enhance_contrast(image: np.ndarray) -> np.ndarray:
 
 def denoise_image(image: np.ndarray) -> np.ndarray:
     if len(image.shape) == 3:
-        return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
-    return cv2.fastNlMeansDenoising(image, None, 10, 7, 21)
+        return cv2.fastNlMeansDenoisingColored(image, None, 5, 5, 7, 21)
+    return cv2.fastNlMeansDenoising(image, None, 5, 7, 21)
 
 
 def sharpen_image(image: np.ndarray) -> np.ndarray:
+    """Gentle unsharp mask / laplacian filter for soft text without halo artifacts."""
     kernel = np.array([
-        [0, -0.5, 0],
-        [-0.5, 3, -0.5],
-        [0, -0.5, 0]
+        [0, -0.25, 0],
+        [-0.25, 2.0, -0.25],
+        [0, -0.25, 0]
     ])
     return cv2.filter2D(image, -1, kernel)
 
@@ -98,12 +114,14 @@ def _save_variant(output_dir: str, image_name: str, image: np.ndarray) -> str:
 
 
 def build_ocr_variants(input_path: str, output_dir: str, include_all: bool = False) -> List[str]:
-    """Create OCR variants.
+    """Create targeted, non-destructive OCR variants for retry passes.
 
-    The normal scan path deliberately uses the processed image as its first pass.
-    Extra variants are retained for a targeted retry only: running six complete
-    detector/recogniser passes for every photograph made multi-image scans slow.
+    Preserves original natural scene characteristics while providing clean contrast
+    and grayscale variants when the primary pass has low detection count.
     """
+    if not validate_image_file(input_path):
+        return []
+
     with Image.open(input_path) as pil_image:
         pil_image = fix_orientation(pil_image)
         if pil_image.mode not in ("RGB", "L"):
@@ -117,15 +135,17 @@ def build_ocr_variants(input_path: str, output_dir: str, include_all: bool = Fal
         cv_base = resize_image(cv_base)
         variants.append(("original", cv_base))
 
+        # Mild CLAHE contrast enhancement for washed-out / glare labels
+        contrast = enhance_contrast(cv_base)
+        variants.append(("contrast", contrast))
+
+        # Normalized grayscale for low-saturation labels
+        gray = convert_to_grayscale(cv_base)
+        variants.append(("grayscale", gray))
+
         if include_all:
-            gray = convert_to_grayscale(cv_base)
-            variants.append(("grayscale", gray))
-            contrast = enhance_contrast(cv_base)
-            variants.append(("contrast", contrast))
             variants.append(("sharpened", sharpen_image(contrast)))
             variants.append(("gray_sharp", sharpen_image(gray)))
-            _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            variants.append(("threshold", threshold))
 
     saved_paths = []
     for variant_name, variant_image in variants:
@@ -134,9 +154,17 @@ def build_ocr_variants(input_path: str, output_dir: str, include_all: bool = Fal
 
 
 def preprocess_image(input_path: str, output_dir: str, filename_prefix: str = "processed") -> Tuple[str, dict]:
-    """Generate a single improved OCR processing image for the standard pipeline."""
+    """Generate a high-fidelity normalized image for the standard pipeline while preserving original detail."""
     ensure_directory(output_dir)
-    preprocessing_info = {"original_path": input_path, "steps_applied": [], "original_size": None, "processed_size": None}
+    preprocessing_info = {
+        "original_path": input_path,
+        "steps_applied": [],
+        "original_size": None,
+        "processed_size": None,
+    }
+
+    if not validate_image_file(input_path):
+        return input_path, preprocessing_info
 
     with Image.open(input_path) as pil_image:
         preprocessing_info["original_size"] = pil_image.size
@@ -149,14 +177,10 @@ def preprocess_image(input_path: str, output_dir: str, filename_prefix: str = "p
         if len(cv_image.shape) == 3:
             cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
 
-    cv_image = resize_image(cv_image)
-    preprocessing_info["steps_applied"].append("resize")
-    cv_image = enhance_contrast(cv_image)
-    preprocessing_info["steps_applied"].append("contrast_enhancement")
-    cv_image = denoise_image(cv_image)
-    preprocessing_info["steps_applied"].append("denoise")
-    cv_image = sharpen_image(cv_image)
-    preprocessing_info["steps_applied"].append("sharpen")
+    h_orig, w_orig = cv_image.shape[:2]
+    if max(h_orig, w_orig) > MAX_DIMENSION:
+        cv_image = resize_image(cv_image, MAX_DIMENSION)
+        preprocessing_info["steps_applied"].append("resize")
 
     h, w = cv_image.shape[:2]
     preprocessing_info["processed_size"] = (w, h)

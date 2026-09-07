@@ -21,36 +21,85 @@ def _barcode_from_ocr(raw_text: str) -> Optional[str]:
     return None
 
 
+_PYZBAR_INITIALIZED = False
+_PYZBAR_AVAILABLE = False
+_PYZBAR_ERROR: Optional[str] = None
+
+
+def is_pyzbar_available() -> bool:
+    """Check whether pyzbar is installed and operable, caching the result to prevent log spam."""
+    global _PYZBAR_INITIALIZED, _PYZBAR_AVAILABLE, _PYZBAR_ERROR
+    if not _PYZBAR_INITIALIZED:
+        try:
+            from pyzbar.pyzbar import decode  # noqa: F401
+            _PYZBAR_AVAILABLE = True
+            _PYZBAR_ERROR = None
+            logger.info("Barcode decoder initialized successfully: pyzbar is available")
+        except Exception as exc:
+            _PYZBAR_AVAILABLE = False
+            _PYZBAR_ERROR = str(exc)
+            logger.info("Barcode decoding unavailable in environment: %s. Proceeding with OCR fallback.", exc)
+        _PYZBAR_INITIALIZED = True
+    return _PYZBAR_AVAILABLE
+
+
 def decode_barcodes(image_path: str, raw_text: str = '') -> Optional[Dict[str, Any]]:
     """Attempt to detect an EAN/UPC barcode using pyzbar when available.
 
-    This is intentionally non-fatal: if the barcode library is not installed, the
-    scan still proceeds with OCR and rule evaluation rather than crashing.
+    This is intentionally modular and non-fatal: if pyzbar is not installed or
+    the image has no barcode, the scan proceeds with OCR and rule evaluation
+    without crashing or emitting repetitive warning spam.
     """
+    if not is_pyzbar_available():
+        ocr_value = _barcode_from_ocr(raw_text)
+        if ocr_value:
+            logger.info("Barcode detected via OCR text fallback: %s", ocr_value)
+            return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
+        return {
+            "type": "CAPABILITY_UNAVAILABLE",
+            "value": None,
+            "confidence": 0.0,
+            "status": "UNAVAILABLE",
+            "message": _PYZBAR_ERROR or "pyzbar is not available",
+        }
+
     try:
         from pyzbar.pyzbar import decode
         from PIL import Image
 
-        decoded = decode(Image.open(image_path))
+        try:
+            pil_img = Image.open(image_path)
+        except Exception as img_err:
+            logger.debug("Barcode decoder could not open image %s: %s", image_path, img_err)
+            ocr_value = _barcode_from_ocr(raw_text)
+            if ocr_value:
+                return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
+            return {"type": "INVALID_IMAGE", "value": None, "confidence": 0.0, "status": "FAILED", "message": str(img_err)}
+
+        decoded = decode(pil_img)
         if not decoded:
             ocr_value = _barcode_from_ocr(raw_text)
             if ocr_value:
-                return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT"}
-            return {"type": "NOT_DETECTED", "value": None, "confidence": 0.0}
+                logger.info("Barcode detected via OCR text fallback: %s", ocr_value)
+                return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
+            logger.debug("No barcode detected by pyzbar in %s", image_path)
+            return {"type": "NOT_DETECTED", "value": None, "confidence": 0.0, "status": "NOT_DETECTED"}
 
         first = decoded[0]
-        barcode = {
+        barcode_value = first.data.decode('utf-8', errors='ignore')
+        logger.info("Barcode decode succeeded: %s (%s)", barcode_value, first.type)
+        return {
             "type": first.type,
-            "value": first.data.decode('utf-8', errors='ignore'),
+            "value": barcode_value,
             "confidence": 1.0,
+            "status": "DETECTED",
         }
-        return barcode
     except Exception as exc:
-        logger.warning("Barcode decoding unavailable or failed: %s", exc)
+        logger.debug("Barcode decode failed on %s: %s", image_path, exc)
         ocr_value = _barcode_from_ocr(raw_text)
         if ocr_value:
-            return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT"}
-        return {"type": "UNAVAILABLE", "value": None, "confidence": 0.0, "message": str(exc)}
+            return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
+        return {"type": "DECODE_FAILED", "value": None, "confidence": 0.0, "status": "FAILED", "message": str(exc)}
 
 
 def lookup_barcode(barcode_value: Optional[str]) -> Dict[str, Any]:

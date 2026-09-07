@@ -50,6 +50,8 @@ htmlcov/
 backend/*.db
 *.sqlite
 *.sqlite3
+backend/ocr_variants/*
+!backend/ocr_variants/.gitkeep
 
 # Local npm CLI/cache
 frontend/.npm-cli/

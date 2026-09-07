@@ -12,6 +12,7 @@ cryptography==44.0.0
 # Image processing
 opencv-python-headless==4.10.0.84
 Pillow==11.1.0
+pyzbar>=0.1.9
 
 # OCR
 setuptools>=68.0.0
