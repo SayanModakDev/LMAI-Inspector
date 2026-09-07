@@ -1,0 +1,210 @@
+/* ResultHero and Result Summary Bar Styles */
+.results-hero-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.results-hero-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  border-left: 5px solid var(--border-medium);
+  transition: all 0.2s ease;
+}
+
+.results-hero-card--compliant {
+  border-left-color: var(--status-pass-solid);
+  background: linear-gradient(135deg, #FFFFFF 0%, #F0FDF4 100%);
+}
+
+.results-hero-card--non-compliant {
+  border-left-color: var(--status-fail-solid);
+  background: linear-gradient(135deg, #FFFFFF 0%, #FEF2F2 100%);
+}
+
+.results-hero-card--review {
+  border-left-color: var(--status-review-solid);
+  background: linear-gradient(135deg, #FFFFFF 0%, #FFFBEB 100%);
+}
+
+.results-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 320px;
+}
+
+.results-hero-id-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.results-hero-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.results-hero-id {
+  font-weight: 700;
+  color: var(--text-main);
+  background: var(--bg-surface-muted);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+}
+
+.results-hero-dot {
+  color: var(--border-medium);
+}
+
+.results-hero-timestamp {
+  color: var(--text-secondary);
+}
+
+.results-hero-status-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.results-hero-status-badge {
+  flex-shrink: 0;
+}
+
+.results-hero-explanation {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Counts Row */
+.results-hero-counts {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.2rem;
+}
+
+.count-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  background-color: var(--bg-surface-muted);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.count-pill .count-num {
+  font-weight: 700;
+}
+
+.count-pill--pass.count-pill--active {
+  background-color: var(--status-pass-bg);
+  border-color: #BBF7D0;
+  color: var(--status-pass-text);
+}
+
+.count-pill--fail.count-pill--active {
+  background-color: var(--status-fail-bg);
+  border-color: #FECACA;
+  color: var(--status-fail-text);
+}
+
+.count-pill--review.count-pill--active {
+  background-color: var(--status-review-bg);
+  border-color: #FDE68A;
+  color: var(--status-review-text);
+}
+
+.count-pill--na {
+  color: var(--text-muted);
+}
+
+/* Hero Actions */
+.results-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* Result Summary Bar */
+.result-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #FFFFFF;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 1rem;
+  overflow-x: auto;
+  box-shadow: var(--shadow-xs);
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-right: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.summary-item:last-child {
+  border-right: none;
+}
+
+.summary-icon {
+  flex-shrink: 0;
+}
+
+.summary-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.summary-val {
+  font-size: 0.8rem;
+  color: var(--text-main);
+}
+
+@media (max-width: 900px) {
+  .results-hero-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .results-hero-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

@@ -15,10 +15,12 @@ import {
   Search,
   Eye,
   Layers,
-  Sparkles,
   Printer,
   ExternalLink,
-  SlidersHorizontal,
+  History,
+  PlusCircle,
+  Barcode,
+  Info,
 } from 'lucide-react';
 import { apiService } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
@@ -26,6 +28,7 @@ import StatusBadge from '../components/StatusBadge';
 import MetricCard from '../components/MetricCard';
 import ConflictCard from '../components/ConflictCard';
 import EvidenceViewer from '../components/EvidenceViewer';
+import ResultHero from '../components/ResultHero';
 import ErrorState from '../components/ErrorState';
 import { formatISTDateTime, formatISTDate } from '../utils/dateUtils';
 import './Result.css';
@@ -37,8 +40,8 @@ const Result = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Active Workstation Tab: 'matrix' | 'evidence' | 'physical' | 'report'
-  const [activeTab, setActiveTab] = useState('matrix');
+  // Active Workstation Tab: 'evidence' (default primary showcase) | 'matrix' | 'physical' | 'report'
+  const [activeTab, setActiveTab] = useState('evidence');
 
   // Rule Matrix Filter & Search
   const [ruleFilter, setRuleFilter] = useState('ALL');
@@ -74,6 +77,7 @@ const Result = () => {
       return field.candidates.map((c, idx) => ({
         value: typeof c === 'object' ? (c.value || c.field_value || JSON.stringify(c)) : String(c),
         source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Candidate ${idx + 1}`,
+        confidence: typeof c === 'object' ? c.confidence : 0.65,
       }));
     }
     const rawVal = String(field.field_value || '').replace(/^CONFLICT:\s*/i, '');
@@ -81,10 +85,15 @@ const Result = () => {
       return rawVal.split(/\s+vs\s+/i).map((part, idx) => ({
         value: part.trim(),
         source: `Panel Detection ${idx + 1}`,
+        confidence: 0.65,
       }));
     }
     return [
-      { value: rawVal || 'Discrepancy detected across panel views', source: field.source || 'Panel Observation' },
+      {
+        value: rawVal || 'Discrepancy detected across panel views',
+        source: field.source || 'Panel Observation',
+        confidence: field.confidence || 0.65,
+      },
     ];
   };
 
@@ -178,8 +187,8 @@ const Result = () => {
     return (
       <div className="result-loading card p-8 text-center">
         <div className="spinner-icon mx-auto mb-3" style={{ width: 32, height: 32 }} />
-        <h3 className="font-semibold">Loading Compliance Screening Results...</h3>
-        <p className="text-muted text-xs">Retrieving OCR tokens, rule evaluations, and evidence records.</p>
+        <h3 className="font-semibold">Loading Inspection & Evidence Workstation...</h3>
+        <p className="text-muted text-xs">Retrieving package imagery, OCR tokens, spatial coordinates, and statutory rule evaluations.</p>
       </div>
     );
   }
@@ -199,17 +208,24 @@ const Result = () => {
   const ruleResults = inspection.rule_results || [];
   const passCount = ruleResults.filter((r) => r.status === 'PASS').length;
   const failCount = ruleResults.filter((r) => r.status === 'FAIL').length;
-  const reviewCount = ruleResults.filter((r) => r.status === 'NOT_VERIFIABLE' || r.status === 'MANUAL_CHECK').length;
+  const reviewCount = ruleResults.filter(
+    (r) => r.status === 'NOT_VERIFIABLE' || r.status === 'MANUAL_CHECK'
+  ).length;
   const naCount = ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
 
   const rawOverall = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_');
-  const isReviewRequired = rawOverall === 'NOT_VERIFIABLE' || rawOverall === 'NEEDS_REVIEW' || reviewCount > 0;
+  const isReviewRequired =
+    rawOverall === 'NOT_VERIFIABLE' ||
+    rawOverall === 'NEEDS_REVIEW' ||
+    rawOverall === 'REQUIRES_REVIEW' ||
+    reviewCount > 0;
 
-  // Filtered Rules
+  // Filtered Rules for Matrix Tab
   const filteredRules = ruleResults.filter((r) => {
     if (ruleFilter === 'FAIL' && r.status !== 'FAIL') return false;
     if (ruleFilter === 'PASS' && r.status !== 'PASS') return false;
-    if (ruleFilter === 'REVIEW' && (r.status !== 'NOT_VERIFIABLE' && r.status !== 'MANUAL_CHECK')) return false;
+    if (ruleFilter === 'REVIEW' && (r.status !== 'NOT_VERIFIABLE' && r.status !== 'MANUAL_CHECK'))
+      return false;
     if (ruleFilter === 'NA' && r.status !== 'NOT_APPLICABLE') return false;
 
     if (ruleSearch.trim()) {
@@ -224,7 +240,26 @@ const Result = () => {
 
   // Extract conflicting fields if any
   const conflictFields = (inspection.extracted_fields || []).filter(
-    (f) => String(f.field_value).startsWith('CONFLICT:') || f.candidate_classification === 'TRUE_CONFLICT'
+    (f) =>
+      String(f.field_value).startsWith('CONFLICT:') ||
+      f.source === 'MULTI_IMAGE_CONFLICT' ||
+      f.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
+      f.candidate_classification === 'TRUE_CONFLICT'
+  );
+
+  // Identify review reasons breakdown
+  const missingRules = ruleResults.filter(
+    (r) =>
+      r.status === 'NOT_VERIFIABLE' &&
+      (r.reason || r.message || '').toLowerCase().includes('not detected')
+  );
+
+  const physicalRules = ruleResults.filter(
+    (r) =>
+      r.status === 'NOT_VERIFIABLE' &&
+      (r.parameter === 'ACTUAL_NET_CONTENT' ||
+        r.parameter === 'FONT_SIZE_COMPLIANCE' ||
+        (r.reason || r.message || '').toLowerCase().includes('physical verification'))
   );
 
   return (
@@ -232,105 +267,118 @@ const Result = () => {
       {/* 5-Step Workflow Stepper on Step 4 */}
       <ProgressStepper currentStep={reportUrl ? 5 : 4} />
 
-      {/* Prominent Inspection Result Banner */}
-      <div className={`inspection-result-banner inspection-result-banner--${rawOverall.toLowerCase()}`}>
-        <div className="result-banner__primary">
-          <div className="result-banner__status-badge-wrapper">
-            <StatusBadge status={rawOverall} size="lg" showBinary={true} />
-          </div>
+      {/* =========================================================================
+          SECTION 1 & 2: RESULTS PAGE HERO & SUMMARY BAR
+          ========================================================================= */}
+      <ResultHero
+        inspection={inspection}
+        ruleResults={ruleResults}
+        reportUrl={reportUrl}
+        generatingReport={generatingReport}
+        onGenerateReport={handleGenerateReport}
+      />
 
-          <div className="result-banner__meta-block">
-            <div className="result-banner__id-row">
-              <span className="result-dossier-id font-mono">Inspection #{inspection.id}</span>
-              <span className="result-category-pill font-semibold">{inspection.category || 'COMMODITY'}</span>
-              <span className="result-package-pill">{inspection.package_type || 'RETAIL'}</span>
-              <span className="result-package-pill">{inspection.import_status || 'DOMESTIC'}</span>
-            </div>
-            <div className="result-banner__timestamp text-xs">
-              Analyzed: {formatISTDateTime(inspection.created_at)} • Priority: {inspection.priority || 'NORMAL'}
-            </div>
-          </div>
-        </div>
-
-        <div className="result-banner__actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleGenerateReport}
-            disabled={generatingReport}
-          >
-            <Printer size={15} /> {generatingReport ? 'Compiling PDF...' : (reportUrl ? 'View Inspection PDF' : 'Generate PDF Inspection Report')}
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={() => setActiveTab('physical')}
-          >
-            <Scale size={15} /> Physical Verification
-          </button>
-        </div>
-      </div>
-
-      {/* Summary Operational Metric Row */}
-      <div className="result-metrics-grid">
-        <MetricCard
-          label="Rules Evaluated"
-          value={ruleResults.length}
-          status="neutral"
-          subtitle="Statutory LMPC parameters"
-        />
-        <MetricCard
-          label="Compliant (Pass)"
-          value={passCount}
-          status="pass"
-          subtitle="Mandatory criteria satisfied"
-        />
-        <MetricCard
-          label="Non-Compliant (Fail)"
-          value={failCount}
-          status="fail"
-          subtitle="Violations detected"
-        />
-        <MetricCard
-          label="Requires Review"
-          value={reviewCount}
-          status="review"
-          subtitle="Physical check / evidence needed"
-        />
-      </div>
-
-      {/* Review Required Guidance Banner */}
+      {/* =========================================================================
+          SECTION 10: DEDICATED REVIEW REQUIRED BANNER
+          ========================================================================= */}
       {isReviewRequired && (
-        <div className="review-required-callout card">
-          <div className="callout-icon-box">
-            <AlertTriangle size={22} className="text-warning" />
-          </div>
-          <div className="callout-content">
-            <h4 className="callout-title">Operator Verification Required</h4>
-            <p className="callout-desc">
-              Visual screening identified {reviewCount} requirement{reviewCount === 1 ? '' : 's'} requiring manual verification. Parameters such as physical scale weight, numeral font height measurement, or conflicting visual evidence should be verified by the operator.
-            </p>
-            <div className="callout-actions">
-              <button
-                type="button"
-                className="btn btn-sm btn-outline"
-                onClick={() => setActiveTab('physical')}
-              >
-                Enter Scale Measurement
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-outline"
-                onClick={() => setActiveTab('evidence')}
-              >
-                Inspect Visual Evidence
-              </button>
+        <div className="review-required-banner card">
+          <div className="review-banner__header">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={20} className="text-warning flex-shrink-0" />
+              <div>
+                <h4 className="review-banner__title">Inspection Review Required</h4>
+                <p className="review-banner__subtitle text-xs">
+                  Automated visual screening identified statutory declarations that require manual verification by the inspector before clearance.
+                </p>
+              </div>
             </div>
+            <span className="badge badge-warning font-mono text-xs">
+              {reviewCount} Declaration{reviewCount === 1 ? '' : 's'} Pending Review
+            </span>
+          </div>
+
+          <div className="review-banner__reasons-grid">
+            {missingRules.length > 0 && (
+              <div className="review-reason-box">
+                <span className="review-reason-label font-semibold text-xs">
+                  Missing Declarations ({missingRules.length}):
+                </span>
+                <ul className="review-reason-list text-xs text-muted">
+                  {missingRules.slice(0, 4).map((r, i) => (
+                    <li key={i}>{r.parameter.replace(/_/g, ' ')} not detected in scan</li>
+                  ))}
+                  {missingRules.length > 4 && <li>+ {missingRules.length - 4} more</li>}
+                </ul>
+              </div>
+            )}
+
+            {conflictFields.length > 0 && (
+              <div className="review-reason-box review-reason-box--conflict">
+                <span className="review-reason-label font-semibold text-xs text-danger">
+                  Contradictory Declarations ({conflictFields.length}):
+                </span>
+                <ul className="review-reason-list text-xs text-secondary">
+                  {conflictFields.map((f, i) => (
+                    <li key={i}>
+                      {f.field_name?.replace(/_/g, ' ')}: Divergent values across panel views
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {physicalRules.length > 0 && (
+              <div className="review-reason-box">
+                <span className="review-reason-label font-semibold text-xs">
+                  Physical Verification Parameters ({physicalRules.length}):
+                </span>
+                <ul className="review-reason-list text-xs text-muted">
+                  {physicalRules.map((p, i) => (
+                    <li key={i}>{p.parameter.replace(/_/g, ' ')} requires certified tool measurement</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div className="review-banner__actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              onClick={() => setActiveTab('evidence')}
+            >
+              <Eye size={13} /> Review Visual Evidence
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              onClick={() => setActiveTab('matrix')}
+            >
+              <Layers size={13} /> View Rule Details
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              onClick={() => setActiveTab('physical')}
+            >
+              <Scale size={13} /> Physical Scale Measurement
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={handleGenerateReport}
+              disabled={generatingReport}
+            >
+              <Printer size={13} /> Generate Report
+            </button>
           </div>
         </div>
       )}
 
-      {/* Multi-Panel Conflict Visualizer */}
+      {/* =========================================================================
+          SECTION 8: CONFLICTING EVIDENCE SECTION
+          ========================================================================= */}
       {conflictFields.length > 0 && (
         <div className="conflicts-section">
           {conflictFields.map((f, i) => (
@@ -338,26 +386,16 @@ const Result = () => {
               key={i}
               parameter={f.field_name}
               candidates={getConflictCandidates(f)}
-              notes="Cross-panel reconciliation identified divergent values across views. Manual review required."
+              notes="Cross-panel reconciliation identified divergent values across views. The system does not pick a winner; manual review required."
             />
           ))}
         </div>
       )}
 
-      {/* Workstation Tab Navigation */}
-      <div className="workstation-tab-bar" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'matrix'}
-          className={`workstation-tab ${activeTab === 'matrix' ? 'workstation-tab--active' : ''}`}
-          onClick={() => setActiveTab('matrix')}
-        >
-          <Layers size={15} />
-          <span>Compliance Matrix</span>
-          <span className="tab-badge">{ruleResults.length}</span>
-        </button>
-
+      {/* =========================================================================
+          WORKSTATION TAB BAR
+          ========================================================================= */}
+      <div className="workstation-tab-bar" role="tablist" aria-label="Inspection workstation views">
         <button
           type="button"
           role="tab"
@@ -366,7 +404,20 @@ const Result = () => {
           onClick={() => setActiveTab('evidence')}
         >
           <Eye size={15} />
-          <span>Image & Evidence Split View</span>
+          <span>Evidence Workstation</span>
+          <span className="tab-badge">{inspection.extracted_fields?.length || ruleResults.length}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'matrix'}
+          className={`workstation-tab ${activeTab === 'matrix' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('matrix')}
+        >
+          <Layers size={15} />
+          <span>Compliance Rule Matrix</span>
+          <span className="tab-badge">{ruleResults.length}</span>
         </button>
 
         <button
@@ -378,7 +429,9 @@ const Result = () => {
         >
           <Scale size={15} />
           <span>Physical Verification & Scale</span>
-          {reviewCount > 0 && <span className="tab-badge tab-badge--review">{reviewCount}</span>}
+          {physicalRules.length > 0 && (
+            <span className="tab-badge tab-badge--review">{physicalRules.length}</span>
+          )}
         </button>
 
         <button
@@ -389,19 +442,34 @@ const Result = () => {
           onClick={() => setActiveTab('report')}
         >
           <FileText size={15} />
-          <span>Inspection Report & Review</span>
+          <span>Inspection Report & Dossier</span>
         </button>
       </div>
 
       {/* =========================================================================
-          TAB 1: COMPLIANCE MATRIX TABLE
+          TAB 1: EVIDENCE WORKSTATION (55% Image / 45% Evidence Split) — PRIMARY
+          ========================================================================= */}
+      {activeTab === 'evidence' && (
+        <EvidenceViewer
+          images={inspection.images || []}
+          extractedFields={inspection.extracted_fields || []}
+          ruleResults={ruleResults}
+          barcodeResult={inspection.ocr_result?.ocr_data?.barcode_result}
+          product={inspection.product}
+        />
+      )}
+
+      {/* =========================================================================
+          TAB 2: COMPLIANCE RULE EVALUATION MATRIX
           ========================================================================= */}
       {activeTab === 'matrix' && (
         <div className="card compliance-matrix-card">
           <div className="card-header flex-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-sm">Deterministic Rule Screening</span>
-              <span className="badge badge-gray">{filteredRules.length} displayed</span>
+              <span className="badge badge-gray font-mono text-xs">
+                {filteredRules.length} of {ruleResults.length} rules
+              </span>
             </div>
 
             {/* Filter controls */}
@@ -425,7 +493,15 @@ const Result = () => {
                     className={`filter-btn ${ruleFilter === f ? 'filter-btn--active' : ''}`}
                     onClick={() => setRuleFilter(f)}
                   >
-                    {f === 'ALL' ? 'All' : f === 'FAIL' ? `Fail (${failCount})` : f === 'REVIEW' ? `Review (${reviewCount})` : f === 'PASS' ? `Pass (${passCount})` : 'N/A'}
+                    {f === 'ALL'
+                      ? 'All'
+                      : f === 'FAIL'
+                      ? `Fail (${failCount})`
+                      : f === 'REVIEW'
+                      ? `Review (${reviewCount})`
+                      : f === 'PASS'
+                      ? `Pass (${passCount})`
+                      : `N/A (${naCount})`}
                   </button>
                 ))}
               </div>
@@ -453,7 +529,8 @@ const Result = () => {
                       rule.evidence_data?.value ||
                       rule.normalized_value ||
                       rule.raw_value ||
-                      inspection.extracted_fields?.find((f) => f.field_name === rule.parameter)?.field_value ||
+                      inspection.extracted_fields?.find((f) => f.field_name === rule.parameter)
+                        ?.field_value ||
                       '—';
 
                     return (
@@ -472,18 +549,24 @@ const Result = () => {
                             <div className="font-semibold text-main">
                               {rule.parameter?.replace(/_/g, ' ')}
                             </div>
-                            <div className="text-xs text-muted">{rule.regulatory_source || 'LMPC Rules 2011'}</div>
+                            <div className="text-xs text-muted">
+                              {rule.regulatory_source || 'LMPC Rules 2011'}
+                            </div>
                           </td>
                           <td className="font-mono text-xs text-secondary">
                             {String(extractedVal).startsWith('CONFLICT:') ? (
                               <span className="text-danger font-semibold">{extractedVal}</span>
+                            ) : extractedVal === '—' ? (
+                              <span className="text-muted italic">Evidence not detected</span>
                             ) : (
                               extractedVal
                             )}
                           </td>
                           <td className="text-xs text-muted">
                             <span className="validation-method-pill font-mono">
-                              {rule.validation_method || rule.evidence_data?.validation_method || 'PRESENCE_CHECK'}
+                              {rule.validation_method ||
+                                rule.evidence_data?.validation_method ||
+                                'PRESENCE_CHECK'}
                             </span>
                           </td>
                           <td>
@@ -494,7 +577,7 @@ const Result = () => {
                           </td>
                         </tr>
 
-                        {/* Expanded Drawer */}
+                        {/* Expanded Row */}
                         {isExpanded && (
                           <tr className="matrix-expanded-row">
                             <td colSpan="7">
@@ -503,13 +586,22 @@ const Result = () => {
                                   <div>
                                     <span className="dossier-label">Statutory Legal Reference:</span>
                                     <div className="dossier-val font-semibold">
-                                      {rule.rule_reference || 'Rule 6, Legal Metrology (Packaged Commodities) Rules, 2011'}
+                                      {rule.rule_reference ||
+                                        'Rule 6, Legal Metrology (Packaged Commodities) Rules, 2011'}
                                     </div>
                                   </div>
                                   <div>
                                     <span className="dossier-label">Validation Finding Reason:</span>
                                     <div className="dossier-val text-secondary">
-                                      {rule.reason || rule.message || 'Evaluated against statutory requirement matrix.'}
+                                      {rule.reason ||
+                                        rule.message ||
+                                        'Evaluated against statutory requirement matrix.'}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <span className="dossier-label">Reference Status:</span>
+                                    <div className="dossier-val font-mono text-xs text-muted">
+                                      {rule.rule_reference_status || rule.rule_version || 'STATUTORY_SCHEDULE'}
                                     </div>
                                   </div>
                                   <div>
@@ -518,7 +610,7 @@ const Result = () => {
                                       {rule.status === 'FAIL'
                                         ? 'Record non-compliance notice under Section 36 of Legal Metrology Act, 2009.'
                                         : rule.status === 'NOT_VERIFIABLE'
-                                        ? 'Requires physical gauge measurement or scale verification before clearance.'
+                                        ? 'Requires physical gauge measurement, scale verification, or manual packaging review.'
                                         : 'Declaration satisfies mandatory statutory requirements.'}
                                     </div>
                                   </div>
@@ -546,35 +638,23 @@ const Result = () => {
       )}
 
       {/* =========================================================================
-          TAB 2: IMAGE & EVIDENCE SPLIT WORKSTATION
-          ========================================================================= */}
-      {activeTab === 'evidence' && (
-        <EvidenceViewer
-          images={inspection.images || []}
-          extractedFields={inspection.extracted_fields || []}
-          barcodeResult={inspection.ocr_result?.ocr_data?.barcode_result}
-          findings={inspection.findings}
-        />
-      )}
-
-      {/* =========================================================================
-          TAB 3: PHYSICAL VERIFICATION & SCALE MEASUREMENT
+          TAB 3: PHYSICAL VERIFICATION & SCALE MEASUREMENT (SECTION 11)
           ========================================================================= */}
       {activeTab === 'physical' && (
         <div className="card physical-verification-card">
           <div className="card-header">
             <div className="flex items-center gap-2">
               <Scale size={18} className="text-primary" />
-              <span>Physical Verification Workstation</span>
+              <span className="font-semibold">PHYSICAL VERIFICATION REQUIRED</span>
             </div>
-            <span className="badge badge-warning">Physical Inspection Required</span>
+            <span className="badge badge-warning">Direct Physical Inspection</span>
           </div>
 
           <div className="card-body">
             <div className="physical-intro-alert mb-4">
-              <ShieldCheck size={20} className="text-teal flex-shrink-0" />
-              <div className="text-xs">
-                <strong>Verification Standard:</strong> Physical attributes like actual package gross/net weight and numeral font millimeter height cannot be conclusively established solely from 2D label photography. Certified scale input and manual verification are supported.
+              <ShieldCheck size={22} className="text-teal flex-shrink-0" />
+              <div className="text-xs leading-relaxed">
+                <strong>Image-Based Screening Boundary:</strong> 2D label photography and computer vision cannot establish physical measurements that require direct physical examination, such as actual commodity net weight via certified digital balance or numeral font height via vernier caliper. Calibrated measurement data may be recorded below.
               </div>
             </div>
 
@@ -619,7 +699,8 @@ const Result = () => {
                     </select>
                   </div>
                   <span className="form-help">
-                    Declared net quantity: {inspection.product?.declared_net_quantity_value || '—'} {inspection.product?.declared_net_quantity_unit || ''}
+                    Declared net quantity: {inspection.product?.declared_net_quantity_value || '—'}{' '}
+                    {inspection.product?.declared_net_quantity_unit || ''}
                   </span>
                 </div>
 
@@ -635,9 +716,15 @@ const Result = () => {
                       setManualData({ ...manualData, measurement_source: e.target.value })
                     }
                   >
-                    <option value="CERTIFIED_DIGITAL_SCALE">Certified Inspector Digital Scale (Class II/III)</option>
-                    <option value="STAMPED_LEGAL_METROLOGY_BALANCE">Stamped Standard Metrological Balance</option>
-                    <option value="VERNIER_CALIPER_NUMERAL">Vernier Caliper (Numeral Height Check)</option>
+                    <option value="CERTIFIED_DIGITAL_SCALE">
+                      Certified Inspector Digital Scale (Class II/III)
+                    </option>
+                    <option value="STAMPED_LEGAL_METROLOGY_BALANCE">
+                      Stamped Standard Metrological Balance
+                    </option>
+                    <option value="VERNIER_CALIPER_NUMERAL">
+                      Vernier Caliper (Numeral Height Check)
+                    </option>
                   </select>
                 </div>
 
@@ -660,33 +747,36 @@ const Result = () => {
               <div className="physical-form-right">
                 <h4 className="font-semibold text-sm mb-3">Declaration Overrides (If Misread)</h4>
                 <div className="declaration-override-list">
-                  {['PRODUCT_NAME', 'MRP', 'DECLARED_NET_QUANTITY', 'MANUFACTURER_NAME'].map((param) => (
-                    <div key={param} className="form-group mb-2">
-                      <label className="form-label text-xs">
-                        <span>{param.replace(/_/g, ' ')}</span>
-                      </label>
-                      <input
-                        type="text"
-                        className="form-control text-xs font-mono"
-                        placeholder={`Correct ${param.replace(/_/g, ' ').toLowerCase()} if misread`}
-                        value={manualData.field_overrides[param] || ''}
-                        onChange={(e) =>
-                          setManualData({
-                            ...manualData,
-                            field_overrides: {
-                              ...manualData.field_overrides,
-                              [param]: e.target.value,
-                            },
-                          })
-                        }
-                      />
-                    </div>
-                  ))}
+                  {['PRODUCT_NAME', 'MRP', 'DECLARED_NET_QUANTITY', 'MANUFACTURER_NAME'].map(
+                    (param) => (
+                      <div key={param} className="form-group mb-2">
+                        <label className="form-label text-xs">
+                          <span>{param.replace(/_/g, ' ')}</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control text-xs font-mono"
+                          placeholder={`Correct ${param.replace(/_/g, ' ').toLowerCase()} if misread`}
+                          value={manualData.field_overrides[param] || ''}
+                          onChange={(e) =>
+                            setManualData({
+                              ...manualData,
+                              field_overrides: {
+                                ...manualData.field_overrides,
+                                [param]: e.target.value,
+                              },
+                            })
+                          }
+                        />
+                      </div>
+                    )
+                  )}
                 </div>
 
                 <div className="mt-4 text-right">
                   <button type="submit" className="btn btn-primary" disabled={savingManual}>
-                    <Save size={15} /> {savingManual ? 'Re-evaluating...' : 'Record Measurements & Re-Evaluate'}
+                    <Save size={15} />{' '}
+                    {savingManual ? 'Re-evaluating...' : 'Record Measurements & Re-Evaluate'}
                   </button>
                 </div>
               </div>
@@ -696,14 +786,14 @@ const Result = () => {
       )}
 
       {/* =========================================================================
-          TAB 4: INSPECTION REPORT & REVIEW
+          TAB 4: INSPECTION REPORT & REVIEW DOSSIER
           ========================================================================= */}
       {activeTab === 'report' && (
         <div className="card report-workstation-card">
           <div className="card-header flex-between">
             <div className="flex items-center gap-2">
               <FileText size={18} className="text-primary" />
-              <span>Inspection Report & Review Summary</span>
+              <span className="font-semibold">Inspection Report & Review Summary</span>
             </div>
             {reportUrl && (
               <a
@@ -722,7 +812,10 @@ const Result = () => {
               <div className="report-summary-header">
                 <div className="report-title-block">
                   <h3>LEGAL METROLOGY COMPLIANCE INSPECTION REPORT</h3>
-                  <span className="text-xs text-muted">Inspection-Support Screening Summary • Legal Metrology (Packaged Commodities) Rules, 2011</span>
+                  <span className="text-xs text-muted">
+                    Inspection-Support Screening Summary • Legal Metrology (Packaged Commodities)
+                    Rules, 2011
+                  </span>
                 </div>
                 <div className="report-status-badge">
                   <StatusBadge status={rawOverall} size="md" showBinary={true} />
@@ -740,15 +833,22 @@ const Result = () => {
                 </div>
                 <div>
                   <span className="meta-lbl">Product Identity:</span>
-                  <span className="meta-val font-semibold">{inspection.product_name || 'Unspecified'}</span>
+                  <span className="meta-val font-semibold">
+                    {inspection.product_name || 'Unspecified'}
+                  </span>
                 </div>
                 <div>
                   <span className="meta-lbl">Manufacturer / Packer:</span>
-                  <span className="meta-val">{inspection.product?.manufacturer || 'Not Detected'}</span>
+                  <span className="meta-val">
+                    {inspection.product?.manufacturer || 'Evidence not detected'}
+                  </span>
                 </div>
                 <div>
                   <span className="meta-lbl">Declared Net Quantity:</span>
-                  <span className="meta-val font-mono">{inspection.product?.declared_net_quantity_value || '—'} {inspection.product?.declared_net_quantity_unit || ''}</span>
+                  <span className="meta-val font-mono">
+                    {inspection.product?.declared_net_quantity_value || '—'}{' '}
+                    {inspection.product?.declared_net_quantity_unit || ''}
+                  </span>
                 </div>
                 <div>
                   <span className="meta-lbl">Maximum Retail Price (MRP):</span>
@@ -757,7 +857,9 @@ const Result = () => {
               </div>
 
               <div className="report-findings-box mt-4">
-                <h5 className="font-semibold text-xs text-muted uppercase mb-2">Compliance Findings Summary</h5>
+                <h5 className="font-semibold text-xs text-muted uppercase mb-2">
+                  Compliance Findings Summary
+                </h5>
                 <ul className="report-findings-list">
                   {inspection.findings?.failed?.map((f, idx) => (
                     <li key={idx} className="finding-item finding-item--fail">
@@ -781,12 +883,19 @@ const Result = () => {
                 <div className="signature-box">
                   <div className="signature-line" />
                   <span className="signature-title">Reviewing Operator / Inspector</span>
-                  <span className="signature-sub">{profile.name || 'Workspace User'} {profile.badge && profile.badge !== 'Not configured' ? `(${profile.badge})` : ''}</span>
+                  <span className="signature-sub">
+                    {profile.name || 'Workspace User'}{' '}
+                    {profile.badge && profile.badge !== 'Not configured'
+                      ? `(${profile.badge})`
+                      : ''}
+                  </span>
                 </div>
                 <div className="signature-box">
                   <div className="signature-line" />
                   <span className="signature-title">Workstation / Facility</span>
-                  <span className="signature-sub">{profile.station || 'Local Workstation'} • {formatISTDate(new Date())}</span>
+                  <span className="signature-sub">
+                    {profile.station || 'Local Workstation'} • {formatISTDate(new Date())}
+                  </span>
                 </div>
               </div>
 
@@ -797,7 +906,8 @@ const Result = () => {
                   onClick={handleGenerateReport}
                   disabled={generatingReport}
                 >
-                  <Printer size={16} /> {generatingReport ? 'Generating Report...' : 'Generate PDF Inspection Report'}
+                  <Printer size={16} />{' '}
+                  {generatingReport ? 'Generating Report...' : 'Generate PDF Inspection Report'}
                 </button>
               </div>
             </div>
