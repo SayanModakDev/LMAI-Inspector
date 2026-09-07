@@ -35,6 +35,14 @@ from app.extraction.evidence_model import (
 )
 from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token, is_isolated_punctuation
 from app.extraction.association_engine import LabelValueAssociator, AssociatedCandidate
+from app.extraction.label_value_association import (
+    EvidenceToken,
+    SemanticLabel,
+    ValueCandidate,
+    LabelValueRelation,
+    CanonicalFieldCandidate,
+    LabelValueAssociationEngine,
+)
 from app.extraction.declaration_extractor import (
     extract_declarations,
     merge_extracted_fields,
@@ -486,3 +494,258 @@ class TestAntiHardcodingAudit:
                             violations.append(f"{rel_path}:{line_num} contains forbidden pattern: {label}")
 
         assert len(violations) == 0, f"Found anti-hardcoding violations in production code:\n" + "\n".join(violations)
+
+
+# ===========================================================================
+# 8. Canonical Evidence Model & Association Engine Integration
+# ===========================================================================
+class TestCanonicalEvidenceModelAndAssociationEngine:
+
+    def test_canonical_models_instantiation_and_conversion(self):
+        """EvidenceToken, SemanticLabel, ValueCandidate, LabelValueRelation, and CanonicalFieldCandidate operate properly."""
+        tok = EvidenceToken(
+            raw_text="Net Qty: 500 g",
+            normalized_text="net qty: 500 g",
+            bbox={"x": 10, "y": 20, "w": 100, "h": 25},
+            line_id=1,
+        )
+        assert tok.raw_text == "Net Qty: 500 g"
+        assert tok.to_dict()["line_id"] == 1
+
+        lbl = SemanticLabel(
+            label_text="Net Qty:",
+            normalized_label="net qty:",
+            semantic_type="NET_QUANTITY",
+            line_id=1,
+        )
+        val = ValueCandidate(
+            raw_text="500 g",
+            parsed_value=500,
+            unit="g",
+            line_id=1,
+            value_type="QUANTITY",
+            semantic_section="DECLARED_QUANTITY",
+        )
+        rel = LabelValueRelation(
+            label=lbl,
+            candidate=val,
+            spatial_relation="SAME_LINE",
+            distance=0.02,
+            same_line=True,
+            aligned=True,
+            semantic_compatibility=1.0,
+            section_compatibility=1.0,
+            relation_score=0.96,
+        )
+        assert rel.relation_score == 0.96
+        assert rel.to_dict()["spatial_relation"] == "SAME_LINE"
+
+        cfc = CanonicalFieldCandidate(
+            field="DECLARED_NET_QUANTITY",
+            normalized_value=500,
+            raw_text="500 g",
+            anchor_label="Net Qty:",
+            semantic_section="DECLARED_QUANTITY",
+            relevance_score=0.96,
+            confidence=0.92,
+            validation_state="ACCEPTED",
+            provenance={"what": 500, "why": "Anchored by Net Qty: on same line"},
+        )
+        assert cfc.validation_state == "ACCEPTED"
+        ev = cfc.to_evidence_candidate()
+        assert ev.candidate_field == "DECLARED_NET_QUANTITY"
+        assert ev.anchor_label == "Net Qty:"
+
+    def test_normalized_spatial_computation_independence(self):
+        """Normalized spatial distance operates smoothly without fixed pixel thresholds across scale sizes."""
+        # Small image box (e.g. 200x200)
+        rel_s, dist_s, same_s, align_s = LabelValueAssociationEngine.calculate_normalized_spatial_relation(
+            {"x": 10, "y": 10, "w": 40, "h": 15},
+            {"x": 55, "y": 10, "w": 30, "h": 15},
+            image_dimensions=(200, 200),
+        )
+        assert rel_s in ("SAME_LINE", "RIGHT")
+        assert dist_s < 0.35
+        assert same_s is True
+
+        # High-res image box (e.g. 3000x3000)
+        rel_l, dist_l, same_l, align_l = LabelValueAssociationEngine.calculate_normalized_spatial_relation(
+            {"x": 150, "y": 150, "w": 600, "h": 225},
+            {"x": 825, "y": 150, "w": 450, "h": 225},
+            image_dimensions=(3000, 3000),
+        )
+        assert rel_l in ("SAME_LINE", "RIGHT")
+        assert dist_l < 0.35
+        assert same_l is True
+
+    def test_rejection_of_nutrition_from_net_quantity_with_reason(self):
+        """Candidates in NUTRITION section are rejected with explicit audit reason."""
+        lbl = SemanticLabel(label_text="Net Qty:", normalized_label="net qty:", semantic_type="NET_QUANTITY")
+        val = ValueCandidate(raw_text="45 g", parsed_value=45, unit="g", value_type="QUANTITY")
+        
+        sem_compat, sec_compat, reason = LabelValueAssociationEngine.evaluate_semantic_and_section_compatibility(
+            "DECLARED_NET_QUANTITY", lbl, val, "NUTRITION"
+        )
+        assert sec_compat == 0.0
+        assert reason is not None
+        assert "NUTRITION" in reason
+
+    def test_rejection_of_invalid_batch_label_tokens(self):
+        """Batch extraction rejects 'NO', 'NUMBER', and placeholders."""
+        lbl = SemanticLabel(label_text="Batch No:", normalized_label="batch no:", semantic_type="BATCH_NUMBER")
+        val_no = ValueCandidate(raw_text="NO", parsed_value="NO", value_type="IDENTIFIER")
+        val_img = ValueCandidate(raw_text="[IMAGE 1]", parsed_value="[IMAGE 1]", value_type="IDENTIFIER")
+
+        sem_no, sec_no, r_no = LabelValueAssociationEngine.evaluate_semantic_and_section_compatibility(
+            "BATCH_NUMBER", lbl, val_no, "BATCH"
+        )
+        assert sem_no == 0.0
+        assert r_no is not None
+
+        sem_img, sec_img, r_img = LabelValueAssociationEngine.evaluate_semantic_and_section_compatibility(
+            "BATCH_NUMBER", lbl, val_img, "BATCH"
+        )
+        assert sem_img == 0.0
+        assert r_img is not None
+
+
+# ===========================================================================
+# 9. Universal Multi-Product Synthetic Acceptance Test Matrix
+# ===========================================================================
+class TestUniversalMultiProductAcceptanceMatrix:
+
+    def test_food_mass_packaged_product(self):
+        """Food mass product (750 g) extracts cleanly and attaches canonical evidence candidate."""
+        text = (
+            "HERITAGE HARVEST\n"
+            "ROLLED OATS\n"
+            "Net Weight: 750 g\n"
+            "Batch No: OAT-774\n"
+            "MFD: 04/2024\n"
+            "EXP: 04/2025\n"
+            "MRP ₹185.00\n"
+            "Manufactured by: Northern Grains Ltd.\n"
+            "Works: Plot 54, Industrial Estate, Mohali, Punjab 160055, India\n"
+            "Customer Care: 1800-123-9999"
+        )
+        fields = extract_declarations(text)
+        qty = fields.get("DECLARED_NET_QUANTITY", {})
+        assert qty.get("quantity_value") == "750"
+        assert qty.get("quantity_unit") == "g"
+        assert qty.get("value") == "750 g"
+        assert "evidence_candidate" in qty
+        assert "canonical_field_candidate" in qty
+        assert qty["canonical_field_candidate"]["field"] == "DECLARED_NET_QUANTITY"
+
+        mrp = fields.get("MRP", {})
+        assert mrp.get("numeric_value") == 185.0
+        assert "evidence_candidate" in mrp
+
+        batch = fields.get("BATCH_NUMBER", {})
+        assert batch.get("value") == "OAT-774"
+
+    def test_beverage_volume_packaged_product(self):
+        """Beverage volume product (1.5 L) extracts cleanly."""
+        text = (
+            "MOUNTAIN SPRING\n"
+            "NATURAL MINERAL WATER\n"
+            "Net Volume: 1.5 L\n"
+            "Batch No: MSW-108\n"
+            "PKD: 02/2024\n"
+            "Best Before: 02/2026\n"
+            "MRP: Rs. 45.00\n"
+            "Packed by: Alpine Waters Pvt. Ltd.\n"
+            "Plot 18, Phase 2, Solan, Himachal Pradesh 173212, India"
+        )
+        fields = extract_declarations(text)
+        qty = fields.get("DECLARED_NET_QUANTITY", {})
+        assert qty.get("quantity_value") == "1.5"
+        assert qty.get("quantity_unit") == "L"
+        assert qty.get("value") == "1.5 L"
+
+        mrp = fields.get("MRP", {})
+        assert mrp.get("numeric_value") == 45.0
+
+    def test_pharmaceutical_supplement_count_packaged_product(self):
+        """Dietary supplement count product (60 capsules) extracts count correctly."""
+        text = (
+            "VITAL LIFE\n"
+            "MULTIVITAMIN & MINERALS\n"
+            "Net Qty: 60 capsules\n"
+            "Batch No: B-CAP-402\n"
+            "MFD: 01/2024\n"
+            "EXP: 12/2025\n"
+            "MRP ₹399.00\n"
+            "Manufactured by: BioCare Remedies Ltd.\n"
+            "Survey 12, Baddi, HP 173205, India"
+        )
+        fields = extract_declarations(text)
+        qty = fields.get("DECLARED_NET_QUANTITY", {})
+        assert qty.get("quantity_value") == "60"
+        assert qty.get("quantity_unit") == "capsules"
+        assert qty.get("quantity_type") == "COUNT"
+
+    def test_household_cleaner_packaged_product(self):
+        """Household disinfectant cleaner extracts volume and manufacturer address."""
+        text = (
+            "KLEENEX PRO\n"
+            "SURFACE DISINFECTANT CLEANER\n"
+            "Net Contents: 500 ml\n"
+            "Batch No: KLP-99\n"
+            "MFD: 06/2024\n"
+            "MRP ₹120.00\n"
+            "Manufactured by: CleanHome Chemical Industries\n"
+            "Plot 9, Sector 4, Vapi, Gujarat 396195, India"
+        )
+        fields = extract_declarations(text)
+        qty = fields.get("DECLARED_NET_QUANTITY", {})
+        assert qty.get("quantity_value") == "500"
+        assert qty.get("quantity_unit") == "ml"
+        assert fields.get("MRP", {}).get("numeric_value") == 120.0
+        assert "CleanHome Chemical" in fields.get("MANUFACTURER_NAME", {}).get("value", "")
+
+    def test_cosmetic_lotion_packaged_product(self):
+        """Cosmetic body lotion product extracts volume and handles multiple panel merges."""
+        front_text = (
+            "VELVET TOUCH\n"
+            "HYDRATING BODY LOTION\n"
+            "Net Qty: 200 ml\n"
+            "MRP ₹245.00"
+        )
+        back_text = (
+            "Manufactured by: Velvet Touch Cosmetics Pvt. Ltd.\n"
+            "Factory: Plot 22, MIDC, Andheri East, Mumbai 400093, India\n"
+            "Batch No: VT-2024-L\n"
+            "MFD: 08/2024\n"
+            "Use By: 08/2026\n"
+            "Consumer Care: call 1800-888-7777"
+        )
+        fields_front = extract_declarations(front_text)
+        fields_back = extract_declarations(back_text)
+
+        merged = merge_extracted_fields([fields_front, fields_back])
+        assert merged.get("DECLARED_NET_QUANTITY", {}).get("value") == "200 ml"
+        assert merged.get("MRP", {}).get("numeric_value") == 245.0
+        assert merged.get("BATCH_NUMBER", {}).get("value") == "VT-2024-L"
+        assert "Velvet Touch" in merged.get("MANUFACTURER_NAME", {}).get("value", "")
+        assert merged.get("DECLARED_NET_QUANTITY", {}).get("candidate_classification") in ("CONFIRMED_SAME", "COMPLEMENTARY", "MULTI_PANEL_EVIDENCE", "UNIQUE_PANEL", "SINGLE_PANEL")
+
+    def test_noisy_ocr_and_missing_values_handled_gracefully(self):
+        """Noisy OCR with missing MRP does not crash and produces NOT_VERIFIABLE for missing MRP rule."""
+        noisy_text = (
+            "--- !!! ---\n"
+            "BRANDXYZ PREMIUM\n"
+            "Net Wt: 350 g\n"
+            "Batch: B-998\n"
+            "Mfg Date: 09/2024\n"
+            "......."
+        )
+        fields = extract_declarations(noisy_text)
+        assert fields.get("DECLARED_NET_QUANTITY", {}).get("value") == "350 g"
+        assert "MRP" not in fields or fields["MRP"].get("numeric_value") is None
+
+        # Rule evaluation handles missing MRP gracefully
+        rule = {"rule_id": "PC-ALL-002", "parameter": "MRP", "required": True, "validation_method": "MRP_PRESENT"}
+        results, overall = evaluate_rules([rule], fields)
+        assert results[0]["status"] == "NOT_VERIFIABLE"
+        assert results[0]["binary"] == 0

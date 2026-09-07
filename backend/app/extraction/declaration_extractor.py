@@ -48,6 +48,14 @@ from app.extraction.evidence_model import (
     SECTION_UNKNOWN,
 )
 from app.extraction.association_engine import AssociatedCandidate, LabelValueAssociator
+from app.extraction.label_value_association import (
+    EvidenceToken,
+    SemanticLabel,
+    ValueCandidate,
+    LabelValueRelation,
+    CanonicalFieldCandidate,
+    LabelValueAssociationEngine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1227,6 +1235,9 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
             if len(candidates) > 1 and len(noise) == 0:
                 result['candidate_classification'] = 'CONFIRMED_SAME'
                 result['evidence_merge_type'] = 'CONFIRMED_SAME'
+            else:
+                result.setdefault('candidate_classification', 'SINGLE_PANEL')
+                result.setdefault('evidence_merge_type', 'SINGLE_PANEL')
             if noise:
                 result['filtered_noise'] = noise
             merged[name] = result
@@ -2361,6 +2372,34 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 validation_state=ValidationState.UNASSESSED.value,
             )
             field_data['evidence_candidate'] = ev_candidate.to_dict()
+
+        # Attach CanonicalFieldCandidate and structured provenance
+        if 'canonical_field_candidate' not in field_data:
+            cfc = CanonicalFieldCandidate(
+                field=f_name,
+                normalized_value=field_data.get('normalized_value', field_data.get('value')),
+                raw_text=field_data.get('raw_text', field_data.get('raw_value', val_str)),
+                anchor_label=field_data.get('source_label'),
+                semantic_section=field_data.get('semantic_section', 'UNKNOWN'),
+                source_image=field_data.get('source', 'OCR'),
+                bbox=field_data.get('bbox'),
+                relevance_score=float(field_data.get('relevance_score') or 0.85),
+                confidence=float(field_data.get('confidence') or 0.8),
+                validation_state=field_data.get('status', ValidationState.UNASSESSED.value),
+                rejection_reason=field_data.get('rejection_reason'),
+                provenance={
+                    'what': field_data.get('value'),
+                    'why': f"Associated with anchor label '{field_data.get('source_label', 'UNANCHORED')}' in section '{field_data.get('semantic_section', 'UNKNOWN')}'",
+                    'where': field_data.get('bbox') or {'line_index': field_data.get('line_index')},
+                    'which_label': field_data.get('source_label'),
+                    'which_image': field_data.get('source_image_index'),
+                    'confidence': float(field_data.get('confidence') or 0.8),
+                    'validation': field_data.get('status', 'UNASSESSED'),
+                },
+                metadata={k: v for k, v in field_data.items() if k not in ('evidence_candidate', 'canonical_field_candidate', 'provenance')},
+            )
+            field_data['canonical_field_candidate'] = cfc.to_dict()
+            field_data.setdefault('provenance', cfc.provenance)
 
     logger.info(f"Extracted {len(fields)} declaration fields from OCR text")
     return fields

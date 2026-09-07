@@ -296,7 +296,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
             [
                 _safe_html_p(
                     "Legal Metrology AI Inspector — Packaging Compliance Screening System<br/>"
-                    "<font color='#64748B'>Standards of Weights and Measures (Packaged Commodities) Rules, 2011</font>",
+                    "<font color='#64748B'>Legal Metrology (Packaged Commodities) Rules, 2011</font>",
                     subtitle_style,
                 ),
                 _safe_html_p(
@@ -447,7 +447,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
     story.append(PageBreak())
     story.append(Paragraph("COMPLIANCE RULE MATRIX", heading_style))
     story.append(Paragraph(
-        "Deterministic statutory evaluation of statutory declarations under Legal Metrology (Packaged Commodities) Rules, 2011.",
+        "Deterministic rule-based screening against the configured compliance matrix under Legal Metrology (Packaged Commodities) Rules, 2011.",
         subtitle_style,
     ))
     story.append(Spacer(1, 2 * mm))

@@ -19,6 +19,14 @@ from app.extraction.evidence_model import (
     SourceType,
     ValidationState,
 )
+from app.extraction.label_value_association import (
+    EvidenceToken,
+    SemanticLabel,
+    ValueCandidate,
+    LabelValueRelation,
+    CanonicalFieldCandidate,
+    LabelValueAssociationEngine,
+)
 
 
 @dataclass
