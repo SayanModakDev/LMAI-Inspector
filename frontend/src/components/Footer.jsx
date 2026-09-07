@@ -45,11 +45,11 @@ const Footer = () => {
       <div className="footer-bottom">
         <div className="footer-bottom-inner">
           <p className="footer-copyright">
-            © {new Date().getFullYear()} {BRAND_CONFIG.name}. Built for statutory inspection screening.
+            © {new Date().getFullYear()} {BRAND_CONFIG.name}. Built for AI-assisted compliance screening.
           </p>
           <div className="footer-badges">
             <span className="footer-badge">v1.0 Production</span>
-            <span className="footer-badge">LM(PC) Rules 2011</span>
+            <span className="footer-badge">Legal Metrology (PC) Rules, 2011</span>
           </div>
         </div>
       </div>

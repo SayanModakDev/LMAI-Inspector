@@ -56,7 +56,7 @@ const History = () => {
         <div>
           <h2 className="history-title">Inspection History Registry</h2>
           <p className="history-subtitle">
-            Search, audit, and retrieve past packaged commodity compliance dossiers and generated statutory reports.
+            Search, audit, and retrieve past packaged commodity compliance records and inspection reports.
           </p>
         </div>
         <Link to="/scan" className="btn btn-primary">
@@ -71,7 +71,7 @@ const History = () => {
             <Search size={15} className="search-icon" />
             <input
               type="text"
-              placeholder="Search by Dossier ID, Product Name, Category or Date..."
+              placeholder="Search by Inspection ID, Product Name, Category or Date..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="history-search-input"
@@ -80,7 +80,7 @@ const History = () => {
 
           <div className="history-filter-tabs">
             {[
-              { key: 'ALL', label: 'All Dossiers' },
+              { key: 'ALL', label: 'All Inspections' },
               { key: 'COMPLIANT', label: 'Compliant' },
               { key: 'NOT_VERIFIABLE', label: 'Requires Review' },
               { key: 'NON_COMPLIANT', label: 'Non-Compliant' },
@@ -102,7 +102,7 @@ const History = () => {
       <div className="card history-table-card">
         <div className="card-header flex-between">
           <div className="flex items-center gap-2">
-            <span>Official Screening Records</span>
+            <span>Compliance Screening Records</span>
             <span className="badge badge-gray">{filteredItems.length} records</span>
           </div>
         </div>
@@ -115,7 +115,7 @@ const History = () => {
               title="No inspection records found"
               description={
                 searchQuery
-                  ? `No dossiers match query "${searchQuery}". Try clearing search filters.`
+                  ? `No inspections match query "${searchQuery}". Try clearing search filters.`
                   : 'No inspection records match the current status filter.'
               }
               actionLabel="Start New Inspection"
@@ -126,13 +126,13 @@ const History = () => {
               <table className="history-table">
                 <thead>
                   <tr>
-                    <th>Dossier ID</th>
+                    <th>Inspection ID</th>
                     <th>Date & Time</th>
                     <th>Product Declaration</th>
                     <th>Category</th>
                     <th>Scope</th>
                     <th>Overall Status</th>
-                    <th>Statutory Report</th>
+                    <th>Inspection Report</th>
                     <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
@@ -177,12 +177,12 @@ const History = () => {
                             <FileText size={12} /> PDF Report
                           </a>
                         ) : (
-                          <span className="text-muted text-xs">Pending Sign-off</span>
+                          <span className="text-muted text-xs">Pending Compilation</span>
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <Link to={`/result/${item.id}`} className="btn btn-primary btn-sm">
-                          <Eye size={13} /> Review Dossier
+                          <Eye size={13} /> Review Inspection
                         </Link>
                       </td>
                     </tr>

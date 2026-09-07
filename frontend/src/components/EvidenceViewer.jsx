@@ -16,6 +16,7 @@ const EvidenceViewer = ({
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedFieldKey, setSelectedFieldKey] = useState(null);
   const [imageZoom, setImageZoom] = useState(false);
+  const [imageDims, setImageDims] = useState({ width: 1000, height: 1000 });
 
   const imgRef = useRef(null);
 
@@ -23,6 +24,15 @@ const EvidenceViewer = ({
   const imageSrc = activeImage?.image_path
     ? (activeImage.image_path.startsWith('/uploads/') ? activeImage.image_path : `/uploads/${activeImage.image_path}`)
     : '/placeholder.jpg';
+
+  const handleImageLoad = (e) => {
+    if (e.target.naturalWidth && e.target.naturalHeight) {
+      setImageDims({
+        width: e.target.naturalWidth,
+        height: e.target.naturalHeight,
+      });
+    }
+  };
 
   // Normalize fields into an array
   const fieldsArray = Array.isArray(extractedFields)
@@ -50,22 +60,45 @@ const EvidenceViewer = ({
   };
 
   // Convert bounding box to SVG overlay coordinates
-  // PaddleOCR bboxes are typically [[x1, y1], [x2, y2], [x3, y3], [x4, y4]] or [ymin, xmin, ymax, xmax]
+  // Handles PaddleOCR 4-point polygons [[x1, y1], [x2, y2], [x3, y3], [x4, y4]] and normalized boxes
   const renderBBoxOverlay = () => {
     if (!selectedField || !selectedField.bbox) return null;
 
     const bbox = selectedField.bbox;
-    let pointsString = '';
 
     if (Array.isArray(bbox) && bbox.length === 4 && Array.isArray(bbox[0])) {
       // 4-point polygon format: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-      pointsString = bbox.map((p) => `${p[0]},${p[1]}`).join(' ');
+      const pointsString = bbox.map((p) => `${p[0]},${p[1]}`).join(' ');
       return (
-        <svg className="evidence-bbox-overlay" viewBox="0 0 2048 2048" preserveAspectRatio="none">
+        <svg
+          className="evidence-bbox-overlay"
+          viewBox={`0 0 ${imageDims.width} ${imageDims.height}`}
+          preserveAspectRatio="none"
+        >
           <polygon points={pointsString} className="evidence-polygon-highlight" />
         </svg>
       );
     }
+
+    if (Array.isArray(bbox) && bbox.length === 4 && typeof bbox[0] === 'number') {
+      const [a, b, c, d] = bbox;
+      if (a <= 1 && b <= 1 && c <= 1 && d <= 1) {
+        const x = b * imageDims.width;
+        const y = a * imageDims.height;
+        const w = (d - b) * imageDims.width;
+        const h = (c - a) * imageDims.height;
+        return (
+          <svg
+            className="evidence-bbox-overlay"
+            viewBox={`0 0 ${imageDims.width} ${imageDims.height}`}
+            preserveAspectRatio="none"
+          >
+            <rect x={x} y={y} width={w} height={h} className="evidence-polygon-highlight" />
+          </svg>
+        );
+      }
+    }
+
     return null;
   };
 
@@ -120,6 +153,7 @@ const EvidenceViewer = ({
               src={imageSrc}
               alt={`Package view ${selectedImageIndex + 1}`}
               className="image-stage__img"
+              onLoad={handleImageLoad}
               onError={(e) => { e.target.style.opacity = '0.3'; }}
             />
             {renderBBoxOverlay()}

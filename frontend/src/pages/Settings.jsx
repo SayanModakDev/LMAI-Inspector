@@ -1,36 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
-  Settings as SettingsIcon,
   User,
-  ShieldCheck,
-  Cpu,
-  Database,
   Activity,
-  CheckCircle2,
-  AlertTriangle,
   Scale,
+  RefreshCw,
 } from 'lucide-react';
+import { useSystemHealth } from '../context/SystemHealthContext';
+import { BRAND_CONFIG } from '../constants/branding';
 import './Settings.css';
 
 const Settings = () => {
-  const [healthData, setHealthData] = useState(null);
-  const [healthStatus, setHealthStatus] = useState('checking');
-
-  useEffect(() => {
-    fetch('/health')
-      .then((res) => {
-        if (!res.ok) throw new Error('Health check failed');
-        return res.json();
-      })
-      .then((data) => {
-        setHealthData(data);
-        setHealthStatus('online');
-      })
-      .catch((err) => {
-        console.error(err);
-        setHealthStatus('offline');
-      });
-  }, []);
+  const { healthState, healthData, isChecking, refreshHealth } = useSystemHealth();
 
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profile, setProfile] = useState(() => {
@@ -39,10 +19,10 @@ const Settings = () => {
       if (saved) return JSON.parse(saved);
     } catch (_) {}
     return {
-      name: 'Legal Metrology Officer',
-      badge: 'IN-4029',
-      jurisdiction: 'Regional Metrology Directorate (Zone 4)',
-      role: 'Senior Inspecting Officer',
+      name: 'Workspace User',
+      badge: 'Not configured',
+      station: 'Demo / Local Workspace',
+      role: 'Screening Operator',
     };
   });
   const [profileForm, setProfileForm] = useState(profile);
@@ -51,7 +31,18 @@ const Settings = () => {
     e.preventDefault();
     setProfile(profileForm);
     localStorage.setItem('lmai_inspector_profile', JSON.stringify(profileForm));
+    // Notify other components (Sidebar, Topbar)
+    window.dispatchEvent(new Event('storage'));
     setIsEditingProfile(false);
+  };
+
+  const getHealthDotClass = () => {
+    switch (healthState) {
+      case 'ONLINE': return 'status-dot--online';
+      case 'DEGRADED': return 'status-dot--degraded';
+      case 'OFFLINE': return 'status-dot--offline';
+      default: return 'status-dot--unknown';
+    }
   };
 
   return (
@@ -61,18 +52,18 @@ const Settings = () => {
         <div>
           <h2 className="settings-title">Inspector Profile & Workstation Settings</h2>
           <p className="settings-subtitle">
-            Configure field officer credentials, examine backend engine diagnostics, and manage compliance parameters.
+            Configure local workstation identity, examine backend engine diagnostics, and review regulatory parameters.
           </p>
         </div>
       </div>
 
       <div className="settings-grid">
-        {/* Officer Profile Card */}
+        {/* User / Inspector Profile Card */}
         <div className="card settings-card">
           <div className="card-header flex-between">
             <div className="flex items-center gap-2">
               <User size={18} className="text-primary" />
-              <span>Inspector Credentials</span>
+              <span>Inspector / Workstation Profile</span>
             </div>
             <button
               type="button"
@@ -89,69 +80,69 @@ const Settings = () => {
             {isEditingProfile ? (
               <form onSubmit={handleSaveProfile} className="profile-edit-form">
                 <div className="form-group mb-2">
-                  <label className="form-label text-xs">Officer Name</label>
+                  <label className="form-label text-xs">Inspector / User Name</label>
                   <input
                     type="text"
                     className="form-control"
                     value={profileForm.name}
                     onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                    placeholder="Enter officer name"
+                    placeholder="Enter name or identifier"
                     required
                   />
                 </div>
                 <div className="form-group mb-2">
-                  <label className="form-label text-xs">Badge / Identifier</label>
+                  <label className="form-label text-xs">Identifier / Ref ID</label>
                   <input
                     type="text"
                     className="form-control font-mono"
                     value={profileForm.badge}
                     onChange={(e) => setProfileForm({ ...profileForm, badge: e.target.value })}
-                    placeholder="e.g. IN-4029"
+                    placeholder="e.g. OP-104 or Not configured"
                     required
                   />
                 </div>
                 <div className="form-group mb-2">
-                  <label className="form-label text-xs">Jurisdiction / Zone</label>
+                  <label className="form-label text-xs">Station / Workspace</label>
                   <input
                     type="text"
                     className="form-control"
-                    value={profileForm.jurisdiction}
-                    onChange={(e) => setProfileForm({ ...profileForm, jurisdiction: e.target.value })}
-                    placeholder="e.g. Regional Directorate"
+                    value={profileForm.station}
+                    onChange={(e) => setProfileForm({ ...profileForm, station: e.target.value })}
+                    placeholder="e.g. Demo / Local Workspace"
                     required
                   />
                 </div>
                 <div className="form-group mb-3">
-                  <label className="form-label text-xs">Authorization Role</label>
+                  <label className="form-label text-xs">Role / Title</label>
                   <input
                     type="text"
                     className="form-control"
                     value={profileForm.role}
                     onChange={(e) => setProfileForm({ ...profileForm, role: e.target.value })}
-                    placeholder="e.g. Inspecting Officer"
+                    placeholder="e.g. Screening Operator"
                     required
                   />
                 </div>
                 <button type="submit" className="btn btn-primary btn-sm">
-                  Save Credentials
+                  Save Profile
                 </button>
               </form>
             ) : (
               <div className="profile-detail-rows">
                 <div className="profile-row">
-                  <span className="p-label">Officer Name:</span>
+                  <span className="p-label">Inspector / User:</span>
                   <span className="p-val font-semibold">{profile.name}</span>
                 </div>
                 <div className="profile-row">
-                  <span className="p-label">Badge / Identifier:</span>
+                  <span className="p-label">Identifier / Ref ID:</span>
                   <span className="p-val font-mono">{profile.badge}</span>
                 </div>
                 <div className="profile-row">
-                  <span className="p-label">Jurisdiction / Zone:</span>
-                  <span className="p-val">{profile.jurisdiction}</span>
+                  <span className="p-label">Station / Workspace:</span>
+                  <span className="p-val">{profile.station}</span>
                 </div>
                 <div className="profile-row">
-                  <span className="p-label">Authorization Role:</span>
+                  <span className="p-label">Role / Title:</span>
                   <span className="p-val font-semibold text-primary">{profile.role}</span>
                 </div>
               </div>
@@ -164,13 +155,25 @@ const Settings = () => {
           <div className="card-header flex-between">
             <div className="flex items-center gap-2">
               <Activity size={18} className="text-primary" />
-              <span>System & Engine Health</span>
+              <span>Engine Diagnostics & Health</span>
             </div>
-            <div className="flex items-center gap-1">
-              <div className={`status-dot ${healthStatus === 'online' ? 'status-dot--online' : 'status-dot--offline'}`} />
-              <span className="text-xs font-mono font-semibold">
-                {healthStatus === 'online' ? 'ONLINE' : 'OFFLINE'}
-              </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn btn-outline btn-xs"
+                onClick={refreshHealth}
+                disabled={isChecking}
+                title="Refresh engine telemetry"
+              >
+                <RefreshCw size={12} className={isChecking ? 'animate-spin' : ''} />
+                <span>{isChecking ? 'Checking...' : 'Refresh'}</span>
+              </button>
+              <div className="flex items-center gap-1">
+                <div className={`status-dot ${getHealthDotClass()}`} />
+                <span className="text-xs font-mono font-semibold">
+                  {healthState}
+                </span>
+              </div>
             </div>
           </div>
           <div className="card-body">
@@ -185,7 +188,7 @@ const Settings = () => {
               </div>
               <div className="profile-row">
                 <span className="p-label">OCR Subsystem:</span>
-                <span className="p-val">PaddleOCR Multi-Pass (Preserved Fidelity)</span>
+                <span className="p-val">PaddleOCR Multi-Pass (Adaptive Preprocessing)</span>
               </div>
               <div className="profile-row">
                 <span className="p-label">Barcode Decoder:</span>
@@ -216,15 +219,15 @@ const Settings = () => {
                 </span>
               </div>
               <div className="standard-item">
-                <span className="standard-title">Packaged Commodities Rules, 2011</span>
+                <span className="standard-title">{BRAND_CONFIG.legalStandard}</span>
                 <span className="standard-desc">
-                  G.S.R. 202(E) — Mandates mandatory printed declarations including MRP, Net Quantity, Dates, Manufacturer/Packer, and Consumer Care.
+                  G.S.R. 202(E) — Mandates mandatory printed declarations including MRP, Net Quantity, Dates, Manufacturer/Packer/Importer, and Consumer Care details.
                 </span>
               </div>
               <div className="standard-item">
-                <span className="standard-title">Advisory on AI Screening</span>
+                <span className="standard-title">Advisory on AI Compliance Screening</span>
                 <span className="standard-desc">
-                  LMAI Inspector operates exclusively as an officer-in-the-loop decision-support tool. Formal enforcement notices require officer sign-off.
+                  {BRAND_CONFIG.disclaimer}
                 </span>
               </div>
             </div>

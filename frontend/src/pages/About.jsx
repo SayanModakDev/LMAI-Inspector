@@ -19,13 +19,12 @@ const About = () => {
             <li className="mb-2"><strong>Scan:</strong> Upload an image of a packaged commodity label.</li>
             <li className="mb-2"><strong>Extract:</strong> PaddleOCR extracts text, and the system identifies declarations (MRP, Declared Net Quantity, Dates).</li>
             <li className="mb-2"><strong>Classify:</strong> The product is automatically classified into categories (e.g., FOOD, COSMETIC).</li>
-            <li className="mb-2"><strong>Evaluate:</strong> A flexible rules engine validates the extracted declarations against Legal Metrology guidelines.</li>
-            <li><strong>Report:</strong> The inspector can manually override incorrect extractions, re-evaluate, and generate a final PDF report.</li>
+            <li className="mb-2"><strong>Evaluate:</strong> A flexible rules engine validates the extracted declarations against the Legal Metrology (Packaged Commodities) Rules, 2011.</li>
+            <li><strong>Report:</strong> The user can review extracted values, re-evaluate, and generate an inspection report PDF.</li>
           </ol>
           
           <div className="warning-banner" style={{ marginTop: '2rem' }}>
-            <strong>Note:</strong> The final determination of legal compliance rests with the human inspector. 
-            This tool highlights potential non-compliances for further review.
+            <strong>Statutory Notice:</strong> This system is an AI-assisted compliance screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.
           </div>
         </div>
       </div>

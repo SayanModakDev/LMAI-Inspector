@@ -1,21 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { Menu, X, Plus, ShieldCheck, Scale } from 'lucide-react';
 import Sidebar from './Sidebar';
 import BrandLogo from './BrandLogo';
+import { BRAND_CONFIG } from '../constants/branding';
 import './AppLayout.css';
 
 const AppLayout = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profile, setProfile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('lmai_inspector_profile');
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return { name: 'Workspace User', badge: 'Not configured' };
+  });
   const location = useLocation();
+
+  useEffect(() => {
+    const handleStorage = () => {
+      try {
+        const saved = localStorage.getItem('lmai_inspector_profile');
+        if (saved) setProfile(JSON.parse(saved));
+      } catch (_) {}
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   const getPageTitle = (pathname) => {
     if (pathname === '/' || pathname === '/dashboard') return 'Inspection Overview';
     if (pathname === '/scan') return 'New Package Inspection';
     if (pathname === '/processing') return 'Evidence Analysis in Progress';
-    if (pathname.startsWith('/result')) return 'Statutory Compliance Workstation';
+    if (pathname.startsWith('/result')) return 'Compliance Inspection Workstation';
     if (pathname === '/history') return 'Inspection History Registry';
-    if (pathname === '/reports') return 'Statutory Reports Center';
+    if (pathname === '/reports') return 'Inspection Reports & Summaries';
     if (pathname === '/rules') return 'Legal Metrology Rule Matrix';
     if (pathname === '/settings') return 'Inspector Profile & System Settings';
     if (pathname === '/about') return 'About LMAI Inspector';
@@ -64,7 +83,7 @@ const AppLayout = ({ children }) => {
             </button>
             <div className="page-context">
               <h1 className="page-context__title">{getPageTitle(location.pathname)}</h1>
-              <span className="page-context__crumb">Legal Metrology Packaged Commodities (LMPC) 2011</span>
+              <span className="page-context__crumb">{BRAND_CONFIG.legalStandard}</span>
             </div>
           </div>
 
@@ -72,10 +91,10 @@ const AppLayout = ({ children }) => {
             <Link to="/scan" className="btn btn-primary btn-sm topbar-cta">
               <Plus size={14} /> New Inspection
             </Link>
-            <div className="topbar-inspector-pill">
+            <Link to="/settings" className="topbar-inspector-pill" title="Configure Inspector Profile">
               <ShieldCheck size={14} className="text-primary" />
-              <span>Inspector #4029</span>
-            </div>
+              <span>{profile.name || 'Inspector Profile'}</span>
+            </Link>
           </div>
         </header>
 
@@ -89,7 +108,7 @@ const AppLayout = ({ children }) => {
           <div className="footer-disclaimer">
             <Scale size={13} className="footer-icon" />
             <span>
-              <strong>Statutory Notice:</strong> This platform is an AI-assisted screening tool. Final determination rests with the authorized Legal Metrology inspector under the Legal Metrology Act, 2009.
+              <strong>Statutory Notice:</strong> {BRAND_CONFIG.disclaimer}
             </span>
           </div>
           <div className="footer-meta font-mono">

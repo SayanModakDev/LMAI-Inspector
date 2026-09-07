@@ -59,6 +59,34 @@ const Result = () => {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportUrl, setReportUrl] = useState(null);
 
+  // Inspector / User profile from localStorage
+  const [profile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('lmai_inspector_profile');
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return { name: 'Workspace User', badge: 'Not configured', station: 'Demo / Local Workspace' };
+  });
+
+  const getConflictCandidates = (field) => {
+    if (Array.isArray(field.candidates) && field.candidates.length > 0) {
+      return field.candidates.map((c, idx) => ({
+        value: typeof c === 'object' ? (c.value || c.field_value || JSON.stringify(c)) : String(c),
+        source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Candidate ${idx + 1}`,
+      }));
+    }
+    const rawVal = String(field.field_value || '').replace(/^CONFLICT:\s*/i, '');
+    if (rawVal.includes(' vs ')) {
+      return rawVal.split(/\s+vs\s+/i).map((part, idx) => ({
+        value: part.trim(),
+        source: `Panel Detection ${idx + 1}`,
+      }));
+    }
+    return [
+      { value: rawVal || 'Discrepancy detected across panel views', source: field.source || 'Panel Observation' },
+    ];
+  };
+
   useEffect(() => {
     fetchInspection();
   }, [id]);
@@ -149,7 +177,7 @@ const Result = () => {
     return (
       <div className="result-loading card p-8 text-center">
         <div className="spinner-icon mx-auto mb-3" style={{ width: 32, height: 32 }} />
-        <h3 className="font-semibold">Loading Statutory Compliance Dossier...</h3>
+        <h3 className="font-semibold">Loading Compliance Screening Results...</h3>
         <p className="text-muted text-xs">Retrieving OCR tokens, rule evaluations, and evidence records.</p>
       </div>
     );
@@ -212,7 +240,7 @@ const Result = () => {
 
           <div className="result-banner__meta-block">
             <div className="result-banner__id-row">
-              <span className="result-dossier-id font-mono">Dossier #{inspection.id}</span>
+              <span className="result-dossier-id font-mono">Inspection #{inspection.id}</span>
               <span className="result-category-pill font-semibold">{inspection.category || 'COMMODITY'}</span>
               <span className="result-package-pill">{inspection.package_type || 'RETAIL'}</span>
               <span className="result-package-pill">{inspection.import_status || 'DOMESTIC'}</span>
@@ -230,7 +258,7 @@ const Result = () => {
             onClick={handleGenerateReport}
             disabled={generatingReport}
           >
-            <Printer size={15} /> {generatingReport ? 'Compiling PDF...' : (reportUrl ? 'View Official PDF' : 'Generate PDF Report')}
+            <Printer size={15} /> {generatingReport ? 'Compiling PDF...' : (reportUrl ? 'View Inspection PDF' : 'Generate PDF Inspection Report')}
           </button>
           <button
             type="button"
@@ -277,9 +305,9 @@ const Result = () => {
             <AlertTriangle size={22} className="text-warning" />
           </div>
           <div className="callout-content">
-            <h4 className="callout-title">Manual Inspector Verification Required</h4>
+            <h4 className="callout-title">Operator Verification Required</h4>
             <p className="callout-desc">
-              Visual screening identified {reviewCount} requirement{reviewCount === 1 ? '' : 's'} that cannot be certified from 2D label photography alone. Certified scale weights, font height gauge measurements, or conflicting evidence require authorized field officer review.
+              Visual screening identified {reviewCount} requirement{reviewCount === 1 ? '' : 's'} requiring manual verification. Parameters such as physical scale weight, numeral font height measurement, or conflicting visual evidence should be verified by the operator.
             </p>
             <div className="callout-actions">
               <button
@@ -308,11 +336,8 @@ const Result = () => {
             <ConflictCard
               key={i}
               parameter={f.field_name}
-              candidates={[
-                { value: f.field_value?.replace(/^CONFLICT:\s*/, ''), source: f.source || 'Panel 1' },
-                { value: 'Contradictory Label Declaration', source: 'Panel 2' },
-              ]}
-              notes="Cross-panel reconciliation found divergent strings. Do not accept automatically."
+              candidates={getConflictCandidates(f)}
+              notes="Cross-panel reconciliation identified divergent values across views. Manual review required."
             />
           ))}
         </div>
@@ -363,7 +388,7 @@ const Result = () => {
           onClick={() => setActiveTab('report')}
         >
           <FileText size={15} />
-          <span>Statutory Report & Sign-Off</span>
+          <span>Inspection Report & Review</span>
         </button>
       </div>
 
@@ -548,7 +573,7 @@ const Result = () => {
             <div className="physical-intro-alert mb-4">
               <ShieldCheck size={20} className="text-teal flex-shrink-0" />
               <div className="text-xs">
-                <strong>Legal Metrology Standard:</strong> Physical attributes like actual package gross/net weight and numeral font millimeter height cannot be legally established solely from 2D label photography. Certified scale input and physical verification are required.
+                <strong>Verification Standard:</strong> Physical attributes like actual package gross/net weight and numeral font millimeter height cannot be conclusively established solely from 2D label photography. Certified scale input and manual verification are supported.
               </div>
             </div>
 
@@ -670,14 +695,14 @@ const Result = () => {
       )}
 
       {/* =========================================================================
-          TAB 4: STATUTORY REPORT & SIGN-OFF
+          TAB 4: INSPECTION REPORT & REVIEW
           ========================================================================= */}
       {activeTab === 'report' && (
         <div className="card report-workstation-card">
           <div className="card-header flex-between">
             <div className="flex items-center gap-2">
               <FileText size={18} className="text-primary" />
-              <span>Inspection Report & Enforcement Sign-Off</span>
+              <span>Inspection Report & Review Summary</span>
             </div>
             {reportUrl && (
               <a
@@ -695,8 +720,8 @@ const Result = () => {
             <div className="report-summary-dossier">
               <div className="report-summary-header">
                 <div className="report-title-block">
-                  <h3>LEGAL METROLOGY INSPECTION DOSSIER</h3>
-                  <span className="text-xs text-muted">Govt. of India Legal Metrology (Packaged Commodities) Compliance Form</span>
+                  <h3>LEGAL METROLOGY COMPLIANCE INSPECTION REPORT</h3>
+                  <span className="text-xs text-muted">Inspection-Support Screening Summary • Legal Metrology (Packaged Commodities) Rules, 2011</span>
                 </div>
                 <div className="report-status-badge">
                   <StatusBadge status={rawOverall} size="md" showBinary={true} />
@@ -731,7 +756,7 @@ const Result = () => {
               </div>
 
               <div className="report-findings-box mt-4">
-                <h5 className="font-semibold text-xs text-muted uppercase mb-2">Statutory Findings Summary</h5>
+                <h5 className="font-semibold text-xs text-muted uppercase mb-2">Compliance Findings Summary</h5>
                 <ul className="report-findings-list">
                   {inspection.findings?.failed?.map((f, idx) => (
                     <li key={idx} className="finding-item finding-item--fail">
@@ -754,13 +779,13 @@ const Result = () => {
               <div className="report-signature-block mt-4">
                 <div className="signature-box">
                   <div className="signature-line" />
-                  <span className="signature-title">Authorized Legal Metrology Inspector</span>
-                  <span className="signature-sub font-mono">Badge #IN-4029</span>
+                  <span className="signature-title">Reviewing Operator / Inspector</span>
+                  <span className="signature-sub">{profile.name || 'Workspace User'} {profile.badge && profile.badge !== 'Not configured' ? `(${profile.badge})` : ''}</span>
                 </div>
                 <div className="signature-box">
                   <div className="signature-line" />
-                  <span className="signature-title">Inspection Station Seal & Stamp</span>
-                  <span className="signature-sub">Date: {new Date().toLocaleDateString()}</span>
+                  <span className="signature-title">Workstation / Facility</span>
+                  <span className="signature-sub">{profile.station || 'Local Workstation'} • {new Date().toLocaleDateString()}</span>
                 </div>
               </div>
 
@@ -771,7 +796,7 @@ const Result = () => {
                   onClick={handleGenerateReport}
                   disabled={generatingReport}
                 >
-                  <Printer size={16} /> {generatingReport ? 'Generating Report...' : 'Compile & Sign PDF Report'}
+                  <Printer size={16} /> {generatingReport ? 'Generating Report...' : 'Generate PDF Inspection Report'}
                 </button>
               </div>
             </div>

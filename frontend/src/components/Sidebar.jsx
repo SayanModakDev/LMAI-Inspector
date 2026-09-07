@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -8,10 +8,10 @@ import {
   Scale,
   Settings,
   ShieldCheck,
-  Activity,
   UserCheck,
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
+import { useSystemHealth } from '../context/SystemHealthContext';
 import './Sidebar.css';
 
 const NAV_ITEMS = [
@@ -24,24 +24,41 @@ const NAV_ITEMS = [
 ];
 
 const Sidebar = ({ onCloseMobile }) => {
-  const [isBackendOnline, setIsBackendOnline] = useState(true);
-  const [profile] = useState(() => {
+  const { healthState } = useSystemHealth();
+  const [profile, setProfile] = useState(() => {
     try {
       const saved = localStorage.getItem('lmai_inspector_profile');
       if (saved) return JSON.parse(saved);
     } catch (_) {}
-    return { name: 'Field Officer', badge: 'IN-4029' };
+    return { name: 'Workspace User', badge: 'Not configured', station: 'Local Workstation' };
   });
 
+  // Listen for profile updates in localStorage if modified in Settings
   useEffect(() => {
-    fetch('/health')
-      .then((res) => {
-        setIsBackendOnline(res.ok);
-      })
-      .catch(() => {
-        setIsBackendOnline(false);
-      });
+    const handleStorage = () => {
+      try {
+        const saved = localStorage.getItem('lmai_inspector_profile');
+        if (saved) setProfile(JSON.parse(saved));
+      } catch (_) {}
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, []);
+
+  const getStatusDisplay = () => {
+    switch (healthState) {
+      case 'ONLINE':
+        return { dotClass: 'status-dot--online', text: 'Engine Online (v1.0)' };
+      case 'DEGRADED':
+        return { dotClass: 'status-dot--degraded', text: 'Engine Degraded' };
+      case 'OFFLINE':
+        return { dotClass: 'status-dot--offline', text: 'Backend Disconnected' };
+      default:
+        return { dotClass: 'status-dot--unknown', text: 'Checking Engine...' };
+    }
+  };
+
+  const status = getStatusDisplay();
 
   return (
     <aside className="app-sidebar" aria-label="Inspection System Navigation">
@@ -57,7 +74,7 @@ const Sidebar = ({ onCloseMobile }) => {
         </NavLink>
         <div className="sidebar-brand__badge">
           <ShieldCheck size={12} className="text-teal" />
-          <span>STATUTORY SCREENING</span>
+          <span>AI COMPLIANCE SCREENING</span>
         </div>
       </div>
 
@@ -92,16 +109,16 @@ const Sidebar = ({ onCloseMobile }) => {
             <UserCheck size={16} />
           </div>
           <div className="inspector-identity__meta">
-            <span className="inspector-name">{profile.name || 'Field Officer'}</span>
-            <span className="inspector-role">Badge #{profile.badge || 'IN-4029'} • Active</span>
+            <span className="inspector-name">{profile.name || 'Workspace User'}</span>
+            <span className="inspector-role">
+              {profile.badge && profile.badge !== 'Not configured' ? `ID: ${profile.badge}` : 'ID: Not configured'} • {profile.station || 'Local'}
+            </span>
           </div>
         </div>
 
         <div className="system-status-indicator">
-          <div className={`status-dot ${isBackendOnline ? 'status-dot--online' : 'status-dot--offline'}`} />
-          <span className="status-text">
-            {isBackendOnline ? 'Engine Online (v1.0)' : 'Backend Disconnected'}
-          </span>
+          <div className={`status-dot ${status.dotClass}`} />
+          <span className="status-text">{status.text}</span>
         </div>
       </div>
     </aside>

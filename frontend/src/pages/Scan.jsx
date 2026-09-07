@@ -161,7 +161,7 @@ const Scan = () => {
         <div>
           <h2 className="scan-title">Capture & Package Ingestion</h2>
           <p className="scan-subtitle">
-            Upload package panels, label close-ups, or mandatory declaration areas for Legal Metrology screening.
+            Upload package panels, label close-ups, or mandatory declaration areas for Legal Metrology (Packaged Commodities) Rules, 2011 screening.
           </p>
         </div>
         <div className="scan-badge-counter">
@@ -285,54 +285,60 @@ const Scan = () => {
           )}
         </div>
 
-        {/* Right: Inspection Parameters & Scoping */}
+        {/* Right: Inspection Scope Parameters */}
         <div className="scan-params-col">
           <div className="card">
-            <div className="card-header">
+            <div className="card-header flex-between">
               <div className="flex items-center gap-2">
                 <Layers size={16} className="text-primary" />
-                <span>Statutory Scope Parameters</span>
+                <span>Inspection Scope Parameters</span>
               </div>
-              <span className="badge badge-gray">LMPC 2011</span>
+              <span className="badge badge-gray font-mono">User Configured</span>
             </div>
 
             <div className="card-body">
               <form onSubmit={handleSubmit}>
-                <div className="form-group">
-                  <label className="form-label">
-                    <span>Package Classification</span>
-                    <span className="text-xs text-muted">Mandatory Scoping</span>
-                  </label>
-                  <select
-                    className="form-control"
-                    value={packageType}
-                    onChange={(e) => setPackageType(e.target.value)}
-                  >
-                    <option value="RETAIL">Retail Package (Direct Consumer Sale)</option>
-                    <option value="WHOLESALE">Wholesale Package (Commercial Distribution)</option>
-                    <option value="INSTITUTIONAL">Institutional / Industrial Consumption</option>
-                  </select>
-                  <span className="form-help">
-                    Defines mandatory declaration applicability (e.g. MRP and Consumer Care mandatory for Retail).
-                  </span>
-                </div>
+                <div className="scope-input-section">
+                  <div className="text-xs text-muted leading-relaxed">
+                    <span className="font-semibold text-main">Scope Scaffolding:</span> These parameters reflect operational context specified by the user to configure applicable rule sets. Declarations (MRP, Net Qty, Dates) will be detected automatically by the OCR engine.
+                  </div>
 
-                <div className="form-group">
-                  <label className="form-label">
-                    <span>Import Status</span>
-                    <span className="text-xs text-muted">Jurisdiction Rule</span>
-                  </label>
-                  <select
-                    className="form-control"
-                    value={importStatus}
-                    onChange={(e) => setImportStatus(e.target.value)}
-                  >
-                    <option value="DOMESTIC">Domestic (Manufactured in India)</option>
-                    <option value="IMPORTED">Imported Commodity (Overseas Manufacturing)</option>
-                  </select>
-                  <span className="form-help">
-                    Imported commodities mandate Country of Origin and authorized importer address.
-                  </span>
+                  <div className="form-group mb-0">
+                    <label className="form-label flex-between items-center mb-1">
+                      <span className="font-semibold">Package Classification</span>
+                      <span className="scope-badge">Inspection Scope • User supplied</span>
+                    </label>
+                    <select
+                      className="form-control"
+                      value={packageType}
+                      onChange={(e) => setPackageType(e.target.value)}
+                    >
+                      <option value="RETAIL">Retail Package (Direct Consumer Sale)</option>
+                      <option value="WHOLESALE">Wholesale Package (Commercial Distribution)</option>
+                      <option value="INSTITUTIONAL">Institutional / Industrial Consumption</option>
+                    </select>
+                    <span className="form-help">
+                      Defines mandatory declaration applicability (e.g. MRP and Consumer Care mandatory for Retail).
+                    </span>
+                  </div>
+
+                  <div className="form-group mb-0">
+                    <label className="form-label flex-between items-center mb-1">
+                      <span className="font-semibold">Import Status</span>
+                      <span className="scope-badge">Inspection Scope • User supplied</span>
+                    </label>
+                    <select
+                      className="form-control"
+                      value={importStatus}
+                      onChange={(e) => setImportStatus(e.target.value)}
+                    >
+                      <option value="DOMESTIC">Domestic (Manufactured in India)</option>
+                      <option value="IMPORTED">Imported Commodity (Overseas Manufacturing)</option>
+                    </select>
+                    <span className="form-help">
+                      Imported commodities mandate Country of Origin and authorized importer address.
+                    </span>
+                  </div>
                 </div>
 
                 <div className="statutory-notice-box mb-4">

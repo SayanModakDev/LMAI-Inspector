@@ -42,9 +42,9 @@ const Reports = () => {
       {/* Header */}
       <div className="reports-header">
         <div>
-          <h2 className="reports-title">Statutory Reports & Enforcement Dossiers</h2>
+          <h2 className="reports-title">Inspection Reports & Summaries</h2>
           <p className="reports-subtitle">
-            Official inspection summaries, compliance certs, and evidentiary documentation generated under the Legal Metrology Act, 2009.
+            Inspection reports, evidence summaries, and inspection-support documentation.
           </p>
         </div>
       </div>
@@ -62,7 +62,7 @@ const Reports = () => {
               className="reports-search-input"
             />
           </div>
-          <span className="badge badge-gray font-mono">{filtered.length} Dossiers Listed</span>
+          <span className="badge badge-gray font-mono">{filtered.length} Reports Listed</span>
         </div>
       </div>
 
@@ -73,7 +73,7 @@ const Reports = () => {
         ) : filtered.length === 0 ? (
           <EmptyState
             title="No reports found"
-            description="Complete an inspection to generate and archive statutory compliance reports."
+            description="Complete an inspection to compile and archive compliance screening reports."
             actionLabel="Start New Inspection"
             actionTo="/scan"
           />
@@ -87,7 +87,7 @@ const Reports = () => {
                 <div className="report-card__header">
                   <div className="flex items-center gap-2">
                     <FileText size={18} className="text-primary" />
-                    <span className="font-mono font-bold text-sm">Dossier #{item.id}</span>
+                    <span className="font-mono font-bold text-sm">Report #{item.id}</span>
                   </div>
                   <StatusBadge status={item.overall_result} size="sm" showBinary={true} />
                 </div>
@@ -111,7 +111,7 @@ const Reports = () => {
                             <CheckCircle2 size={12} /> PDF Compiled
                           </span>
                         ) : (
-                          <span className="text-muted italic">Awaiting Officer Sign-Off</span>
+                          <span className="text-muted italic">Report Not Compiled</span>
                         )}
                       </span>
                     </div>

@@ -60,7 +60,7 @@ const Dashboard = () => {
         <div className="dashboard-header__text">
           <h2 className="dashboard-title">Inspection Overview</h2>
           <p className="dashboard-subtitle">
-            Review packaging declarations, evidence and compliance screening results under Legal Metrology rules.
+            Review packaging declarations, evidence, and compliance screening results under the Legal Metrology (Packaged Commodities) Rules, 2011.
           </p>
         </div>
         <div className="dashboard-header__actions">
@@ -253,14 +253,14 @@ const Dashboard = () => {
                   <Layers size={16} className="capability-icon text-primary" />
                   <div>
                     <div className="capability-title">Deterministic Rule Matrix</div>
-                    <div className="capability-desc">Evaluates 16+ statutory requirements under Legal Metrology Act and Packaged Commodities Rules.</div>
+                    <div className="capability-desc">Evaluates statutory declaration requirements under the Legal Metrology (Packaged Commodities) Rules, 2011.</div>
                   </div>
                 </li>
                 <li className="capability-item">
                   <FileText size={16} className="capability-icon text-primary" />
                   <div>
-                    <div className="capability-title">Statutory Report Generation</div>
-                    <div className="capability-desc">Generates tamper-evident inspection reports for field records and enforcement review.</div>
+                    <div className="capability-title">Inspection Report Generation</div>
+                    <div className="capability-desc">Generates PDF inspection reports summarizing declarations, compliance checks, and evidence for review.</div>
                   </div>
                 </li>
               </ul>

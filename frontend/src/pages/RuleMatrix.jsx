@@ -70,13 +70,13 @@ const RuleMatrix = () => {
       {/* Header */}
       <div className="rule-matrix-header">
         <div>
-          <h2 className="rule-matrix-title">Legal Metrology Statutory Rule Matrix</h2>
+          <h2 className="rule-matrix-title">Legal Metrology Rule Matrix</h2>
           <p className="rule-matrix-subtitle">
-            Authoritative regulatory parameters codified from the Legal Metrology (Packaged Commodities) Rules, 2011.
+            Configured compliance rule parameters used for deterministic inspection screening under the Legal Metrology (Packaged Commodities) Rules, 2011.
           </p>
         </div>
         <div className="badge badge-primary font-mono font-semibold">
-          {rules.length} Statutory Rules Active
+          {rules.length} Screening Rules Configured
         </div>
       </div>
 
@@ -127,7 +127,7 @@ const RuleMatrix = () => {
       {/* Rule Matrix Table */}
       <div className="card">
         <div className="card-header flex-between">
-          <span>Codified Rule Standards</span>
+          <span>Configured Rule Standards</span>
           <span className="badge badge-gray">{filteredRules.length} matching criteria</span>
         </div>
 
@@ -207,7 +207,7 @@ const RuleMatrix = () => {
                               <div className="rule-detail-card">
                                 <div className="rule-detail-grid">
                                   <div>
-                                    <span className="detail-tag">Statutory Requirement:</span>
+                                    <span className="detail-tag">Mandatory Declaration Requirement:</span>
                                     <p className="detail-text">{rule.what_to_extract || 'Verify printed mandatory declaration on package.'}</p>
                                   </div>
                                   <div>
@@ -219,7 +219,7 @@ const RuleMatrix = () => {
                                     <p className="detail-text font-mono text-xs">{rule.condition || 'Universal Package Applicability'}</p>
                                   </div>
                                   <div>
-                                    <span className="detail-tag">Enforcement Severity:</span>
+                                    <span className="detail-tag">Rule Severity:</span>
                                     <span className={`badge ${rule.severity === 'MANDATORY' ? 'badge-danger' : 'badge-warning'}`}>
                                       {rule.severity || 'MANDATORY'}
                                     </span>

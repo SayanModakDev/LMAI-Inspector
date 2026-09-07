@@ -186,6 +186,16 @@
   box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
 }
 
+.status-dot--degraded {
+  background-color: #F59E0B;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.status-dot--unknown {
+  background-color: #94A3B8;
+  box-shadow: 0 0 6px rgba(148, 163, 184, 0.4);
+}
+
 .status-dot--offline {
   background-color: #EF4444;
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);

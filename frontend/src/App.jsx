@@ -12,10 +12,13 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import About from './pages/About';
 
+import { SystemHealthProvider } from './context/SystemHealthContext';
+
 function App() {
   return (
-    <AppLayout>
-      <Routes>
+    <SystemHealthProvider>
+      <AppLayout>
+        <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/home" element={<Home />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -28,7 +31,8 @@ function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/about" element={<About />} />
       </Routes>
-    </AppLayout>
+      </AppLayout>
+    </SystemHealthProvider>
   );
 }
 

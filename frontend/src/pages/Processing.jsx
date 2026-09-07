@@ -12,7 +12,7 @@ const PIPELINE_STAGES = [
   { id: 'barcode', label: 'Barcode & Identifier Decoding', detail: 'EAN-13/UPC decoding & database lookup' },
   { id: 'association', label: 'Field & Declaration Association', detail: 'Scoping values to statutory parameters' },
   { id: 'classification', label: 'Category & Evidence Validation', detail: 'Product type & declaration corroboration' },
-  { id: 'rules', label: 'Legal Metrology Rule Evaluation', detail: 'Deterministic validation against LMPC 2011' },
+  { id: 'rules', label: 'Legal Metrology Rule Evaluation', detail: 'Deterministic validation against LMPC Rules, 2011' },
   { id: 'report', label: 'Report & Traceability Preparation', detail: 'Compiling findings and database record' },
 ];
 
@@ -93,9 +93,9 @@ const Processing = () => {
         <div className="processing-header">
           <BrandLogo variant="mark" height={44} alt="LMAI Inspector" />
           <div className="processing-header__text">
-            <h2>Statutory Inspection Engine In Progress</h2>
+            <h2>Inspection Screening In Progress</h2>
             <p className="text-muted text-sm">
-              Analyzing {files?.length || 1} package panel{files?.length === 1 ? '' : 's'} against Legal Metrology Rules
+              Analyzing {files?.length || 1} package panel{files?.length === 1 ? '' : 's'} under the Legal Metrology (Packaged Commodities) Rules, 2011
             </p>
           </div>
         </div>
