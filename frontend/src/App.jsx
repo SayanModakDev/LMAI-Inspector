@@ -1,5 +1,6 @@
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import AppLayout from './components/AppLayout';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
@@ -32,6 +33,7 @@ function App() {
         <Route path="/about" element={<About />} />
       </Routes>
       </AppLayout>
+      <Analytics />
     </SystemHealthProvider>
   );
 }
