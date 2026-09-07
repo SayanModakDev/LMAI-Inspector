@@ -1,8 +1,12 @@
 {
     "rewrites": [
         {
-            "source": "/api/:match*",
-            "destination": "https://sih-backend-5slz.onrender.com/api/:match*"
+            "source": "/api/:path*",
+            "destination": "https://sih-backend-5slz.onrender.com/api/:path*"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
         }
     ]
 }
