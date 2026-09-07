@@ -1,0 +1,76 @@
+.metric-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-xs);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: var(--border-medium);
+}
+
+.metric-card--pass::before { background-color: var(--status-pass-solid); }
+.metric-card--fail::before { background-color: var(--status-fail-solid); }
+.metric-card--review::before { background-color: var(--status-review-solid); }
+.metric-card--primary::before { background-color: var(--primary-600); }
+
+.metric-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.metric-card__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.metric-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.metric-card--pass .metric-card__icon { color: var(--status-pass-solid); }
+.metric-card--fail .metric-card__icon { color: var(--status-fail-solid); }
+.metric-card--review .metric-card__icon { color: var(--status-review-solid); }
+.metric-card--primary .metric-card__icon { color: var(--primary-600); }
+
+.metric-card__value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.1;
+  margin-bottom: 0.25rem;
+}
+
+.metric-card--pass .metric-card__value { color: var(--status-pass-text); }
+.metric-card--fail .metric-card__value { color: var(--status-fail-text); }
+.metric-card--review .metric-card__value { color: var(--status-review-text); }
+.metric-card--primary .metric-card__value { color: var(--primary-700); }
+
+.metric-card__subtitle {
+  font-size: 0.725rem;
+  color: var(--text-muted);
+}

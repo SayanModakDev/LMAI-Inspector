@@ -1,0 +1,110 @@
+.conflict-card {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: var(--radius-lg);
+  padding: 1.15rem;
+  margin-bottom: 1rem;
+}
+
+.conflict-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.conflict-card__title-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.conflict-card__icon {
+  color: var(--status-review-solid);
+}
+
+.conflict-card__title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--status-review-text);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.conflict-card__description {
+  font-size: 0.8rem;
+  color: #78350F;
+  margin-bottom: 0.85rem;
+  line-height: 1.4;
+}
+
+.conflict-card__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.conflict-candidate {
+  background: #FFFFFF;
+  border: 1px solid #FCD34D;
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  position: relative;
+}
+
+.conflict-candidate__badge {
+  display: inline-block;
+  font-size: 0.675rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background-color: #FEF3C7;
+  color: #92400E;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-xs);
+  margin-bottom: 0.4rem;
+}
+
+.conflict-candidate__value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1E293B;
+  margin-bottom: 0.5rem;
+  word-break: break-word;
+}
+
+.conflict-candidate__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.725rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.45rem;
+}
+
+.conflict-candidate__row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.meta-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.meta-val {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.conflict-card__footer {
+  font-size: 0.75rem;
+  color: #92400E;
+  background-color: rgba(254, 243, 199, 0.6);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--status-review-solid);
+}

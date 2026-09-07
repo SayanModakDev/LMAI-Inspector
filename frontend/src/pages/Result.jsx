@@ -1,27 +1,63 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, XCircle, AlertTriangle, Download, RefreshCw, Save } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import {
+  FileText,
+  Download,
+  Scale,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  RotateCcw,
+  Save,
+  ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  Search,
+  Eye,
+  Layers,
+  Sparkles,
+  Printer,
+  ExternalLink,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { apiService } from '../services/api';
+import ProgressStepper from '../components/ProgressStepper';
+import StatusBadge from '../components/StatusBadge';
+import MetricCard from '../components/MetricCard';
+import ConflictCard from '../components/ConflictCard';
+import EvidenceViewer from '../components/EvidenceViewer';
+import ErrorState from '../components/ErrorState';
 import './Result.css';
 
 const Result = () => {
   const { inspection_id: id } = useParams();
-  const navigate = useNavigate();
+
   const [inspection, setInspection] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  // Manual Input State
-  const [isEditing, setIsEditing] = useState(false);
+
+  // Active Workstation Tab: 'matrix' | 'evidence' | 'physical' | 'report'
+  const [activeTab, setActiveTab] = useState('matrix');
+
+  // Rule Matrix Filter & Search
+  const [ruleFilter, setRuleFilter] = useState('ALL');
+  const [ruleSearch, setRuleSearch] = useState('');
+  const [expandedRuleIds, setExpandedRuleIds] = useState(new Set());
+
+  // Physical Verification & Manual Input State
   const [manualData, setManualData] = useState({
     actual_measured_weight: '',
-    actual_weight_unit: '',
-    field_overrides: {}
+    actual_weight_unit: 'g',
+    measurement_source: 'CERTIFIED_DIGITAL_SCALE',
+    inspector_notes: '',
+    field_overrides: {},
   });
   const [savingManual, setSavingManual] = useState(false);
-  
-  // Report State
+  const [manualSuccessMsg, setManualSuccessMsg] = useState(null);
+
+  // Report Generation State
   const [generatingReport, setGeneratingReport] = useState(false);
+  const [reportUrl, setReportUrl] = useState(null);
 
   useEffect(() => {
     fetchInspection();
@@ -32,39 +68,53 @@ const Result = () => {
       setLoading(true);
       const data = await apiService.getInspection(id);
       setInspection(data);
-      setManualData({
-        actual_measured_weight: '',
-        actual_weight_unit: '',
-        field_overrides: {}
-      });
+
+      // Pre-fill physical measurement data if previously entered
+      if (data.product?.actual_measured_weight) {
+        setManualData((prev) => ({
+          ...prev,
+          actual_measured_weight: data.product.actual_measured_weight,
+          actual_weight_unit: data.product.actual_weight_unit || 'g',
+          measurement_source: data.product.measurement_source || 'CERTIFIED_DIGITAL_SCALE',
+        }));
+      }
+
+      if (data.report?.file_name) {
+        setReportUrl(`/reports/${data.report.file_name}`);
+      }
+
       setError(null);
     } catch (err) {
-      setError("Failed to load inspection results.");
-      console.error(err);
+      console.error('Failed to load inspection data:', err);
+      setError('Unable to fetch inspection data for record #' + id);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleManualSave = async () => {
+  const handleManualSave = async (e) => {
+    e?.preventDefault();
     try {
       setSavingManual(true);
-      
+      setManualSuccessMsg(null);
+
       const payload = {
         inspection_id: parseInt(id),
-        actual_measured_weight: manualData.actual_measured_weight ? parseFloat(manualData.actual_measured_weight) : null,
+        actual_measured_weight: manualData.actual_measured_weight
+          ? parseFloat(manualData.actual_measured_weight)
+          : null,
         actual_weight_unit: manualData.actual_weight_unit || null,
+        measurement_source: manualData.measurement_source || null,
+        inspector_notes: manualData.inspector_notes || null,
         field_overrides: manualData.field_overrides,
       };
-      
+
       await apiService.submitManualInput(payload);
-      
-      setIsEditing(false);
+      setManualSuccessMsg('Measurements saved. Compliance rules re-evaluated successfully.');
       await fetchInspection();
-      
     } catch (err) {
-      alert("Failed to save manual input.");
-      console.error(err);
+      console.error('Manual input submission error:', err);
+      alert('Failed to save manual input: ' + (err.response?.data?.detail || err.message));
     } finally {
       setSavingManual(false);
     }
@@ -74,811 +124,660 @@ const Result = () => {
     try {
       setGeneratingReport(true);
       const res = await apiService.generateReport(id);
-      window.open(res.data.file_url, '_blank');
+      const url = res.data?.file_url || `/reports/${res.data?.file_name}`;
+      setReportUrl(url);
+      window.open(url, '_blank');
       await fetchInspection();
     } catch (err) {
-      alert("Failed to generate report.");
-      console.error(err);
+      console.error('Report generation error:', err);
+      alert('Report generation failed: ' + (err.response?.data?.detail || err.message));
     } finally {
       setGeneratingReport(false);
     }
   };
 
-  if (loading) return <div className="p-8 text-center">Loading inspection data...</div>;
-  if (error) return <div className="p-8 text-center text-danger">{error}</div>;
-  if (!inspection) return <div className="p-8 text-center">No data found.</div>;
+  const toggleRuleExpand = (ruleId) => {
+    setExpandedRuleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ruleId)) next.delete(ruleId);
+      else next.add(ruleId);
+      return next;
+    });
+  };
 
-  const uploadedImages = inspection.images || inspection.ocr_result?.ocr_data?.images || [{ image_path: inspection.image_path }];
-  const barcode = inspection.ocr_result?.ocr_data?.barcode_result;
-
-  // Normalized overall result status handling
-  const rawOverall = (inspection.overall_result || '').replace('_', '-');
-  let overallRatingClass = 'card-review';
-  let overallRatingBadge = null;
-  let overallBadgeColor = 'badge-warning';
-
-  if (rawOverall === 'COMPLIANT') {
-    overallRatingClass = 'card-compliant';
-    overallBadgeColor = 'badge-success';
-    overallRatingBadge = (
-      <div className="rating-badge rating-compliant">
-        <CheckCircle size={20} />
-        <span>1 — COMPLIANT</span>
-      </div>
-    );
-  } else if (rawOverall === 'NON-COMPLIANT') {
-    overallRatingClass = 'card-non-compliant';
-    overallBadgeColor = 'badge-danger';
-    overallRatingBadge = (
-      <div className="rating-badge rating-non-compliant">
-        <XCircle size={20} />
-        <span>0 — NON-COMPLIANT</span>
-      </div>
-    );
-  } else {
-    overallRatingClass = 'card-review';
-    overallBadgeColor = 'badge-warning';
-    overallRatingBadge = (
-      <div className="rating-badge rating-review">
-        <AlertTriangle size={20} />
-        <span>REVIEW — INSUFFICIENT EVIDENCE</span>
+  if (loading) {
+    return (
+      <div className="result-loading card p-8 text-center">
+        <div className="spinner-icon mx-auto mb-3" style={{ width: 32, height: 32 }} />
+        <h3 className="font-semibold">Loading Statutory Compliance Dossier...</h3>
+        <p className="text-muted text-xs">Retrieving OCR tokens, rule evaluations, and evidence records.</p>
       </div>
     );
   }
 
-  // Calculate rule summary metrics
-  const ruleResults = inspection.rule_results || [];
-  const passCount = ruleResults.filter(r => r.status === 'PASS').length;
-  const failCount = ruleResults.filter(r => r.status === 'FAIL').length;
-  const reviewCount = ruleResults.filter(r => r.status === 'NOT_VERIFIABLE' || r.status === 'MANUAL_CHECK').length;
-  const naCount = ruleResults.filter(r => r.status === 'NOT_APPLICABLE').length;
-
-  // Helper to resolve parameter readable names
-  const getParameterDisplayName = (param) => {
-    switch (param) {
-      case 'DECLARED_NET_QUANTITY':
-      case 'NET_QUANTITY':
-        return 'Declared Net Quantity';
-      case 'MRP':
-        return 'Maximum Retail Price (MRP)';
-      case 'MONTH_YEAR_MANUFACTURE':
-      case 'MANUFACTURE_DATE':
-        return 'Date of Manufacture';
-      case 'PACKING_DATE':
-        return 'Date of Packaging';
-      case 'BEST_BEFORE_USE_BY':
-        return 'Best Before / Use By';
-      case 'USE_BEFORE_DATE':
-        return 'Use Before Date';
-      case 'EXPIRY_DATE':
-        return 'Date of Expiry';
-      case 'MANUFACTURER_NAME':
-        return 'Manufacturer Name';
-      case 'MANUFACTURER_ADDRESS':
-        return 'Manufacturer Address';
-      case 'COUNTRY_OF_ORIGIN':
-        return 'Country of Origin';
-      case 'CONSUMER_CARE':
-        return 'Consumer Care Details';
-      case 'INGREDIENTS_LIST':
-        return 'Ingredients List';
-      case 'VEG_NONVEG_SYMBOL':
-        return 'Veg / Non-Veg Symbol';
-      case 'FSSAI_LICENSE':
-        return 'FSSAI License Number';
-      case 'BATCH_NUMBER':
-        return 'Batch / Lot Number';
-      case 'GENERIC_NAME':
-        return 'Generic Name';
-      default:
-        return (param || '').replaceAll('_', ' ');
-    }
-  };
-
-  // Helper for binary rating of each rule
-  const getRuleBinary = (rule) => {
-    if (rule.status === 'PASS') {
-      return { label: '1', badgeClass: 'binary-badge-1', title: '1 — COMPLIANT' };
-    }
-    if (rule.status === 'FAIL') {
-      return { label: '0', badgeClass: 'binary-badge-0', title: '0 — NON-COMPLIANT' };
-    }
-    if (rule.status === 'NOT_VERIFIABLE' || rule.status === 'MANUAL_CHECK') {
-      return { label: 'REVIEW', badgeClass: 'binary-badge-review', title: 'REVIEW — Insufficient Evidence' };
-    }
-    return { label: 'N/A', badgeClass: 'binary-badge-na', title: 'N/A — Not Applicable' };
-  };
-
-  // Helper for status badge
-  const getRuleStatusBadge = (status) => {
-    switch (status) {
-      case 'PASS':
-        return <span className="badge badge-success"><CheckCircle size={12} className="mr-1" /> PASS</span>;
-      case 'FAIL':
-        return <span className="badge badge-danger"><XCircle size={12} className="mr-1" /> FAIL</span>;
-      case 'NOT_VERIFIABLE':
-      case 'MANUAL_CHECK':
-        return <span className="badge badge-warning"><AlertTriangle size={12} className="mr-1" /> NOT VERIFIABLE</span>;
-      case 'NOT_APPLICABLE':
-        return <span className="badge badge-gray">NOT APPLICABLE</span>;
-      default:
-        return <span className="badge badge-gray">{status}</span>;
-    }
-  };
-
-  // Helper to extract and decompose Declared Net Quantity details
-  const netQtyRule = ruleResults.find(r => 
-    r.parameter === 'DECLARED_NET_QUANTITY' || r.parameter === 'NET_QUANTITY'
-  );
-  const netQtyField = inspection.extracted_fields?.find(f => 
-    f.field_name === 'DECLARED_NET_QUANTITY' || f.field_name === 'NET_QUANTITY'
-  );
-
-  const getNetQtyDecomposition = (rule, field) => {
-    let val = rule?.value ?? rule?.quantity_value ?? rule?.evidence_data?.quantity_value ?? rule?.evidence_data?.value ?? inspection.product?.declared_net_quantity_value ?? null;
-    let unit = rule?.unit ?? rule?.quantity_unit ?? rule?.evidence_data?.quantity_unit ?? rule?.evidence_data?.unit ?? inspection.product?.declared_net_quantity_unit ?? null;
-    let rawVal = rule?.raw_value ?? rule?.evidence_data?.raw_value ?? field?.field_value ?? null;
-
-    let qtyPresent = rule?.quantity_present ?? rule?.evidence_data?.quantity_present;
-    let unitPresent = rule?.unit_present ?? rule?.evidence_data?.unit_present;
-    let pairValid = rule?.quantity_unit_valid ?? rule?.evidence_data?.quantity_unit_valid;
-
-    if ((val === null || val === undefined || unit === null) && rawVal) {
-      const match = String(rawVal).match(/([0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z]+)?/);
-      if (match) {
-        if (val === null || val === undefined) val = match[1];
-        if (!unit && match[2]) unit = match[2];
-      }
-    }
-
-    if (qtyPresent === undefined) {
-      qtyPresent = val !== null && val !== undefined && String(val).trim() !== '' && parseFloat(val) > 0;
-    }
-    if (unitPresent === undefined) {
-      unitPresent = Boolean(unit && String(unit).trim() !== '');
-    }
-    if (pairValid === undefined) {
-      pairValid = Boolean(qtyPresent && unitPresent && rule?.status === 'PASS');
-    }
-
-    const qtyValid = Boolean(qtyPresent && parseFloat(val) > 0);
-    const unitValid = Boolean(unitPresent);
-    const combinedValid = Boolean(pairValid && qtyValid && unitValid && rule?.status === 'PASS');
-
-    let displayValUnit = 'Not Detected';
-    if (val && unit) {
-      displayValUnit = `${val} ${unit}`;
-    } else if (rawVal) {
-      displayValUnit = rawVal;
-    }
-
-    let binaryText = 'REVIEW';
-    let binaryClass = 'qty-binary-review';
-    if (rule?.status === 'PASS') {
-      binaryText = '1 — PASS';
-      binaryClass = 'qty-binary-pass';
-    } else if (rule?.status === 'FAIL') {
-      binaryText = '0 — FAIL';
-      binaryClass = 'qty-binary-fail';
-    } else if (rule?.status === 'NOT_APPLICABLE') {
-      binaryText = 'N/A';
-      binaryClass = 'qty-binary-na';
-    }
-
-    let quantityType = rule?.quantity_type ?? rule?.evidence_data?.quantity_type ?? field?.quantity_type ?? field?.field_data?.quantity_type ?? null;
-    if (!quantityType && unit) {
-      const u = String(unit).toLowerCase();
-      if (['g', 'gm', 'gms', 'kg', 'mg'].includes(u)) quantityType = 'MASS';
-      else if (['ml', 'l', 'ltr', 'cl'].includes(u)) quantityType = 'VOLUME';
-      else if (['pieces', 'piece', 'pcs', 'tablets', 'capsules', 'units', 'numbers'].includes(u)) quantityType = 'COUNT';
-    }
-
-    return {
-      val: val || '—',
-      unit: unit || '—',
-      quantityType: quantityType || '—',
-      rawVal,
-      displayValUnit,
-      qtyPresent,
-      unitPresent,
-      qtyValid,
-      unitValid,
-      pairValid: combinedValid,
-      binaryText,
-      binaryClass,
-      reason: rule?.reason || rule?.message || 'Declared net quantity validation'
-    };
-  };
-
-  const netQtyDecomposition = getNetQtyDecomposition(netQtyRule, netQtyField);
-
-  // Helper to format reason with strict prefix rules
-  const renderRuleReason = (rule) => {
-    const reasonText = rule.reason || rule.message || 'Validation evaluation complete.';
-    if (rule.status === 'FAIL') {
-      return (
-        <div className="reason-block reason-fail">
-          <span className="reason-header">0 — FAIL</span>
-          <span className="reason-body">Reason: {reasonText}</span>
-        </div>
-      );
-    }
-    if (rule.status === 'NOT_VERIFIABLE' || rule.status === 'MANUAL_CHECK') {
-      return (
-        <div className="reason-block reason-review">
-          <span className="reason-header">REVIEW</span>
-          <span className="reason-body">Reason: {reasonText}</span>
-        </div>
-      );
-    }
-    if (rule.status === 'PASS') {
-      return (
-        <div className="reason-block reason-pass">
-          <span className="reason-header">1 — PASS</span>
-          <span className="reason-body">{reasonText}</span>
-        </div>
-      );
-    }
+  if (error || !inspection) {
     return (
-      <div className="reason-block reason-na">
-        <span className="reason-header">N/A</span>
-        <span className="reason-body">{reasonText}</span>
+      <div className="result-error">
+        <ErrorState
+          title="Inspection Record Not Found"
+          message={error || 'Could not find inspection record #' + id}
+          onRetry={fetchInspection}
+        />
       </div>
     );
-  };
+  }
+
+  const ruleResults = inspection.rule_results || [];
+  const passCount = ruleResults.filter((r) => r.status === 'PASS').length;
+  const failCount = ruleResults.filter((r) => r.status === 'FAIL').length;
+  const reviewCount = ruleResults.filter((r) => r.status === 'NOT_VERIFIABLE' || r.status === 'MANUAL_CHECK').length;
+  const naCount = ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
+
+  const rawOverall = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_');
+  const isReviewRequired = rawOverall === 'NOT_VERIFIABLE' || rawOverall === 'NEEDS_REVIEW' || reviewCount > 0;
+
+  // Filtered Rules
+  const filteredRules = ruleResults.filter((r) => {
+    if (ruleFilter === 'FAIL' && r.status !== 'FAIL') return false;
+    if (ruleFilter === 'PASS' && r.status !== 'PASS') return false;
+    if (ruleFilter === 'REVIEW' && (r.status !== 'NOT_VERIFIABLE' && r.status !== 'MANUAL_CHECK')) return false;
+    if (ruleFilter === 'NA' && r.status !== 'NOT_APPLICABLE') return false;
+
+    if (ruleSearch.trim()) {
+      const q = ruleSearch.toLowerCase();
+      const matchId = (r.rule_id || '').toLowerCase().includes(q);
+      const matchParam = (r.parameter || '').toLowerCase().includes(q);
+      const matchReason = (r.reason || r.message || '').toLowerCase().includes(q);
+      if (!matchId && !matchParam && !matchReason) return false;
+    }
+    return true;
+  });
+
+  // Extract conflicting fields if any
+  const conflictFields = (inspection.extracted_fields || []).filter(
+    (f) => String(f.field_value).startsWith('CONFLICT:') || f.candidate_classification === 'TRUE_CONFLICT'
+  );
 
   return (
-    <div className="result-container">
-      {/* Top Header */}
-      <div className="result-header">
-        <div className="title-section">
-          <h1>Inspection Result #{inspection.id}</h1>
-          <span className={`badge result-badge ${overallBadgeColor}`}>
-            {rawOverall === 'COMPLIANT' ? '1 — COMPLIANT' : rawOverall === 'NON-COMPLIANT' ? '0 — NON-COMPLIANT' : 'REVIEW — INSUFFICIENT EVIDENCE'}
-          </span>
+    <div className="result-page">
+      {/* 5-Step Workflow Stepper on Step 4 */}
+      <ProgressStepper currentStep={reportUrl ? 5 : 4} />
+
+      {/* Prominent Inspection Result Banner */}
+      <div className={`inspection-result-banner inspection-result-banner--${rawOverall.toLowerCase()}`}>
+        <div className="result-banner__primary">
+          <div className="result-banner__status-badge-wrapper">
+            <StatusBadge status={rawOverall} size="lg" showBinary={true} />
+          </div>
+
+          <div className="result-banner__meta-block">
+            <div className="result-banner__id-row">
+              <span className="result-dossier-id font-mono">Dossier #{inspection.id}</span>
+              <span className="result-category-pill font-semibold">{inspection.category || 'COMMODITY'}</span>
+              <span className="result-package-pill">{inspection.package_type || 'RETAIL'}</span>
+              <span className="result-package-pill">{inspection.import_status || 'DOMESTIC'}</span>
+            </div>
+            <div className="result-banner__timestamp text-xs">
+              Screened: {new Date(inspection.created_at).toLocaleString()} • Priority: {inspection.priority || 'NORMAL'}
+            </div>
+          </div>
         </div>
-        <div className="action-buttons">
-          {inspection.report ? (
-            <a href={`/api/report/${inspection.id}/download`} target="_blank" rel="noreferrer" className="btn btn-outline">
-              <Download size={16} /> Download PDF
-            </a>
-          ) : (
-            <button className="btn btn-outline" onClick={handleGenerateReport} disabled={generatingReport}>
-              <FileText size={16} /> {generatingReport ? 'Generating...' : 'Generate Report'}
-            </button>
-          )}
-          <button className="btn btn-primary" onClick={() => navigate('/scan')}>
-            New Scan
+
+        <div className="result-banner__actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleGenerateReport}
+            disabled={generatingReport}
+          >
+            <Printer size={15} /> {generatingReport ? 'Compiling PDF...' : (reportUrl ? 'View Official PDF' : 'Generate PDF Report')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={() => setActiveTab('physical')}
+          >
+            <Scale size={15} /> Physical Verification
           </button>
         </div>
       </div>
 
-      {/* COMPLIANCE RATING Inspection Summary Card */}
-      <div className={`compliance-summary-card ${overallRatingClass}`}>
-        <div className="compliance-summary-header">
-          <div className="compliance-summary-title-row">
-            <span className="summary-label">COMPLIANCE RATING</span>
-            <span className="summary-subtitle">1 / 0 / REVIEW</span>
-          </div>
-          <div className="compliance-rating-display">
-            {overallRatingBadge}
-          </div>
-        </div>
-
-        <div className="compliance-disclaimer">
-          <AlertTriangle size={15} className="inline mr-1" />
-          <span>Inspection-support result based on available image evidence. Final legal verification remains with the authorized inspector.</span>
-        </div>
-
-        <div className="compliance-metrics-row">
-          <div className="metric-pill metric-pass">
-            <span className="metric-binary">1</span>
-            <span className="metric-label">Pass</span>
-            <span className="metric-count">{passCount} rules</span>
-          </div>
-          <div className="metric-pill metric-fail">
-            <span className="metric-binary">0</span>
-            <span className="metric-label">Fail</span>
-            <span className="metric-count">{failCount} rules</span>
-          </div>
-          <div className="metric-pill metric-review">
-            <span className="metric-binary">REVIEW</span>
-            <span className="metric-label">Needs Evidence</span>
-            <span className="metric-count">{reviewCount} rules</span>
-          </div>
-          <div className="metric-pill metric-na">
-            <span className="metric-binary">N/A</span>
-            <span className="metric-label">Not Applicable</span>
-            <span className="metric-count">{naCount} rules</span>
-          </div>
-        </div>
+      {/* Summary Operational Metric Row */}
+      <div className="result-metrics-grid">
+        <MetricCard
+          label="Rules Evaluated"
+          value={ruleResults.length}
+          status="neutral"
+          subtitle="Statutory LMPC parameters"
+        />
+        <MetricCard
+          label="Compliant (Pass)"
+          value={passCount}
+          status="pass"
+          subtitle="Mandatory criteria satisfied"
+        />
+        <MetricCard
+          label="Non-Compliant (Fail)"
+          value={failCount}
+          status="fail"
+          subtitle="Violations detected"
+        />
+        <MetricCard
+          label="Requires Review"
+          value={reviewCount}
+          status="review"
+          subtitle="Physical check / evidence needed"
+        />
       </div>
 
-      {/* Declared Net Quantity Dedicated Decomposition Hero Card */}
-      <div className="declared-qty-hero-card">
-        <div className="card-header flex-between">
-          <div className="flex items-center gap-2">
-            <strong>DECLARED NET QUANTITY</strong>
-            <span className="text-xs text-muted">(Legal Metrology Packaged Commodities Rules)</span>
+      {/* Review Required Guidance Banner */}
+      {isReviewRequired && (
+        <div className="review-required-callout card">
+          <div className="callout-icon-box">
+            <AlertTriangle size={22} className="text-warning" />
           </div>
-          <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>
-            PARAMETER DECOMPOSITION
-          </span>
-        </div>
-        <div className="declared-qty-hero-grid">
-          <div className="declared-qty-val-box">
-            <span className="qty-headline-label">Declared Net Quantity</span>
-            <div className="qty-headline-value">{netQtyDecomposition.displayValUnit}</div>
-            <div className="text-xs text-muted">Value: {netQtyDecomposition.val} | Unit: {netQtyDecomposition.unit} | Type: {netQtyDecomposition.quantityType}</div>
-          </div>
-          <div className="declared-qty-checks">
-            <div className="qty-check-item">
-              <span className="qty-check-label">Quantity validation:</span>
-              <span className={`qty-check-val ${netQtyDecomposition.qtyValid ? 'valid' : (netQtyDecomposition.qtyPresent ? 'invalid' : 'missing')}`}>
-                {netQtyDecomposition.qtyValid ? 'VALID' : (netQtyDecomposition.qtyPresent ? 'INVALID' : 'MISSING')}
-              </span>
-            </div>
-            <div className="qty-check-item">
-              <span className="qty-check-label">Unit validation:</span>
-              <span className={`qty-check-val ${netQtyDecomposition.unitValid ? 'valid' : 'missing'}`}>
-                {netQtyDecomposition.unitValid ? 'VALID' : 'MISSING'}
-              </span>
-            </div>
-            <div className="qty-check-item">
-              <span className="qty-check-label">Quantity + unit validation:</span>
-              <span className={`qty-check-val ${netQtyDecomposition.pairValid ? 'valid' : 'invalid'}`}>
-                {netQtyDecomposition.pairValid ? 'VALID' : 'INVALID'}
-              </span>
-            </div>
-          </div>
-          <div className="declared-qty-binary-box">
-            <span className="qty-headline-label">Binary Result</span>
-            <div className={`qty-binary-badge ${netQtyDecomposition.binaryClass}`}>
-              {netQtyDecomposition.binaryText}
-            </div>
-            <div className="text-xs text-muted mt-1">{netQtyDecomposition.reason}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="result-grid">
-        {/* Left Column: Image and Details */}
-        <div className="result-left">
-          <div className="card mb-4">
-            <div className="card-header">Uploaded Product Images</div>
-            <div className="card-body p-0">
-              {uploadedImages.map((image, index) => (
-                <img
-                  key={image.image_path || index}
-                  src={image.image_path?.startsWith('/uploads/') ? image.image_path : `/uploads/${image.image_path}`}
-                  alt={`Product label ${index + 1}`}
-                  className="result-image"
-                  onError={(e) => { e.target.style.display = 'none'; }}
-                />
-              ))}
-            </div>
-          </div>
-          
-          <div className="card mb-4">
-            <div className="card-header">Inspection Details</div>
-            <div className="card-body">
-              <table className="detail-table">
-                <tbody>
-                  <tr><th>Date:</th><td>{new Date(inspection.created_at).toLocaleString()}</td></tr>
-                  <tr><th>Category:</th><td>{inspection.category}</td></tr>
-                  <tr><th>Product Type:</th><td>{inspection.product_type || 'UNKNOWN'}</td></tr>
-                  <tr><th>Brand:</th><td>{inspection.brand || inspection.product?.brand || 'Not detected'}</td></tr>
-                  <tr><th>Product Name:</th><td>{inspection.product_name || inspection.product?.product_name || 'Not detected'}</td></tr>
-                  <tr>
-                    <th>Package Type:</th>
-                    <td>
-                      {inspection.package_type || 'RETAIL'}
-                      <span className="text-xs text-muted ml-1" style={{ fontSize: '0.75rem' }}>
-                        {inspection.package_type === 'RETAIL' ? '(Inspector Default)' : '(Inspector Selected)'}
-                      </span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>Import Status:</th>
-                    <td>
-                      {inspection.import_status || 'DOMESTIC'}
-                      <span className="text-xs text-muted ml-1" style={{ fontSize: '0.75rem' }}>
-                        {inspection.import_status === 'DOMESTIC' ? '(Inspector Default)' : '(Inspector Selected)'}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="card mb-4">
-            <div className="card-header">Inspection Findings</div>
-            <div className="card-body">
-              {inspection.findings?.verified?.map((item, index) => <p key={`verified-${index}`} className="text-success">✓ {item}</p>)}
-              {inspection.findings?.needs_review?.map((item, index) => <p key={`review-${index}`} className="text-warning">⚠ {item}</p>)}
-              {inspection.findings?.failed?.map((item, index) => <p key={`failed-${index}`} className="text-danger">✕ {item}</p>)}
-              {(!inspection.findings || (inspection.findings.verified?.length === 0 && inspection.findings.needs_review?.length === 0 && inspection.findings.failed?.length === 0)) && (
-                <p className="text-muted text-sm">Findings compiled from rule evaluation.</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Product ID and Extracted Declarations */}
-        <div className="result-right">
-          {barcode && (
-            <div className="card mb-4">
-              <div className="card-header flex-between">
-                <span>Barcode Lookup</span>
-                <span className="badge badge-gray" style={{ fontSize: '0.7rem' }}>SUPPLEMENTARY EVIDENCE</span>
-              </div>
-              <div className="card-body">
-                <table className="detail-table">
-                  <tbody>
-                    <tr><th>Code:</th><td>{barcode.value || 'Not detected'}</td></tr>
-                    <tr><th>Detection:</th><td>{barcode.source === 'OCR_BARCODE_TEXT' ? 'OCR fallback' : barcode.type || 'Unknown'}</td></tr>
-                    <tr><th>Product lookup:</th><td>{barcode.lookup?.status || 'Not performed'}</td></tr>
-                    {barcode.lookup?.product_name && (
-                      <tr>
-                        <th>Product name:</th>
-                        <td>
-                          {barcode.lookup.product_name}
-                          {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'CONFLICTS' && (
-                            <span className="badge badge-danger ml-2" title="Conflicts with printed OCR label">CONFLICT WITH OCR</span>
-                          )}
-                          {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'AGREES' && (
-                            <span className="badge badge-success ml-2" title="Corroborates printed OCR label">AGREES WITH OCR</span>
-                          )}
-                        </td>
-                      </tr>
-                    )}
-                    {barcode.lookup?.brands && <tr><th>Brand:</th><td>{barcode.lookup.brands}</td></tr>}
-                    {inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME')?.barcode_match === 'CONFLICTS' && (
-                      <tr>
-                        <td colSpan="2" className="text-danger text-xs p-2" style={{ backgroundColor: '#fef2f2', borderRadius: '4px' }}>
-                          <AlertTriangle size={14} className="inline mr-1" />
-                          Notice: Barcode database name contradicts printed OCR. Database lookups cannot override legal label evidence.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          <div className="card mb-4">
-            <div className="card-header">Product Identification</div>
-            <div className="card-body">
-              <table className="detail-table">
-                <tbody>
-                  <tr><th>Brand:</th><td>{inspection.brand || inspection.product?.brand || 'Not detected'}</td></tr>
-                  <tr><th>Product:</th><td>{inspection.product_name || inspection.product?.product_name || 'Not detected'}</td></tr>
-                  <tr><th>Generic name:</th><td>{inspection.product?.generic_name || inspection.extracted_fields?.find(f => f.field_name === 'GENERIC_NAME')?.field_value || 'Not detected'}</td></tr>
-                  <tr><th>Barcode:</th><td>{barcode?.value || inspection.extracted_fields?.find(f => f.field_name === 'BARCODE')?.field_value || 'Not detected'}</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Extracted Declarations Card (OCR) */}
-          <div className="card mb-4">
-            <div className="card-header flex-between">
-              <span>Extracted Declarations (OCR)</span>
-              <button 
-                className="btn btn-sm btn-outline" 
-                onClick={() => setIsEditing(!isEditing)}
+          <div className="callout-content">
+            <h4 className="callout-title">Manual Inspector Verification Required</h4>
+            <p className="callout-desc">
+              Visual screening identified {reviewCount} requirement{reviewCount === 1 ? '' : 's'} that cannot be certified from 2D label photography alone. Certified scale weights, font height gauge measurements, or conflicting evidence require authorized field officer review.
+            </p>
+            <div className="callout-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => setActiveTab('physical')}
               >
-                {isEditing ? 'Cancel Edit' : 'Manual Override'}
+                Enter Scale Measurement
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => setActiveTab('evidence')}
+              >
+                Inspect Visual Evidence
               </button>
             </div>
-            
-            <div className="card-body">
-              {isEditing && (
-                <div className="manual-edit-banner">
-                  <AlertTriangle size={16} />
-                  <span>Manual overrides will trigger a re-evaluation of compliance rules.</span>
-                </div>
-              )}
-              
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Parameter</th>
-                      <th>Extracted Value</th>
-                      {isEditing && <th>Manual Override</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Product Name */}
-                    <tr>
-                      <td><strong>Product Name</strong></td>
-                      <td>
-                        {(() => {
-                          const f = inspection.extracted_fields?.find(f => f.field_name === 'PRODUCT_NAME');
-                          if (!f || !f.field_value) return 'Not Found';
-                          if (f.field_value.startsWith('CONFLICT:')) {
-                            return <><span className="badge badge-danger mr-1" style={{ fontSize: '0.7rem' }}>CONFLICT</span><span className="text-danger">{f.field_value}</span></>;
-                          }
-                          return f.field_value;
-                        })()}
-                      </td>
-                      {isEditing && <td><input className="form-control" value={manualData.field_overrides.PRODUCT_NAME ?? ''} onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, PRODUCT_NAME: e.target.value}})} placeholder="Correct product name" /></td>}
-                    </tr>
+          </div>
+        </div>
+      )}
 
-                    {/* MRP */}
-                    <tr>
-                      <td><strong>MRP</strong></td>
-                      <td>
-                        {(() => {
-                          const f = inspection.extracted_fields?.find(f => f.field_name === 'MRP');
-                          if (!f || !f.field_value) return 'Not Found';
-                          if (f.field_value.startsWith('CONFLICT:')) {
-                            return <><span className="badge badge-danger mr-1" style={{ fontSize: '0.7rem' }}>CONFLICT</span><span className="text-danger">{f.field_value}</span></>;
-                          }
-                          return f.field_value;
-                        })()}
-                      </td>
-                      {isEditing && (
-                        <td>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            value={manualData.field_overrides.MRP ?? ''}
-                            onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, MRP: e.target.value}})}
-                            placeholder="Correct MRP"
-                          />
-                        </td>
-                      )}
-                    </tr>
-                    
-                    {/* Declared Net Quantity */}
-                    <tr>
-                      <td>
-                        <strong>Declared Net Quantity</strong>
-                        <div className="text-xs text-muted" style={{ fontSize: '0.75rem', color: '#6b7280' }}>Printed label declaration (OCR)</div>
-                      </td>
-                      <td>
-                        <div>{netQtyDecomposition.displayValUnit}</div>
-                      </td>
-                      {isEditing && (
-                        <td>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            value={manualData.field_overrides.DECLARED_NET_QUANTITY ?? ''}
-                            onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, DECLARED_NET_QUANTITY: e.target.value}})}
-                            placeholder="Correct declared net quantity"
-                          />
-                        </td>
-                      )}
-                    </tr>
-                    
-                    {/* Mfg/Pkg Date */}
-                    <tr>
-                      <td><strong>Mfg/Pkg Date</strong></td>
-                      <td>{inspection.extracted_fields?.find(f => f.field_name === 'MONTH_YEAR_MANUFACTURE' || f.field_name === 'MANUFACTURE_DATE' || f.field_name === 'PACKING_DATE')?.field_value || 'Not Found'}</td>
-                      {isEditing && (
-                        <td>
-                          <input 
-                            type="text" 
-                            className="form-control" 
-                            value={manualData.field_overrides.MONTH_YEAR_MANUFACTURE ?? manualData.field_overrides.MANUFACTURE_DATE ?? manualData.field_overrides.PACKING_DATE ?? ''}
-                            onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, MONTH_YEAR_MANUFACTURE: e.target.value}})}
-                            placeholder="Correct printed date"
-                          />
-                        </td>
-                      )}
-                    </tr>
-                    <tr>
-                      <td><strong>Generic Name</strong></td>
-                      <td>{inspection.extracted_fields?.find(f => f.field_name === 'GENERIC_NAME')?.field_value || 'Not Found'}</td>
-                      {isEditing && <td><input className="form-control" value={manualData.field_overrides.GENERIC_NAME ?? ''} onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, GENERIC_NAME: e.target.value}})} placeholder="Correct generic name" /></td>}
-                    </tr>
-                  </tbody>
-                </table>
+      {/* Multi-Panel Conflict Visualizer */}
+      {conflictFields.length > 0 && (
+        <div className="conflicts-section">
+          {conflictFields.map((f, i) => (
+            <ConflictCard
+              key={i}
+              parameter={f.field_name}
+              candidates={[
+                { value: f.field_value?.replace(/^CONFLICT:\s*/, ''), source: f.source || 'Panel 1' },
+                { value: 'Contradictory Label Declaration', source: 'Panel 2' },
+              ]}
+              notes="Cross-panel reconciliation found divergent strings. Do not accept automatically."
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Workstation Tab Navigation */}
+      <div className="workstation-tab-bar" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'matrix'}
+          className={`workstation-tab ${activeTab === 'matrix' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('matrix')}
+        >
+          <Layers size={15} />
+          <span>Compliance Matrix</span>
+          <span className="tab-badge">{ruleResults.length}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'evidence'}
+          className={`workstation-tab ${activeTab === 'evidence' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('evidence')}
+        >
+          <Eye size={15} />
+          <span>Image & Evidence Split View</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'physical'}
+          className={`workstation-tab ${activeTab === 'physical' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('physical')}
+        >
+          <Scale size={15} />
+          <span>Physical Verification & Scale</span>
+          {reviewCount > 0 && <span className="tab-badge tab-badge--review">{reviewCount}</span>}
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'report'}
+          className={`workstation-tab ${activeTab === 'report' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('report')}
+        >
+          <FileText size={15} />
+          <span>Statutory Report & Sign-Off</span>
+        </button>
+      </div>
+
+      {/* =========================================================================
+          TAB 1: COMPLIANCE MATRIX TABLE
+          ========================================================================= */}
+      {activeTab === 'matrix' && (
+        <div className="card compliance-matrix-card">
+          <div className="card-header flex-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm">Deterministic Rule Screening</span>
+              <span className="badge badge-gray">{filteredRules.length} displayed</span>
+            </div>
+
+            {/* Filter controls */}
+            <div className="matrix-toolbar">
+              <div className="matrix-search">
+                <Search size={13} className="matrix-search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search rules or parameters..."
+                  value={ruleSearch}
+                  onChange={(e) => setRuleSearch(e.target.value)}
+                  className="matrix-search-input"
+                />
               </div>
-              <div className="mt-3">
-                {inspection.extracted_fields?.filter((field) => !['PRODUCT_NAME', 'MRP', 'DECLARED_NET_QUANTITY', 'NET_QUANTITY', 'MONTH_YEAR_MANUFACTURE', 'GENERIC_NAME'].includes(field.field_name)).map((field) => (
-                  <div key={field.id || field.field_name} className="text-sm mb-2"><strong>{field.field_name.replaceAll('_', ' ')}:</strong> {field.field_value || 'Not detected'}
-                    {isEditing && <input className="form-control mt-1" value={manualData.field_overrides[field.field_name] ?? ''} onChange={(e) => setManualData({...manualData, field_overrides: {...manualData.field_overrides, [field.field_name]: e.target.value}})} placeholder={`Correct ${field.field_name.replaceAll('_', ' ').toLowerCase()}`} />}
-                  </div>
+
+              <div className="matrix-filter-buttons">
+                {['ALL', 'FAIL', 'REVIEW', 'PASS', 'NA'].map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`filter-btn ${ruleFilter === f ? 'filter-btn--active' : ''}`}
+                    onClick={() => setRuleFilter(f)}
+                  >
+                    {f === 'ALL' ? 'All' : f === 'FAIL' ? `Fail (${failCount})` : f === 'REVIEW' ? `Review (${reviewCount})` : f === 'PASS' ? `Pass (${passCount})` : 'N/A'}
+                  </button>
                 ))}
               </div>
-              
-              {isEditing && (
-                <div className="mt-3 text-right">
-                  <button 
-                    className="btn btn-primary" 
-                    onClick={handleManualSave} 
-                    disabled={savingManual}
-                  >
-                    {savingManual ? <RefreshCw className="spinner-icon" size={16} /> : <Save size={16} />} 
-                    Save & Re-evaluate
-                  </button>
-                </div>
-              )}
+            </div>
+          </div>
+
+          <div className="card-body p-0">
+            <div className="table-wrapper">
+              <table className="compliance-matrix-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '40px' }} />
+                    <th>Rule ID</th>
+                    <th>Requirement Parameter</th>
+                    <th>Extracted Declaration</th>
+                    <th>Validation Method</th>
+                    <th>Screening Result</th>
+                    <th>Evidence Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRules.map((rule, idx) => {
+                    const isExpanded = expandedRuleIds.has(rule.rule_id);
+                    const extractedVal =
+                      rule.evidence_data?.value ||
+                      rule.normalized_value ||
+                      rule.raw_value ||
+                      inspection.extracted_fields?.find((f) => f.field_name === rule.parameter)?.field_value ||
+                      '—';
+
+                    return (
+                      <React.Fragment key={idx}>
+                        <tr
+                          className={`matrix-row ${isExpanded ? 'matrix-row--expanded' : ''} matrix-row--${rule.status.toLowerCase()}`}
+                          onClick={() => toggleRuleExpand(rule.rule_id)}
+                        >
+                          <td className="expand-cell text-center">
+                            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          </td>
+                          <td className="font-mono text-xs font-semibold rule-id-cell">
+                            {rule.rule_id}
+                          </td>
+                          <td>
+                            <div className="font-semibold text-main">
+                              {rule.parameter?.replace(/_/g, ' ')}
+                            </div>
+                            <div className="text-xs text-muted">{rule.regulatory_source || 'LMPC Rules 2011'}</div>
+                          </td>
+                          <td className="font-mono text-xs text-secondary">
+                            {String(extractedVal).startsWith('CONFLICT:') ? (
+                              <span className="text-danger font-semibold">{extractedVal}</span>
+                            ) : (
+                              extractedVal
+                            )}
+                          </td>
+                          <td className="text-xs text-muted">
+                            <span className="validation-method-pill font-mono">
+                              {rule.validation_method || rule.evidence_data?.validation_method || 'PRESENCE_CHECK'}
+                            </span>
+                          </td>
+                          <td>
+                            <StatusBadge status={rule.status} size="sm" showBinary={true} />
+                          </td>
+                          <td className="text-xs text-muted">
+                            {rule.evidence_data?.source || rule.evidence_type || 'OCR'}
+                          </td>
+                        </tr>
+
+                        {/* Expanded Drawer */}
+                        {isExpanded && (
+                          <tr className="matrix-expanded-row">
+                            <td colSpan="7">
+                              <div className="rule-expanded-dossier">
+                                <div className="expanded-grid">
+                                  <div>
+                                    <span className="dossier-label">Statutory Legal Reference:</span>
+                                    <div className="dossier-val font-semibold">
+                                      {rule.rule_reference || 'Rule 6, Legal Metrology (Packaged Commodities) Rules, 2011'}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <span className="dossier-label">Validation Finding Reason:</span>
+                                    <div className="dossier-val text-secondary">
+                                      {rule.reason || rule.message || 'Evaluated against statutory requirement matrix.'}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <span className="dossier-label">Inspector Action Guidance:</span>
+                                    <div className="dossier-val text-muted text-xs">
+                                      {rule.status === 'FAIL'
+                                        ? 'Record non-compliance notice under Section 36 of Legal Metrology Act, 2009.'
+                                        : rule.status === 'NOT_VERIFIABLE'
+                                        ? 'Requires physical gauge measurement or scale verification before clearance.'
+                                        : 'Declaration satisfies mandatory statutory requirements.'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {filteredRules.length === 0 && (
+                    <tr>
+                      <td colSpan="7" className="p-4 text-center text-muted">
+                        No rules match the selected filter.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Main Rule Matrix Table */}
-      <div className="card mb-4">
-        <div className="card-header flex-between">
-          <div>
-            <strong>Main Rule Matrix & Deterministic Validation</strong>
-            <span className="text-xs text-muted ml-2">Legal Metrology Compliance Evaluation</span>
+      {/* =========================================================================
+          TAB 2: IMAGE & EVIDENCE SPLIT WORKSTATION
+          ========================================================================= */}
+      {activeTab === 'evidence' && (
+        <EvidenceViewer
+          images={inspection.images || []}
+          extractedFields={inspection.extracted_fields || []}
+          barcodeResult={inspection.ocr_result?.ocr_data?.barcode_result}
+          findings={inspection.findings}
+        />
+      )}
+
+      {/* =========================================================================
+          TAB 3: PHYSICAL VERIFICATION & SCALE MEASUREMENT
+          ========================================================================= */}
+      {activeTab === 'physical' && (
+        <div className="card physical-verification-card">
+          <div className="card-header">
+            <div className="flex items-center gap-2">
+              <Scale size={18} className="text-primary" />
+              <span>Physical Verification Workstation</span>
+            </div>
+            <span className="badge badge-warning">Physical Inspection Required</span>
           </div>
-          <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>
-            {ruleResults.length} RULES EVALUATED
-          </span>
-        </div>
-        <div className="card-body p-0">
-          <div className="rule-matrix-table-wrapper">
-            <table className="rule-matrix-table">
-              <thead>
-                <tr>
-                  <th>Rule ID</th>
-                  <th>Parameter</th>
-                  <th>Extracted Value</th>
-                  <th>Validation</th>
-                  <th>Binary</th>
-                  <th>Status</th>
-                  <th>Evidence</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ruleResults.map((rule, idx) => {
-                  const binary = getRuleBinary(rule);
-                  const isNetQty = rule.parameter === 'DECLARED_NET_QUANTITY' || rule.parameter === 'NET_QUANTITY';
-                  const extractedVal = isNetQty
-                    ? netQtyDecomposition.displayValUnit
-                    : (rule.evidence_data?.value || rule.normalized_value || rule.raw_value || inspection.extracted_fields?.find(f => f.field_name === rule.parameter)?.field_value || '—');
 
-                  return (
-                    <tr key={idx}>
-                      {/* 1. Rule ID */}
-                      <td>
-                        <span className="rule-id-code">{rule.rule_id}</span>
-                      </td>
+          <div className="card-body">
+            <div className="physical-intro-alert mb-4">
+              <ShieldCheck size={20} className="text-teal flex-shrink-0" />
+              <div className="text-xs">
+                <strong>Legal Metrology Standard:</strong> Physical attributes like actual package gross/net weight and numeral font millimeter height cannot be legally established solely from 2D label photography. Certified scale input and physical verification are required.
+              </div>
+            </div>
 
-                      {/* 2. Parameter */}
-                      <td>
-                        <div className="rule-param-name">{getParameterDisplayName(rule.parameter)}</div>
-                        <div className="rule-param-category">{rule.regulatory_source || 'LEGAL_METROLOGY'}</div>
-                      </td>
+            {manualSuccessMsg && (
+              <div className="badge badge-success mb-4 p-2 full-width">
+                <CheckCircle2 size={14} className="mr-1" /> {manualSuccessMsg}
+              </div>
+            )}
 
-                      {/* 3. Extracted Value */}
-                      <td>
-                        <div className="rule-extracted-value">
-                          {(() => {
-                            const classification = rule.candidate_classification || rule.evidence_data?.candidate_classification;
-                            if (classification === 'TRUE_CONFLICT') {
-                              return (
-                                <>
-                                  <span className="badge badge-danger mr-1" style={{ fontSize: '0.65rem' }}>TRUE CONFLICT</span>
-                                  <span className="text-danger">{extractedVal}</span>
-                                </>
-                              );
-                            }
-                            if (classification === 'OCR_VARIATION') {
-                              return (
-                                <>
-                                  <span className="badge badge-warning mr-1" style={{ fontSize: '0.65rem' }}>REVIEW</span>
-                                  <span>{extractedVal}</span>
-                                  <div className="text-xs text-muted mt-1">Likely OCR character variations across views</div>
-                                </>
-                              );
-                            }
-                            if (classification === 'MULTI_PANEL_EVIDENCE') {
-                              return (
-                                <>
-                                  <span className="badge mr-1" style={{ fontSize: '0.65rem', background: '#3b82f6', color: '#fff' }}>MULTI-PANEL</span>
-                                  <span>{extractedVal}</span>
-                                  <div className="text-xs text-muted mt-1">Additional evidence from other package views</div>
-                                </>
-                              );
-                            }
-                            if (String(extractedVal).startsWith('CONFLICT:')) {
-                              return (
-                                <>
-                                  <span className="badge badge-danger mr-1" style={{ fontSize: '0.65rem' }}>CONFLICT</span>
-                                  <span className="text-danger">{extractedVal}</span>
-                                </>
-                              );
-                            }
-                            return extractedVal;
-                          })()}
-                        </div>
-                      </td>
+            <form onSubmit={handleManualSave} className="physical-form-grid">
+              <div className="physical-form-left">
+                <h4 className="font-semibold text-sm mb-3">Certified Scale Measurement</h4>
 
-                      {/* 4. Validation */}
-                      <td>
-                        {isNetQty ? (
-                          <div className="qty-validation-inline">
-                            <div className="qty-inline-row">
-                              <span className="qty-inline-label">Quantity:</span>
-                              <span className={`qty-inline-val ${netQtyDecomposition.qtyValid ? 'valid' : (netQtyDecomposition.qtyPresent ? 'invalid' : 'missing')}`}>
-                                {netQtyDecomposition.qtyValid ? 'VALID' : (netQtyDecomposition.qtyPresent ? 'INVALID' : 'MISSING')}
-                              </span>
-                            </div>
-                            <div className="qty-inline-row">
-                              <span className="qty-inline-label">Unit:</span>
-                              <span className={`qty-inline-val ${netQtyDecomposition.unitValid ? 'valid' : 'missing'}`}>
-                                {netQtyDecomposition.unitValid ? 'VALID' : 'MISSING'}
-                              </span>
-                            </div>
-                            <div className="qty-inline-row">
-                              <span className="qty-inline-label">Pair:</span>
-                              <span className={`qty-inline-val ${netQtyDecomposition.pairValid ? 'valid' : 'invalid'}`}>
-                                {netQtyDecomposition.pairValid ? 'VALID' : 'INVALID'}
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="validation-method-badge">
-                            {rule.validation_method || rule.evidence_data?.validation_method || (rule.evidence_required !== false ? 'DETERMINISTIC_CHECK' : 'PRESENCE_CHECK')}
-                          </span>
-                        )}
-                      </td>
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Actual Measured Weight</span>
+                    <span className="text-xs text-muted">Physical Scale Reading</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-control font-mono"
+                      placeholder="e.g. 248.50"
+                      value={manualData.actual_measured_weight}
+                      onChange={(e) =>
+                        setManualData({ ...manualData, actual_measured_weight: e.target.value })
+                      }
+                    />
+                    <select
+                      className="form-control"
+                      style={{ width: '90px' }}
+                      value={manualData.actual_weight_unit}
+                      onChange={(e) =>
+                        setManualData({ ...manualData, actual_weight_unit: e.target.value })
+                      }
+                    >
+                      <option value="g">g</option>
+                      <option value="kg">kg</option>
+                      <option value="ml">ml</option>
+                      <option value="L">L</option>
+                    </select>
+                  </div>
+                  <span className="form-help">
+                    Declared net quantity: {inspection.product?.declared_net_quantity_value || '—'} {inspection.product?.declared_net_quantity_unit || ''}
+                  </span>
+                </div>
 
-                      {/* 5. Binary */}
-                      <td>
-                        <span className={`binary-badge ${binary.badgeClass}`} title={binary.title}>
-                          {binary.label}
-                        </span>
-                      </td>
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Measurement Instrument</span>
+                    <span className="text-xs text-muted">Calibration Traceability</span>
+                  </label>
+                  <select
+                    className="form-control"
+                    value={manualData.measurement_source}
+                    onChange={(e) =>
+                      setManualData({ ...manualData, measurement_source: e.target.value })
+                    }
+                  >
+                    <option value="CERTIFIED_DIGITAL_SCALE">Certified Inspector Digital Scale (Class II/III)</option>
+                    <option value="STAMPED_LEGAL_METROLOGY_BALANCE">Stamped Standard Metrological Balance</option>
+                    <option value="VERNIER_CALIPER_NUMERAL">Vernier Caliper (Numeral Height Check)</option>
+                  </select>
+                </div>
 
-                      {/* 6. Status */}
-                      <td>
-                        {getRuleStatusBadge(rule.status)}
-                      </td>
+                <div className="form-group">
+                  <label className="form-label">
+                    <span>Inspector Verification Notes</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    className="form-control"
+                    placeholder="Enter physical findings, tamper-seal status, font height inspection details..."
+                    value={manualData.inspector_notes}
+                    onChange={(e) =>
+                      setManualData({ ...manualData, inspector_notes: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
 
-                      {/* 7. Evidence */}
-                      <td>
-                        <div className="rule-evidence-info">
-                          <div className="rule-evidence-source">
-                            {rule.evidence_data?.source || rule.evidence_type || 'OCR'}
-                          </div>
-                          {rule.evidence_data?.confidence !== undefined && rule.evidence_data?.confidence !== null && (
-                            <div>Conf: {(rule.evidence_data.confidence * 100).toFixed(0)}%</div>
-                          )}
-                          {rule.rule_reference && (
-                            <div className="text-xs text-muted">{rule.rule_reference}</div>
-                          )}
-                        </div>
-                      </td>
+              <div className="physical-form-right">
+                <h4 className="font-semibold text-sm mb-3">Declaration Overrides (If Misread)</h4>
+                <div className="declaration-override-list">
+                  {['PRODUCT_NAME', 'MRP', 'DECLARED_NET_QUANTITY', 'MANUFACTURER_NAME'].map((param) => (
+                    <div key={param} className="form-group mb-2">
+                      <label className="form-label text-xs">
+                        <span>{param.replace(/_/g, ' ')}</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="form-control text-xs font-mono"
+                        placeholder={`Correct ${param.replace(/_/g, ' ').toLowerCase()} if misread`}
+                        value={manualData.field_overrides[param] || ''}
+                        onChange={(e) =>
+                          setManualData({
+                            ...manualData,
+                            field_overrides: {
+                              ...manualData.field_overrides,
+                              [param]: e.target.value,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
 
-                      {/* 8. Reason */}
-                      <td>
-                        <div className="rule-reason-text">
-                          {renderRuleReason(rule)}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {ruleResults.length === 0 && (
-                  <tr>
-                    <td colSpan="8" className="text-center p-4 text-muted">
-                      No rules evaluated for this commodity.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                <div className="mt-4 text-right">
+                  <button type="submit" className="btn btn-primary" disabled={savingManual}>
+                    <Save size={15} /> {savingManual ? 'Re-evaluating...' : 'Record Measurements & Re-Evaluate'}
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="text-center text-muted text-xs mt-3 mb-4">
-        Inspection-support result based on available image evidence. Final legal verification remains with the authorized inspector.
-      </div>
+      {/* =========================================================================
+          TAB 4: STATUTORY REPORT & SIGN-OFF
+          ========================================================================= */}
+      {activeTab === 'report' && (
+        <div className="card report-workstation-card">
+          <div className="card-header flex-between">
+            <div className="flex items-center gap-2">
+              <FileText size={18} className="text-primary" />
+              <span>Inspection Report & Enforcement Sign-Off</span>
+            </div>
+            {reportUrl && (
+              <a
+                href={reportUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-outline btn-sm"
+              >
+                <Download size={14} /> Download PDF
+              </a>
+            )}
+          </div>
+
+          <div className="card-body">
+            <div className="report-summary-dossier">
+              <div className="report-summary-header">
+                <div className="report-title-block">
+                  <h3>LEGAL METROLOGY INSPECTION DOSSIER</h3>
+                  <span className="text-xs text-muted">Govt. of India Legal Metrology (Packaged Commodities) Compliance Form</span>
+                </div>
+                <div className="report-status-badge">
+                  <StatusBadge status={rawOverall} size="md" showBinary={true} />
+                </div>
+              </div>
+
+              <div className="report-metadata-grid">
+                <div>
+                  <span className="meta-lbl">Inspection ID:</span>
+                  <span className="meta-val font-mono">#{inspection.id}</span>
+                </div>
+                <div>
+                  <span className="meta-lbl">Inspection Date:</span>
+                  <span className="meta-val">{new Date(inspection.created_at).toLocaleDateString()}</span>
+                </div>
+                <div>
+                  <span className="meta-lbl">Product Identity:</span>
+                  <span className="meta-val font-semibold">{inspection.product_name || 'Unspecified'}</span>
+                </div>
+                <div>
+                  <span className="meta-lbl">Manufacturer / Packer:</span>
+                  <span className="meta-val">{inspection.product?.manufacturer || 'Not Detected'}</span>
+                </div>
+                <div>
+                  <span className="meta-lbl">Declared Net Quantity:</span>
+                  <span className="meta-val font-mono">{inspection.product?.declared_net_quantity_value || '—'} {inspection.product?.declared_net_quantity_unit || ''}</span>
+                </div>
+                <div>
+                  <span className="meta-lbl">Maximum Retail Price (MRP):</span>
+                  <span className="meta-val font-mono">{inspection.product?.mrp || '—'}</span>
+                </div>
+              </div>
+
+              <div className="report-findings-box mt-4">
+                <h5 className="font-semibold text-xs text-muted uppercase mb-2">Statutory Findings Summary</h5>
+                <ul className="report-findings-list">
+                  {inspection.findings?.failed?.map((f, idx) => (
+                    <li key={idx} className="finding-item finding-item--fail">
+                      <XCircle size={14} /> {f}
+                    </li>
+                  ))}
+                  {inspection.findings?.needs_review?.map((r, idx) => (
+                    <li key={idx} className="finding-item finding-item--review">
+                      <AlertTriangle size={14} /> {r}
+                    </li>
+                  ))}
+                  {inspection.findings?.verified?.map((v, idx) => (
+                    <li key={idx} className="finding-item finding-item--pass">
+                      <CheckCircle2 size={14} /> {v}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="report-signature-block mt-4">
+                <div className="signature-box">
+                  <div className="signature-line" />
+                  <span className="signature-title">Authorized Legal Metrology Inspector</span>
+                  <span className="signature-sub font-mono">Badge #IN-4029</span>
+                </div>
+                <div className="signature-box">
+                  <div className="signature-line" />
+                  <span className="signature-title">Inspection Station Seal & Stamp</span>
+                  <span className="signature-sub">Date: {new Date().toLocaleDateString()}</span>
+                </div>
+              </div>
+
+              <div className="report-actions-row mt-4">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg"
+                  onClick={handleGenerateReport}
+                  disabled={generatingReport}
+                >
+                  <Printer size={16} /> {generatingReport ? 'Generating Report...' : 'Compile & Sign PDF Report'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
