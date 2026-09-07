@@ -19,6 +19,7 @@ import { apiService } from '../services/api';
 import MetricCard from '../components/MetricCard';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
+import { formatISTDate, formatISTTime } from '../utils/dateUtils';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -166,7 +167,12 @@ const Dashboard = () => {
                       <tr key={item.id}>
                         <td className="font-mono font-semibold">#{item.id}</td>
                         <td className="text-xs text-muted">
-                          {item.date ? new Date(item.date).toLocaleDateString() : '—'}
+                          {item.date ? (
+                            <>
+                              <div className="font-medium text-main">{formatISTDate(item.date)}</div>
+                              <div className="text-xs text-secondary">{formatISTTime(item.date)}</div>
+                            </>
+                          ) : '—'}
                         </td>
                         <td className="font-medium text-main">
                           {item.product_name || <span className="text-muted italic">Label unscoped</span>}

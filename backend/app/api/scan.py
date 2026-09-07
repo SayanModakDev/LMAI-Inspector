@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from datetime import timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -390,6 +391,10 @@ async def perform_scan(
         db.commit()
         logger.info("scan timing complete inspection=%s timings=%s", db_inspection.id, timings)
 
+        created_dt = db_inspection.created_at
+        if created_dt and created_dt.tzinfo is None:
+            created_dt = created_dt.replace(tzinfo=timezone.utc)
+
         return schemas.ScanResponse(
             inspection_id=db_inspection.id,
             category=category,
@@ -419,6 +424,8 @@ async def perform_scan(
                 for index, image_id in sorted(image_index_to_id.items())
             ],
             barcode_result=barcode_result,
+            created_at=created_dt,
+            inspection_date=created_dt,
         )
 
     except Exception as exc:

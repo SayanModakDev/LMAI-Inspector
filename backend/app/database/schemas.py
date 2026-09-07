@@ -33,6 +33,8 @@ class ScanResponse(BaseModel):
     image_url: Optional[str] = None
     images: List[dict] = []
     barcode_result: Optional[dict] = None
+    created_at: Optional[datetime] = None
+    inspection_date: Optional[datetime] = None
 
 
 class InspectionDetail(BaseModel):

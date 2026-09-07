@@ -27,6 +27,7 @@ import MetricCard from '../components/MetricCard';
 import ConflictCard from '../components/ConflictCard';
 import EvidenceViewer from '../components/EvidenceViewer';
 import ErrorState from '../components/ErrorState';
+import { formatISTDateTime, formatISTDate } from '../utils/dateUtils';
 import './Result.css';
 
 const Result = () => {
@@ -246,7 +247,7 @@ const Result = () => {
               <span className="result-package-pill">{inspection.import_status || 'DOMESTIC'}</span>
             </div>
             <div className="result-banner__timestamp text-xs">
-              Screened: {new Date(inspection.created_at).toLocaleString()} • Priority: {inspection.priority || 'NORMAL'}
+              Analyzed: {formatISTDateTime(inspection.created_at)} • Priority: {inspection.priority || 'NORMAL'}
             </div>
           </div>
         </div>
@@ -734,8 +735,8 @@ const Result = () => {
                   <span className="meta-val font-mono">#{inspection.id}</span>
                 </div>
                 <div>
-                  <span className="meta-lbl">Inspection Date:</span>
-                  <span className="meta-val">{new Date(inspection.created_at).toLocaleDateString()}</span>
+                  <span className="meta-lbl">Inspection Date & Time:</span>
+                  <span className="meta-val">{formatISTDateTime(inspection.created_at)}</span>
                 </div>
                 <div>
                   <span className="meta-lbl">Product Identity:</span>
@@ -785,7 +786,7 @@ const Result = () => {
                 <div className="signature-box">
                   <div className="signature-line" />
                   <span className="signature-title">Workstation / Facility</span>
-                  <span className="signature-sub">{profile.station || 'Local Workstation'} • {new Date().toLocaleDateString()}</span>
+                  <span className="signature-sub">{profile.station || 'Local Workstation'} • {formatISTDate(new Date())}</span>
                 </div>
               </div>
 

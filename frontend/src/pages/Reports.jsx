@@ -4,6 +4,7 @@ import { FileText, Download, Eye, ExternalLink, Printer, Search, CheckCircle2, A
 import { apiService } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
+import { formatISTDateTime } from '../utils/dateUtils';
 import './Reports.css';
 
 const Reports = () => {
@@ -96,8 +97,8 @@ const Reports = () => {
                   <h4 className="report-product-name">{item.product_name || 'Packaged Commodity'}</h4>
                   <div className="report-meta-rows">
                     <div className="report-meta-row">
-                      <span className="meta-k">Date:</span>
-                      <span className="meta-v">{new Date(item.created_at).toLocaleDateString()}</span>
+                      <span className="meta-k">Date & Time:</span>
+                      <span className="meta-v">{formatISTDateTime(item.created_at)}</span>
                     </div>
                     <div className="report-meta-row">
                       <span className="meta-k">Category:</span>

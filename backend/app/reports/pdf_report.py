@@ -3,7 +3,7 @@ import logging
 import os
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 
 from reportlab.lib import colors
@@ -273,10 +273,14 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
     import_tag = " (Inspector Default)" if import_status_str == "DOMESTIC" else " (Inspector Selected)"
     import_display = f"{import_status_str}{import_tag}"
 
-    date_str = (
-        inspection.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        if inspection.created_at else datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-    )
+    ist_tz = timezone(timedelta(hours=5, minutes=30), name="IST")
+    if inspection.created_at:
+        dt = inspection.created_at
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        date_str = dt.astimezone(ist_tz).strftime("%d-%b-%Y %I:%M:%S %p IST")
+    else:
+        date_str = datetime.now(timezone.utc).astimezone(ist_tz).strftime("%d-%b-%Y %I:%M:%S %p IST")
 
     # =========================================================================
     # PAGE 1: LMAI INSPECTOR — INSPECTION OVERVIEW & SUMMARY

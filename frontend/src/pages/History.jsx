@@ -14,6 +14,7 @@ import {
 import { apiService } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
+import { formatISTDate, formatISTTime, formatISTDateTime } from '../utils/dateUtils';
 import './History.css';
 
 const History = () => {
@@ -45,7 +46,11 @@ const History = () => {
     const idMatch = String(item.id).includes(q);
     const prodMatch = (item.product_name || '').toLowerCase().includes(q);
     const catMatch = (item.category || '').toLowerCase().includes(q);
-    const dateMatch = item.created_at ? new Date(item.created_at).toLocaleDateString().includes(q) : false;
+    const dateMatch = item.created_at
+      ? (formatISTDate(item.created_at).toLowerCase().includes(q) ||
+         formatISTTime(item.created_at).toLowerCase().includes(q) ||
+         formatISTDateTime(item.created_at).toLowerCase().includes(q))
+      : false;
     return idMatch || prodMatch || catMatch || dateMatch;
   });
 
@@ -144,9 +149,9 @@ const History = () => {
                       </td>
                       <td className="text-xs text-muted">
                         <div className="font-medium text-main">
-                          {new Date(item.created_at).toLocaleDateString()}
+                          {formatISTDate(item.created_at)}
                         </div>
-                        <div>{new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        <div className="text-xs text-secondary">{formatISTTime(item.created_at)}</div>
                       </td>
                       <td>
                         <div className="font-semibold text-main">
