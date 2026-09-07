@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { ShieldCheck, BarChart2, Clock, Info, Camera } from 'lucide-react';
+import BrandLogo from './BrandLogo';
 import './Navbar.css';
 
 const Navbar = () => {
@@ -15,10 +16,23 @@ const Navbar = () => {
 
   return (
     <nav className="navbar">
-      <div className="navbar-brand">
-        <ShieldCheck className="brand-icon" size={24} />
-        <span>LMAI Inspector</span>
-      </div>
+      <Link to="/" className="navbar-brand-link" title="LMAI Inspector Home">
+        {/* Desktop Logo */}
+        <BrandLogo
+          variant="horizontal"
+          className="navbar-logo navbar-logo--desktop"
+          height={38}
+          alt="LMAI Inspector"
+        />
+        {/* Mobile Compact Mark */}
+        <BrandLogo
+          variant="mark"
+          className="navbar-logo navbar-logo--mobile"
+          height={34}
+          alt="LMAI Inspector"
+        />
+        <span className="navbar-mobile-title">LMAI</span>
+      </Link>
       <div className="navbar-menu">
         {navItems.map((item) => (
           <Link

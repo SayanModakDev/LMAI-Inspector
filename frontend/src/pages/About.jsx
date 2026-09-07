@@ -1,8 +1,13 @@
+import BrandLogo from '../components/BrandLogo';
+
 const About = () => {
   return (
     <div className="max-w-3xl mx-auto">
       <div className="card">
-        <div className="card-header">About Legal Metrology AI System</div>
+        <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>About LMAI Inspector</span>
+          <BrandLogo variant="horizontal" height={28} alt="LMAI Inspector" />
+        </div>
         <div className="card-body">
           <p className="mb-4">
             This application is an AI-assisted compliance checking system designed to support Legal Metrology 

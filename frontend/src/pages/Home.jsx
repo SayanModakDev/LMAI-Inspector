@@ -1,14 +1,21 @@
 import { Link } from 'react-router-dom';
 import { Camera, FileText, BarChart2 } from 'lucide-react';
+import BrandLogo from '../components/BrandLogo';
 import './Home.css';
 
 const Home = () => {
   return (
     <div className="home-container">
       <div className="hero-section">
-        <h1>AI-Assisted Legal Metrology Compliance</h1>
+        <div className="hero-logo-wrapper">
+          <BrandLogo
+            variant="tagline"
+            className="hero-brand-logo"
+            alt="LMAI Inspector - Legal Metrology Packaged Commodities Compliance Screening"
+          />
+        </div>
         <p className="hero-subtitle">
-          Streamline packaged commodity inspections with AI-powered OCR and rule-based validation.
+          AI-assisted label OCR and deterministic statutory validation for packaged commodity inspections under Legal Metrology (Packaged Commodities) Rules, 2011.
         </p>
         
         <div className="action-cards">

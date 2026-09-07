@@ -1,0 +1,24 @@
+.lmai-brand-logo {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  user-select: none;
+}
+
+.lmai-brand-logo--horizontal {
+  height: 40px;
+}
+
+.lmai-brand-logo--compact {
+  height: 52px;
+}
+
+.lmai-brand-logo--mark {
+  height: 38px;
+  width: 38px;
+}
+
+.lmai-brand-logo--tagline {
+  max-height: 240px;
+}

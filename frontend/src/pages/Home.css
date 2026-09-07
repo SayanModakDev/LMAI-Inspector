@@ -11,16 +11,30 @@
   margin: 0 auto;
 }
 
-.hero-section h1 {
-  font-size: 2.5rem;
-  color: var(--primary);
-  margin-bottom: 1rem;
+.hero-logo-wrapper {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.hero-brand-logo {
+  height: 220px;
+  width: auto;
+  max-width: 100%;
+  filter: drop-shadow(0 4px 12px rgba(11, 37, 69, 0.08));
+  transition: transform 0.3s ease;
+}
+
+.hero-brand-logo:hover {
+  transform: scale(1.02);
 }
 
 .hero-subtitle {
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   color: var(--text-muted);
-  margin-bottom: 3rem;
+  max-width: 680px;
+  margin: 0 auto 2.5rem;
+  line-height: 1.6;
 }
 
 .action-cards {

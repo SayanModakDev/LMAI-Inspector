@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ShieldAlert, CheckCircle, Loader2 } from 'lucide-react';
 import { apiService } from '../services/api';
+import BrandLogo from '../components/BrandLogo';
 import './Processing.css';
 
 const Processing = () => {
@@ -71,6 +72,7 @@ const Processing = () => {
     <div className="processing-container">
       <div className="card processing-card">
         <div className="card-body text-center">
+          <BrandLogo variant="mark" height={54} className="mb-3" alt="LMAI Inspector Mark" />
           <h2>Analyzing Label</h2>
 
           <div className="preview-thumbnail-container">

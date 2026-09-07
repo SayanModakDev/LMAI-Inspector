@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import Footer from './components/Footer';
 import Home from './pages/Home';
 import Scan from './pages/Scan';
 import Processing from './pages/Processing';
@@ -23,6 +24,7 @@ function App() {
           <Route path="/about" element={<About />} />
         </Routes>
       </main>
+      <Footer />
     </div>
   );
 }
