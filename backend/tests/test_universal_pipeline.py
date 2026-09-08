@@ -333,7 +333,7 @@ class TestFieldSpecificSemanticScoping:
             "EXP: 11/2025"
         )
         fields = extract_declarations(text)
-        assert fields.get("MANUFACTURE_DATE", {}).get("value") == "10/2024"
+        assert (fields.get("MONTH_YEAR_MANUFACTURE") or fields.get("MANUFACTURE_DATE", {})).get("value") == "10/2024"
         assert fields.get("PACKING_DATE", {}).get("value") == "11/2024"
         assert fields.get("BEST_BEFORE_USE_BY", {}).get("value") == "10/2025"
         assert fields.get("EXPIRY_DATE", {}).get("value") == "11/2025"

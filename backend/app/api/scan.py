@@ -15,7 +15,7 @@ from app.extraction.declaration_extractor import extract_declarations, merge_pro
 from app.ocr.ocr_service import run_ocr
 from app.ocr.preprocessing import preprocess_image
 from app.rules.applicability import get_applicable_rules
-from app.rules.rule_engine import evaluate_rules, build_inspection_findings
+from app.rules.rule_engine import evaluate_rules, build_inspection_findings, calculate_rule_summary
 from app.utils.helpers import (
     generate_filename,
     sanitize_filename,
@@ -406,6 +406,7 @@ async def perform_scan(
             product_type=product_type,
             extracted_fields=extracted_fields,
             rule_results=rule_results,
+            summary=calculate_rule_summary(rule_results),
             overall_result=overall_result,
             priority=priority,
             evidence=[],

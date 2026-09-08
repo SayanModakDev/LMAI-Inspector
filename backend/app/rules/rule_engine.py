@@ -77,9 +77,80 @@ def sync_rules_to_db() -> None:
         logger.error(f"Could not read rule_matrix.json: {exc}")
 
 
+def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
+    """Calculate canonical summary counts over final evaluated rule rows.
+
+    Guarantees summary counters exactly match the matrix table row count:
+    passed + failed + review + not_applicable == total
+    """
+    passed = 0
+    failed = 0
+    review = 0
+    not_applicable = 0
+
+    for r in rule_results:
+        status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+        if status == 'PASS':
+            passed += 1
+        elif status == 'FAIL':
+            failed += 1
+        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW'):
+            review += 1
+        elif status == 'NOT_APPLICABLE':
+            not_applicable += 1
+        else:
+            review += 1
+
+    total = passed + failed + review + not_applicable
+    return {
+        'passed': passed,
+        'failed': failed,
+        'review': review,
+        'not_applicable': not_applicable,
+        'total': total,
+        'passed_count': passed,
+        'failed_count': failed,
+        'review_count': review,
+        'na_count': not_applicable,
+        'total_rules': total,
+    }
+
+
+def derive_overall_result(rule_results: List[Any]) -> str:
+    """Derive overall inspection result from evaluated rule results."""
+    from app.core.constants import InspectionStatus
+    has_fail = False
+    has_review = False
+
+    for r in rule_results:
+        status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+        if status == 'FAIL':
+            has_fail = True
+        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW'):
+            has_review = True
+
+    if has_fail:
+        return InspectionStatus.NON_COMPLIANT
+    if has_review:
+        return InspectionStatus.NOT_VERIFIABLE
+    return InspectionStatus.COMPLIANT
+
+
 def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
     """Evaluate applicable rules via deterministic validators and never treat missing OCR as an automatic legal FAIL."""
     from app.rules.validators import dispatch_validator
+
+    # Deduplicate applicable rules by rule_id preserving order
+    seen_rule_ids = set()
+    deduped_rules = []
+    for rule in applicable_rules:
+        rid = rule.get('rule_id')
+        if rid and rid in seen_rule_ids:
+            continue
+        if rid:
+            seen_rule_ids.add(rid)
+        deduped_rules.append(rule)
+    applicable_rules = deduped_rules
 
     results: List[Dict[str, Any]] = []
     has_fail = False
@@ -152,6 +223,10 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'validation_result': val_result.to_dict(),
             'candidate_classification': (
                 evidence_data.get('candidate_classification') if evidence_data else None
+            ),
+            'competing_evidence': (
+                evidence_data.get('candidates') or evidence_data.get('competing_candidates') or evidence_data.get('values')
+                if evidence_data else None
             ),
         }
 

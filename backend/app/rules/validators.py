@@ -1393,6 +1393,7 @@ DEFAULT_PARAMETER_VALIDATION_METHODS: Dict[str, str] = {
     "IMPORTER_NAME_ADDRESS": "IMPORTER_PRESENT",
     "CONSUMER_CARE": "CONSUMER_CARE_PRESENT",
     "MONTH_YEAR_MANUFACTURE": "DATE_PRESENT",
+    "MANUFACTURE_DATE": "DATE_PRESENT",
     "PACKING_DATE": "DATE_PRESENT",
     "GENERIC_NAME": "TEXT_PRESENT",
     "UNIT_SALE_PRICE": "TEXT_PRESENT",
@@ -1419,21 +1420,26 @@ def dispatch_validator(
     Fails safely as NOT_VERIFIABLE if validation_method is unknown.
     Never declares PASS merely because a field exists.
     """
-    # Intercept conflicting evidence upfront across all rules
+    # Intercept conflicting or ambiguous evidence upfront across all rules
     if evidence and (
-        evidence.get("status") == "CONFLICTING_EVIDENCE"
+        evidence.get("status") in ("CONFLICTING_EVIDENCE", "AMBIGUOUS", "REVIEW")
         or evidence.get("has_conflict") is True
+        or evidence.get("is_ambiguous") is True
     ):
-        conflicting_vals = evidence.get("values") or [evidence.get("value")]
-        vals_str = ", ".join(str(v) for v in conflicting_vals)
+        candidates = evidence.get("competing_candidates") or evidence.get("values") or [evidence.get("value")]
+        cand_str = ", ".join(str(c.get("value") if isinstance(c, dict) else c) for c in candidates if c)
         parameter = rule.get("parameter", "UNKNOWN")
+        is_amb = evidence.get("status") in ("AMBIGUOUS", "REVIEW") or evidence.get("is_ambiguous")
+        msg = (
+            f"Ambiguous or competing candidate declarations detected for '{parameter}': "
+            f"[{cand_str}]. Manual inspector review required."
+            if is_amb
+            else f"Conflicting evidence detected across package views for '{parameter}': [{cand_str}]. Manual inspection and review required."
+        )
         return ValidationResult(
             status="NOT_VERIFIABLE",
             binary=0,
-            reason=(
-                f"Conflicting evidence detected across package views for '{parameter}': "
-                f"[{vals_str}]. Manual inspection and review required."
-            ),
+            reason=msg,
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
         )

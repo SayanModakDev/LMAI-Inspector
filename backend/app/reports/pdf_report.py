@@ -257,12 +257,25 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
         overall_color = '#B45309'
         overall_desc = "One or more declarations have unverified or conflicting evidence. Manual inspector review is required."
 
-    # Compute summary counters
-    results_list = inspection.rule_results or []
-    passed_count = sum(1 for r in results_list if r.status == 'PASS')
-    failed_count = sum(1 for r in results_list if r.status == 'FAIL')
-    review_count = sum(1 for r in results_list if r.status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW'))
-    na_count = sum(1 for r in results_list if r.status == 'NOT_APPLICABLE')
+    # Deduplicate rule results by rule_id preserving order
+    seen_rule_ids = set()
+    deduped_results = []
+    for r in (inspection.rule_results or []):
+        rid = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+        if rid and rid in seen_rule_ids:
+            continue
+        if rid:
+            seen_rule_ids.add(rid)
+        deduped_results.append(r)
+    results_list = deduped_results
+
+    # Compute summary counters using shared calculate_rule_summary
+    from app.rules.rule_engine import calculate_rule_summary
+    summary_counts = calculate_rule_summary(results_list)
+    passed_count = summary_counts['passed']
+    failed_count = summary_counts['failed']
+    review_count = summary_counts['review']
+    na_count = summary_counts['not_applicable']
 
     # Package Type & Import Status with Inspector Default indicators
     pkg_type_str = inspection.package_type or "RETAIL"
