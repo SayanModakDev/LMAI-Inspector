@@ -228,6 +228,7 @@ const EvidenceViewer = ({
   ruleResults = [],
   barcodeResult = null,
   product = null,
+  onCountChange = null,
   className = '',
 }) => {
   const [selectedPanelIndex, setSelectedPanelIndex] = useState(0);
@@ -400,6 +401,13 @@ const EvidenceViewer = ({
 
     return Array.from(itemsMap.values());
   }, [extractedFields, ruleResults, product, barcodeResult]);
+
+  // Synchronize authoritative declaration count with parent tab
+  React.useEffect(() => {
+    if (onCountChange && allEvidenceItems.length > 0) {
+      onCountChange(allEvidenceItems.length);
+    }
+  }, [allEvidenceItems.length, onCountChange]);
 
   // Product Identity Conflict Detection
   const productConflict = useMemo(() => {
@@ -751,14 +759,14 @@ const EvidenceViewer = ({
           </div>
         </div>
 
-        {/* Image Footer Info */}
+        {/* Image Footer Info - Truthful conditional spatial wording */}
         <div className="image-panel-footer">
           <div className="flex items-center gap-2 text-xs text-muted">
             <Eye size={12} />
             <span>
               {hasAnyBBoxOnActivePanel
                 ? 'Hover or click bounding boxes to inspect declaration source'
-                : 'No spatial coordinate boxes returned for this view'}
+                : 'No spatial coordinate boxes returned for this view. Spatial evidence highlighting available when coordinates are provided.'}
             </span>
           </div>
           {activeImage?.file_name && (
@@ -771,12 +779,14 @@ const EvidenceViewer = ({
           RIGHT: DETECTED EVIDENCE PANEL (~45% width)
           ========================================================================= */}
       <div className="evidence-workstation__declarations-col">
-        {/* Evidence Panel Header */}
+        {/* Evidence Panel Header - Authoritative Extracted Declarations Count */}
         <div className="workstation-panel-header evidence-list-header">
           <div className="flex items-center gap-2">
             <span className="panel-title">Detected Evidence</span>
             <span className="badge badge-gray font-mono text-2xs">
-              {filteredEvidenceItems.length} Declarations
+              {filteredEvidenceItems.length === allEvidenceItems.length
+                ? `${allEvidenceItems.length} Extracted Declarations`
+                : `${filteredEvidenceItems.length} of ${allEvidenceItems.length} Extracted Declarations`}
             </span>
           </div>
         </div>
@@ -835,7 +845,7 @@ const EvidenceViewer = ({
                       Product Identity Conflict
                     </span>
                     <p className="text-2xs text-amber-800 m-0">
-                      Multiple package views or candidate text lines returned contradictory product identities.
+                      Conflicting evidence: multiple package views or candidate text lines returned contradictory product identities.
                     </p>
                   </div>
                 </div>
@@ -869,7 +879,7 @@ const EvidenceViewer = ({
               </div>
 
               <div className="conflict-resolution-note text-2xs text-amber-900 bg-amber-100 p-1.5 rounded">
-                The system does not rank a winner or guess. The inspector must determine the official product identity during physical review.
+                Conflicting evidence detected. The system does not select an official winner. The inspector must determine the official product identity during physical review.
               </div>
             </div>
           )}
@@ -931,9 +941,9 @@ const EvidenceViewer = ({
                             </span>
                             <span className="evidence-card__key font-mono text-2xs text-muted">
                               {item.field_name}
-                              {item.role && (
+                              {(item.role || (item.field_name.startsWith('MANUFACTURER') ? 'MANUFACTURER' : item.field_name.startsWith('MARKETER') ? 'MARKETER' : null)) && (
                                 <span className="entity-role-tag font-mono ml-1">
-                                  [{item.role}]
+                                  [{item.role || (item.field_name.startsWith('MANUFACTURER') ? 'MANUFACTURER' : 'MARKETER')}]
                                 </span>
                               )}
                             </span>

@@ -40,6 +40,8 @@ const ResultHero = ({
 }) => {
   if (!inspection) return null;
 
+  const [showDetails, setShowDetails] = React.useState(false);
+
   // 1. Strict Canonical Summary Counts (directly from backend summary)
   const summary = inspection.summary || {};
   const passCount =
@@ -96,34 +98,56 @@ const ResultHero = ({
 
   const failRules = ruleResults.filter((r) => r.status === 'FAIL');
 
+  // Helper to format parameter labels cleanly without legal conclusions
+  const formatParamLabel = (param) => {
+    if (!param) return 'Declaration';
+    const names = {
+      PRODUCT_NAME: 'Product Name',
+      BRAND: 'Brand Name',
+      GENERIC_NAME: 'Generic Name',
+      DECLARED_NET_QUANTITY: 'Declared Net Quantity',
+      NET_QUANTITY: 'Declared Net Quantity',
+      ACTUAL_NET_CONTENT: 'Actual Net Content',
+      FONT_SIZE_COMPLIANCE: 'Font Size Compliance',
+      MANUFACTURER_NAME: 'Manufacturer Name',
+      MANUFACTURER_ADDRESS: 'Manufacturer Address',
+      MARKETER_NAME: 'Marketer Name',
+      MARKETER_ADDRESS: 'Marketer Address',
+      CONSUMER_CARE: 'Consumer Care',
+      MONTH_YEAR_MANUFACTURE: 'Date of Manufacture',
+      BARCODE: 'Commodity Barcode',
+      MRP: 'MRP',
+    };
+    if (names[param.toUpperCase()]) return names[param.toUpperCase()];
+    return param
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
   // 4. Concise Dynamic Explanation
   const getExplanationContent = () => {
     if (canonicalStatus === 'NON-COMPLIANT') {
-      const firstFail = failRules[0];
-      const failReason =
-        firstFail?.reason ||
-        firstFail?.message ||
-        (inspection.findings?.failed && inspection.findings.failed[0]) ||
-        'One or more mandatory statutory declarations failed deterministic validation requirements.';
       return {
-        main: 'Deterministic screening identified statutory violations under Legal Metrology Rules.',
+        secondary: `${failRules.length} declaration${failRules.length === 1 ? '' : 's'} failed validation`,
+        main: 'Screening identified declarations that did not satisfy validation rules.',
         reasons: failRules.map((r) => r.reason || r.message || r.parameter?.replace(/_/g, ' ')).filter(Boolean),
       };
     }
 
     if (canonicalStatus === 'REQUIRES REVIEW') {
       return {
-        main: 'Manual review is required because one or more declarations could not be conclusively verified.',
+        secondary: `${reviewCount} declaration${reviewCount === 1 ? '' : 's'} require attention`,
+        main: 'Screening could not conclusively verify one or more declarations.',
         reasons: reviewRules
-          .slice(0, 3)
-          .map((r) => r.reason || r.message || `${(r.parameter || '').replace(/_/g, ' ')} requires verification`)
+          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} requires verification`)
           .filter(Boolean),
-        extraCount: Math.max(0, reviewRules.length - 3),
       };
     }
 
     return {
-      main: 'All statutory declarations satisfy mandatory Legal Metrology requirements.',
+      secondary: 'All screening criteria satisfied',
+      main: 'All verified declarations satisfy applicable screening rules.',
       reasons: [],
     };
   };
@@ -193,6 +217,46 @@ const ResultHero = ({
     }
   };
 
+  // Compact review reasons list derived dynamically from backend findings
+  const compactReviewReasons = React.useMemo(() => {
+    if (canonicalStatus !== 'REQUIRES REVIEW') return [];
+    const list = [];
+    if (isProductNameConflict) {
+      list.push('Product identity conflict');
+    }
+    const hasGenericMissing = reviewRules.some(
+      (r) =>
+        r.parameter === 'GENERIC_NAME' ||
+        (r.reason || '').toLowerCase().includes('generic name')
+    );
+    if (hasGenericMissing) {
+      list.push('Generic name not detected');
+    }
+    const hasPhysical = reviewRules.some(
+      (r) =>
+        r.parameter === 'ACTUAL_NET_CONTENT' ||
+        r.parameter === 'FONT_SIZE_COMPLIANCE' ||
+        (r.reason || '').toLowerCase().includes('physical')
+    );
+    if (hasPhysical) {
+      list.push('Physical verification required');
+    }
+    // Additional specific parameters that need review
+    reviewRules.forEach((r) => {
+      const p = r.parameter;
+      if (p === 'PRODUCT_NAME' && isProductNameConflict) return;
+      if (p === 'GENERIC_NAME' && hasGenericMissing) return;
+      if ((p === 'ACTUAL_NET_CONTENT' || p === 'FONT_SIZE_COMPLIANCE') && hasPhysical) return;
+      const label = formatParamLabel(p);
+      const isMissing = (r.reason || '').toLowerCase().includes('not detected');
+      const entry = isMissing ? `${label} not detected` : `${label} manual review`;
+      if (!list.includes(entry) && list.length < 5) {
+        list.push(entry);
+      }
+    });
+    return list;
+  }, [canonicalStatus, isProductNameConflict, reviewRules]);
+
   return (
     <div className="results-hero-container">
       {/* Primary Hero Header */}
@@ -214,24 +278,65 @@ const ResultHero = ({
             )}
           </div>
 
-          {/* Overall Screening Status + Dynamic Explanation */}
+          {/* Primary Status + Secondary Attention Count + Compact Reasons */}
           <div className="results-hero-status-row">
             <div className="results-hero-status-badge">
               <StatusBadge status={canonicalStatus} size="lg" showBinary={true} />
             </div>
             <div className="results-hero-explanation-block">
-              <p className="results-hero-explanation font-medium">{explanation.main}</p>
-              {explanation.reasons.length > 0 && (
-                <div className="results-hero-reasons-list text-xs text-secondary mt-1">
-                  {explanation.reasons.map((r, idx) => (
-                    <span key={idx} className="reason-item">
-                      {idx > 0 && <span className="reason-separator"> • </span>}
-                      {r}
+              <div className="results-hero-secondary-line flex items-center gap-2 flex-wrap">
+                <span className="results-hero-secondary-title font-bold text-sm text-main">
+                  {explanation.secondary}
+                </span>
+                {explanation.reasons.length > 0 && (
+                  <button
+                    type="button"
+                    className="results-hero-details-toggle text-xs font-semibold text-primary inline-flex items-center gap-1"
+                    onClick={() => setShowDetails(!showDetails)}
+                    aria-expanded={showDetails}
+                    title="Toggle detailed rule findings"
+                  >
+                    <span>{showDetails ? 'Hide details' : 'View details'}</span>
+                    <ChevronRight
+                      size={12}
+                      style={{
+                        transform: showDetails ? 'rotate(90deg)' : 'none',
+                        transition: 'transform 0.15s ease',
+                      }}
+                    />
+                  </button>
+                )}
+              </div>
+
+              {/* Compact list of affected reasons */}
+              {compactReviewReasons.length > 0 ? (
+                <div className="results-hero-compact-reasons flex items-center gap-1.5 flex-wrap mt-1">
+                  {compactReviewReasons.map((reason, idx) => (
+                    <span key={idx} className="compact-reason-badge">
+                      <span className="compact-reason-bullet">•</span>
+                      <span>{reason}</span>
                     </span>
                   ))}
-                  {explanation.extraCount > 0 && (
-                    <span className="reason-item text-muted"> +{explanation.extraCount} more</span>
-                  )}
+                </div>
+              ) : (
+                <p className="results-hero-explanation text-xs text-secondary mt-0.5 mb-0">
+                  {explanation.main}
+                </p>
+              )}
+
+              {/* Expandable detailed explanations */}
+              {showDetails && explanation.reasons.length > 0 && (
+                <div className="results-hero-expanded-dossier mt-2">
+                  <div className="expanded-dossier-title text-2xs font-bold uppercase tracking-wider text-muted mb-1">
+                    Specific Parameter Findings:
+                  </div>
+                  <ul className="expanded-reasons-list text-xs">
+                    {explanation.reasons.map((r, idx) => (
+                      <li key={idx} className="expanded-reason-item">
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
@@ -259,7 +364,7 @@ const ResultHero = ({
 
             <div
               className={`count-pill count-pill--review ${reviewCount > 0 ? 'count-pill--active' : ''}`}
-              title={`${reviewCount} rules require manual verification or certified measurement`}
+              title={`${reviewCount} rules require manual verification or physical measurement`}
             >
               <AlertTriangle size={13} />
               <span className="count-num font-mono">{reviewCount}</span>
@@ -277,11 +382,12 @@ const ResultHero = ({
           </div>
         </div>
 
-        {/* Top-Level Workstation Actions */}
-        <div className="results-hero-actions">
+        {/* Top-Level Workstation Actions - Recommended Hierarchy: Primary, Secondary, Tertiary */}
+        <div className="results-hero-actions" role="group" aria-label="Inspection actions">
+          {/* Primary Action: View Inspection Report / Generate Report */}
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="btn btn-primary btn-sm action-primary"
             onClick={onGenerateReport}
             disabled={generatingReport}
             title="Compile or view official Legal Metrology inspection PDF report"
@@ -296,26 +402,38 @@ const ResultHero = ({
             </span>
           </button>
 
+          {/* Secondary Action: Download PDF */}
           {reportUrl && (
             <a
               href={reportUrl}
               download={`inspection_report_${inspection.id}.pdf`}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary-action btn-sm action-secondary"
               title="Download generated PDF report dossier"
             >
               <span>Download PDF</span>
             </a>
           )}
 
-          <Link to="/history" className="btn btn-outline btn-sm" title="Return to past inspection history">
-            <History size={14} />
-            <span>History</span>
-          </Link>
+          {/* Tertiary Actions: History & New Scan */}
+          <div className="tertiary-actions-group">
+            <Link
+              to="/history"
+              className="btn btn-tertiary-action btn-sm"
+              title="Return to past inspection history"
+            >
+              <History size={13} />
+              <span>History</span>
+            </Link>
 
-          <Link to="/scan" className="btn btn-outline btn-sm" title="Start screening another package">
-            <PlusCircle size={14} />
-            <span>New Scan</span>
-          </Link>
+            <Link
+              to="/scan"
+              className="btn btn-tertiary-action btn-sm"
+              title="Start screening another package"
+            >
+              <PlusCircle size={13} />
+              <span>New Scan</span>
+            </Link>
+          </div>
         </div>
       </div>
 
