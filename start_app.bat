@@ -12,8 +12,8 @@ if not exist "%VENV_PY%" (
     exit /b 1
 )
 
-if not exist "%FRONTEND_DIR%\node_modules" (
-    echo Installing frontend dependencies...
+if not exist "%FRONTEND_DIR%\node_modules\@vercel\analytics" (
+    echo Syncing frontend dependencies...
     cd /d "%FRONTEND_DIR%"
     call npm install
     if errorlevel 1 (
