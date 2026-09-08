@@ -489,11 +489,23 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
             val = ed.get("value") or getattr(r, "value", None)
             unit = ed.get("unit") or getattr(r, "unit", None)
             raw = ed.get("raw_value") or getattr(r, "raw_value", None) or ed.get("value_text")
-            val_display = (
-                f"<b>Value:</b> {val or '—'}<br/>"
-                f"<b>Unit:</b> {unit or '—'}<br/>"
-                f"<font color='#64748B'>Raw: \"{raw or '—'}\"</font>"
-            )
+            if ed.get("is_multipack") or getattr(r, "is_multipack", False):
+                decl_expr = ed.get("declared_expression") or val or raw
+                pack_cnt = ed.get("pack_count") or getattr(r, "pack_count", "—")
+                unit_qty = ed.get("unit_quantity") or ed.get("unit_net_quantity") or getattr(r, "unit_quantity", "—")
+                derived_tot = ed.get("derived_total_quantity") or getattr(r, "derived_total_quantity", "—")
+                val_display = (
+                    f"<b>Expression:</b> {decl_expr or '—'}<br/>"
+                    f"<b>Pack Count:</b> {pack_cnt} &nbsp;|&nbsp; <b>Unit Qty:</b> {unit_qty} {unit or ''}<br/>"
+                    f"<b>Derived Total:</b> {derived_tot} {unit or ''} <i>(derived)</i><br/>"
+                    f"<font color='#64748B'>Raw: \"{raw or '—'}\"</font>"
+                )
+            else:
+                val_display = (
+                    f"<b>Value:</b> {val or '—'}<br/>"
+                    f"<b>Unit:</b> {unit or '—'}<br/>"
+                    f"<font color='#64748B'>Raw: \"{raw or '—'}\"</font>"
+                )
             extracted_val_p = _safe_html_p(val_display, small_style)
         else:
             extracted_text = ed.get("value") or ed.get("raw_value") or r.message or "—"

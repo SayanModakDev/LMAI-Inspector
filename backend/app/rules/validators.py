@@ -8,7 +8,7 @@ is executed deterministically rather than merely checking field presence.
 from dataclasses import dataclass, field
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from app.extraction.cleaner import is_artifact_token
 
@@ -78,6 +78,14 @@ class ValidationResult:
     unit_present: Optional[bool] = None
     quantity_unit_valid: Optional[bool] = None
 
+    # Multipack semantic attributes
+    is_multipack: Optional[bool] = None
+    pack_count: Optional[int] = None
+    unit_quantity: Optional[Union[int, float]] = None
+    unit_net_quantity: Optional[Union[int, float]] = None
+    declared_expression: Optional[str] = None
+    derived_total_quantity: Optional[Union[int, float]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert validation result to dictionary representation."""
         data: Dict[str, Any] = {
@@ -103,6 +111,18 @@ class ValidationResult:
             data["unit_present"] = self.unit_present
         if self.quantity_unit_valid is not None:
             data["quantity_unit_valid"] = self.quantity_unit_valid
+        if self.is_multipack is not None:
+            data["is_multipack"] = self.is_multipack
+        if self.pack_count is not None:
+            data["pack_count"] = self.pack_count
+        if self.unit_quantity is not None:
+            data["unit_quantity"] = self.unit_quantity
+        if self.unit_net_quantity is not None:
+            data["unit_net_quantity"] = self.unit_net_quantity
+        if self.declared_expression is not None:
+            data["declared_expression"] = self.declared_expression
+        if self.derived_total_quantity is not None:
+            data["derived_total_quantity"] = self.derived_total_quantity
         return data
 
 
@@ -354,7 +374,157 @@ def validate_value_and_unit_present(
             evidence=evidence,
         )
 
-    # 4. Extract or parse quantity value and unit token
+    # 4. Check for multipack declaration
+    is_multi = bool(evidence.get("is_multipack"))
+    if not is_multi and raw_val:
+        from app.extraction.declaration_extractor import parse_quantity_expression
+        parsed_test = parse_quantity_expression(raw_val)
+        if parsed_test and parsed_test.get("is_multipack"):
+            is_multi = True
+            evidence["is_multipack"] = True
+            evidence.setdefault("pack_count", parsed_test["pack_count"])
+            evidence.setdefault("unit_net_quantity", parsed_test["unit_net_quantity"])
+            evidence.setdefault("unit", parsed_test["unit"])
+            evidence.setdefault("declared_expression", parsed_test["declared_expression"])
+            evidence.setdefault("derived_total_quantity", parsed_test["derived_total_quantity"])
+
+    if is_multi:
+        pack_cnt = evidence.get("pack_count")
+        unit_qty = evidence.get("unit_net_quantity") or evidence.get("unit_quantity") or evidence.get("quantity_value")
+        norm_u = evidence.get("unit") or evidence.get("quantity_unit") or evidence.get("raw_unit")
+        decl_expr = evidence.get("declared_expression") or evidence.get("value") or raw_val
+        derived_total = evidence.get("derived_total_quantity")
+
+        # Validate count
+        count_valid = False
+        if pack_cnt is not None:
+            try:
+                c_int = int(pack_cnt)
+                count_valid = c_int > 0
+            except (ValueError, TypeError):
+                count_valid = False
+
+        # Validate unit quantity
+        unit_qty_valid = False
+        num_unit_qty = None
+        if unit_qty is not None:
+            try:
+                num_unit_qty = float(unit_qty)
+                unit_qty_valid = num_unit_qty > 0
+                if num_unit_qty.is_integer():
+                    num_unit_qty = int(num_unit_qty)
+            except (ValueError, TypeError):
+                unit_qty_valid = False
+
+        # Validate unit
+        norm_unit_str: Optional[str] = None
+        if norm_u:
+            lowered_u = str(norm_u).lower().strip()
+            if lowered_u in {'g', 'gm', 'gms', 'gram', 'grams'}:
+                norm_unit_str = 'g'
+            elif lowered_u in {'kg', 'kgs', 'kilogram', 'kilograms'}:
+                norm_unit_str = 'kg'
+            elif lowered_u in {'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters'}:
+                norm_unit_str = 'ml'
+            elif lowered_u in {'l', 'ltr', 'litre', 'litres', 'liter', 'liters'}:
+                norm_unit_str = 'L'
+            else:
+                norm_unit_str = ALL_LEGAL_UNITS.get(lowered_u, lowered_u)
+
+        is_legal = bool(norm_unit_str and (norm_unit_str in ALL_LEGAL_UNITS.values() or norm_unit_str.lower() in ALL_LEGAL_UNITS.keys()))
+
+        if not count_valid and not unit_qty_valid and not is_legal:
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=f"Multipack expression detected but components cannot be verified: '{raw_val}'.",
+                normalized_value=raw_val,
+                raw_value=raw_val,
+                value=None,
+                unit=None,
+                is_multipack=True,
+                quantity_present=False,
+                unit_present=False,
+                quantity_unit_valid=False,
+                evidence=evidence,
+            )
+
+        if not count_valid:
+            return ValidationResult(
+                status="FAIL",
+                binary=0,
+                reason=f"Multipack declaration is missing a valid positive pack count: '{raw_val}'.",
+                normalized_value=decl_expr,
+                raw_value=raw_val,
+                value=decl_expr,
+                unit=norm_unit_str,
+                is_multipack=True,
+                pack_count=pack_cnt,
+                unit_quantity=num_unit_qty,
+                quantity_present=unit_qty_valid,
+                unit_present=bool(norm_unit_str),
+                quantity_unit_valid=False,
+                evidence=evidence,
+            )
+
+        if not unit_qty_valid:
+            return ValidationResult(
+                status="FAIL",
+                binary=0,
+                reason=f"Multipack declaration is missing a valid unit net quantity: '{raw_val}'.",
+                normalized_value=decl_expr,
+                raw_value=raw_val,
+                value=decl_expr,
+                unit=norm_unit_str,
+                is_multipack=True,
+                pack_count=pack_cnt,
+                unit_quantity=None,
+                quantity_present=False,
+                unit_present=bool(norm_unit_str),
+                quantity_unit_valid=False,
+                evidence=evidence,
+            )
+
+        if not is_legal:
+            return ValidationResult(
+                status="FAIL",
+                binary=0,
+                reason=f"Multipack unit '{norm_u}' is not a recognized legal unit under Legal Metrology Rules.",
+                normalized_value=decl_expr,
+                raw_value=raw_val,
+                value=decl_expr,
+                unit=norm_u,
+                is_multipack=True,
+                pack_count=pack_cnt,
+                unit_quantity=num_unit_qty,
+                quantity_present=True,
+                unit_present=bool(norm_u),
+                quantity_unit_valid=False,
+                evidence=evidence,
+            )
+
+        # Valid multipack!
+        return ValidationResult(
+            status="PASS",
+            binary=1,
+            reason=f"Valid declared multipack quantity: {decl_expr}",
+            normalized_value=decl_expr,
+            raw_value=raw_val,
+            value=decl_expr,
+            unit=norm_unit_str,
+            is_multipack=True,
+            pack_count=pack_cnt,
+            unit_quantity=num_unit_qty,
+            unit_net_quantity=num_unit_qty,
+            declared_expression=decl_expr,
+            derived_total_quantity=derived_total,
+            quantity_present=True,
+            unit_present=True,
+            quantity_unit_valid=True,
+            evidence=evidence,
+        )
+
+    # 5. Extract or parse quantity value and unit token for single package
     qty_val = evidence.get("quantity_value")
     qty_unit = evidence.get("quantity_unit") or evidence.get("raw_unit")
 
@@ -540,8 +710,9 @@ def validate_value_and_unit_present(
     )
 
 
-# Dedicated alias export
+# Dedicated alias exports
 validate_quantity_unit_pair = validate_value_and_unit_present
+validate_declared_net_quantity = validate_value_and_unit_present
 
 
 @register_validator("MRP_PRESENT")

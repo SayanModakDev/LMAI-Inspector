@@ -147,7 +147,7 @@ SECTION_INSTRUCTIONS = "INSTRUCTIONS"
 SECTION_OTHER = "OTHER"
 
 NET_QTY_POSITIVE_CONTEXT_RE = re.compile(
-    r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity|net\s*contents?)\b',
+    r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity|net\s*contents?|pack\s*(?:content|contents|size|qty\.?|quantity)|package\s*(?:quantity|content|contents)|pkg\s*qty)\b',
     re.IGNORECASE,
 )
 
@@ -319,6 +319,9 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
 
     # Section continuity
     if current_section == SECTION_NUTRITION:
+        # Check if line breaks out of nutrition into a multipack expression
+        if re.search(r'\b\d+\s*(?:[×xX*✕✖⨯]|\bof\b)\s*[+-]?\d+(?:\.\d+)?\s*(?:g|gm|gms|grams?|kg|kgs?|ml|millilitres?|l|litres?)\b', cleaned, re.I) and not NUTRITION_LINE_RE.search(cleaned):
+            return SECTION_DECLARED_QUANTITY
         if NUTRITION_LINE_RE.search(cleaned) or re.search(r'\b\d+(?:\.\d+)?\s*(?:g|mg|kcal|kj|%)\b', cleaned, re.I):
             return SECTION_NUTRITION
         if re.fullmatch(r'[\d.,\s/%+-]+', cleaned) or len(cleaned.split()) <= 4:
@@ -723,6 +726,59 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
 
     # 2. Declared Net Quantity comparison
     if field_name == 'DECLARED_NET_QUANTITY':
+        is_multi1 = bool(cand1.get('is_multipack'))
+        is_multi2 = bool(cand2.get('is_multipack'))
+
+        # A. Multipack vs Multipack
+        if is_multi1 and is_multi2:
+            cnt1 = cand1.get('pack_count')
+            cnt2 = cand2.get('pack_count')
+            uq1 = cand1.get('unit_net_quantity')
+            uq2 = cand2.get('unit_net_quantity')
+            u1 = str(cand1.get('quantity_unit') or cand1.get('unit') or '').lower().strip()
+            u2 = str(cand2.get('quantity_unit') or cand2.get('unit') or '').lower().strip()
+
+            if cnt1 is not None and cnt2 is not None and cnt1 != cnt2:
+                return True
+            if uq1 is not None and uq2 is not None:
+                try:
+                    if abs(float(uq1) - float(uq2)) > 0.001:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            if u1 and u2 and u1 != u2:
+                return True
+            return False
+
+        # B. Multipack vs Single Quantity (Packaging Hierarchy: Outer Package vs Inner Unit)
+        if is_multi1 != is_multi2:
+            multi_cand = cand1 if is_multi1 else cand2
+            single_cand = cand2 if is_multi1 else cand1
+
+            s_val = single_cand.get('quantity_value') or single_cand.get('numeric_value')
+            s_unit = str(single_cand.get('quantity_unit') or single_cand.get('unit') or '').lower().strip()
+            m_unit = str(multi_cand.get('quantity_unit') or multi_cand.get('unit') or '').lower().strip()
+
+            if s_val is not None:
+                try:
+                    s_float = float(s_val)
+                    m_unit_qty = float(multi_cand.get('unit_net_quantity') or 0)
+                    m_total_qty = float(multi_cand.get('derived_total_quantity') or 0)
+
+                    unit_matches = not s_unit or not m_unit or s_unit == m_unit
+                    matches_unit = abs(s_float - m_unit_qty) <= 0.001
+                    matches_total = abs(s_float - m_total_qty) <= 0.001
+
+                    if unit_matches and (matches_unit or matches_total):
+                        # Complementary hierarchy: outer multipack breakdown vs inner unit or derived total
+                        return False
+                    else:
+                        # Genuine conflict between declarations
+                        return True
+                except (ValueError, TypeError):
+                    pass
+
+        # C. Single Quantity vs Single Quantity
         qv1 = cand1.get('quantity_value')
         qv2 = cand2.get('quantity_value')
         qu1 = str(cand1.get('quantity_unit') or '').lower().strip()
@@ -1665,7 +1721,7 @@ NET_QTY_UNITS_MAP: Dict[str, str] = {
 }
 
 NET_QTY_LABEL_RE = re.compile(
-    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume|mass)|quantity|contents?)(?:\s*[:.=]|\s+[-–](?=\s))*\s*([^\n,;]+)',
+    r'(?:(?:net|pack|package|pkg)\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|size|vol\.?|volume|mass)|quantity|contents?|pack\s*size)(?:\s*[:.=]|\s+[-–](?=\s))*\s*([^\n,;]+)',
     re.IGNORECASE,
 )
 
@@ -1681,15 +1737,148 @@ QUANTITY_UNITS_CHOICES = (
 NET_QTY_UNIT_PATTERN = rf'(?:(?<=\d)|(?<=\s)|^)\s*({QUANTITY_UNITS_CHOICES})\b'
 
 STANDALONE_QTY_RE = re.compile(
-    rf'\b([+-]?\d+(?:\.\d+)?)\s*({QUANTITY_UNITS_CHOICES})\b',
+    rf'(?:\b|(?<=\s)|^)([+-]?\d+(?:\.\d+)?)\s*({QUANTITY_UNITS_CHOICES})\b',
     re.IGNORECASE,
 )
+
+MULTIPACK_COUNT_UNITS = r'(?:pk|pks|packs?|units?|nos?|pcs?|pieces?|n|pouches?|sachets?|bottles?|cans?|bars?|tins?)'
+MULTIPACK_SEPARATORS = r'(?:[×xX*✕✖⨯]|\bof\b)'
+
+MULTIPACK_QTY_RE = re.compile(
+    rf'\b(?P<count>\d+)\s*(?:{MULTIPACK_COUNT_UNITS}\b\s*)?{MULTIPACK_SEPARATORS}\s*(?P<qty>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>{QUANTITY_UNITS_CHOICES})\b',
+    re.IGNORECASE,
+)
+
+MULTIPACK_INVERTED_RE = re.compile(
+    rf'\b(?P<qty>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>{QUANTITY_UNITS_CHOICES})\s*{MULTIPACK_SEPARATORS}\s*(?P<count>\d+)(?:\s*{MULTIPACK_COUNT_UNITS}\b)?',
+    re.IGNORECASE,
+)
+
+
+def parse_quantity_expression(expr: str) -> Optional[Dict[str, Any]]:
+    """
+    Universal packaged-commodity quantity expression parser.
+    Recognizes:
+      - Standard Multipack: COUNT × UNIT QUANTITY (e.g. 10 × 50 g, 6 x 100g, 24 × 200 ml)
+      - Inverted Multipack: UNIT QUANTITY × COUNT (e.g. 50 g × 10)
+      - Single Quantity: QUANTITY UNIT (e.g. 250 g, 500 ml)
+    Never confuses COUNT with net quantity.
+    Calculates derived total quantity (source = DERIVED) without replacing declared expression.
+    Returns None for invalid or incomplete expressions.
+    """
+    if not expr or not expr.strip():
+        return None
+
+    clean = expr.strip()
+
+    # 1. Standard Multipack: COUNT × UNIT QUANTITY
+    m_multi = MULTIPACK_QTY_RE.search(clean)
+    if m_multi:
+        prefix = clean[:m_multi.start()].rstrip()
+        if not prefix.endswith('-'):
+            try:
+                count = int(m_multi.group('count'))
+                raw_qty = m_multi.group('qty')
+                flt_qty = float(raw_qty)
+                unit_qty = int(flt_qty) if flt_qty.is_integer() else flt_qty
+                raw_unit = m_multi.group('unit')
+                norm_unit, qty_type = normalize_unit(raw_unit)
+
+                if count > 0 and unit_qty > 0 and norm_unit:
+                    calc_total = count * unit_qty
+                    derived_total = int(calc_total) if isinstance(calc_total, float) and calc_total.is_integer() else calc_total
+                    declared_expr = m_multi.group(0).strip()
+                    logger.debug(
+                        "Detected standard multipack: count=%s unit_qty=%s unit=%s derived_total=%s expr=%s",
+                        count, unit_qty, norm_unit, derived_total, declared_expr
+                    )
+                    return {
+                        "is_multipack": True,
+                        "pack_count": count,
+                        "unit_net_quantity": unit_qty,
+                        "unit_quantity": unit_qty,
+                        "unit": norm_unit,
+                        "raw_unit": raw_unit,
+                        "declared_expression": declared_expr,
+                        "derived_total_quantity": derived_total,
+                        "quantity_type": qty_type.value if qty_type else None,
+                        "span": declared_expr,
+                    }
+            except (ValueError, TypeError, IndexError):
+                pass
+
+    # 2. Inverted Multipack: UNIT QUANTITY × COUNT
+    m_inv = MULTIPACK_INVERTED_RE.search(clean)
+    if m_inv:
+        prefix = clean[:m_inv.start()].rstrip()
+        if not prefix.endswith('-'):
+            try:
+                count = int(m_inv.group('count'))
+                raw_qty = m_inv.group('qty')
+                flt_qty = float(raw_qty)
+                unit_qty = int(flt_qty) if flt_qty.is_integer() else flt_qty
+                raw_unit = m_inv.group('unit')
+                norm_unit, qty_type = normalize_unit(raw_unit)
+
+                if count > 0 and unit_qty > 0 and norm_unit:
+                    calc_total = count * unit_qty
+                    derived_total = int(calc_total) if isinstance(calc_total, float) and calc_total.is_integer() else calc_total
+                    declared_expr = m_inv.group(0).strip()
+                    logger.debug(
+                        "Detected inverted multipack: count=%s unit_qty=%s unit=%s derived_total=%s expr=%s",
+                        count, unit_qty, norm_unit, derived_total, declared_expr
+                    )
+                    return {
+                        "is_multipack": True,
+                        "pack_count": count,
+                        "unit_net_quantity": unit_qty,
+                        "unit_quantity": unit_qty,
+                        "unit": norm_unit,
+                        "raw_unit": raw_unit,
+                        "declared_expression": declared_expr,
+                        "derived_total_quantity": derived_total,
+                        "quantity_type": qty_type.value if qty_type else None,
+                        "span": declared_expr,
+                    }
+            except (ValueError, TypeError, IndexError):
+                pass
+
+    # 3. Single standard quantity: QUANTITY UNIT
+    m_single = STANDALONE_QTY_RE.search(clean)
+    if m_single:
+        try:
+            raw_qty = m_single.group(1)
+            flt_qty = float(raw_qty)
+            qty_val = int(flt_qty) if flt_qty.is_integer() else flt_qty
+            raw_unit = m_single.group(2)
+            norm_unit, qty_type = normalize_unit(raw_unit)
+
+            if qty_val > 0 and norm_unit:
+                declared_expr = m_single.group(0).strip()
+                return {
+                    "is_multipack": False,
+                    "pack_count": None,
+                    "unit_net_quantity": None,
+                    "unit_quantity": None,
+                    "quantity": qty_val,
+                    "unit": norm_unit,
+                    "raw_unit": raw_unit,
+                    "declared_expression": declared_expr,
+                    "derived_total_quantity": None,
+                    "quantity_type": qty_type.value if qty_type else None,
+                    "span": declared_expr,
+                }
+        except (ValueError, TypeError, IndexError):
+            pass
+
+    return None
 
 
 def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     """Extract structured declared net quantity with semantic section scoping.
     Distinguishes declared package quantity from nutritional table values, serving sizes,
-    and unrelated section numbers across mass, volume, and count units. Preserves ignored candidates for auditability."""
+    and unrelated section numbers across mass, volume, and count units.
+    Universally parses multipack expressions (COUNT × UNIT QUANTITY) without collapsing COUNT to quantity."""
     if not text:
         return None
 
@@ -1716,49 +1905,166 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         if label_match:
             raw_span = label_match.group(0).strip()
             after_label = label_match.group(1).strip()
-            num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
-            unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
-
-            qty_val = num_match.group(1) if num_match else None
-            raw_unit = unit_match.group(1) if unit_match else None
-
-            if qty_val is not None or raw_unit is not None:
-                cand = build_quantity_candidate(
-                    qty_val=qty_val,
-                    raw_unit=raw_unit,
-                    raw_span=raw_span,
-                    confidence=0.9 if (qty_val and raw_unit) else 0.8,
-                    semantic_section=SECTION_DECLARED_QUANTITY,
-                    relevance="high",
-                    relevance_score=0.95 if (qty_val and raw_unit) else 0.85,
-                    source_context=line_clean,
-                    source="OCR",
-                )
+            parsed_q = parse_quantity_expression(after_label)
+            if parsed_q:
+                if parsed_q["is_multipack"]:
+                    cand = build_quantity_candidate(
+                        qty_val=parsed_q["unit_net_quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.95,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.98,
+                        source_context=line_clean,
+                        source="OCR",
+                        is_multipack=True,
+                        pack_count=parsed_q["pack_count"],
+                        unit_net_quantity=parsed_q["unit_net_quantity"],
+                        declared_expression=parsed_q["declared_expression"],
+                        derived_total_quantity=parsed_q["derived_total_quantity"],
+                    )
+                else:
+                    cand = build_quantity_candidate(
+                        qty_val=parsed_q["quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.90,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.95,
+                        source_context=line_clean,
+                        source="OCR",
+                        is_multipack=False,
+                    )
                 valid_candidates.append(cand)
                 continue
+            else:
+                num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+                unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
+                qty_val = num_match.group(1) if num_match else None
+                raw_unit = unit_match.group(1) if unit_match else None
 
-        # 2. Check for standalone quantity on this line
+                if qty_val is not None or raw_unit is not None:
+                    cand = build_quantity_candidate(
+                        qty_val=qty_val,
+                        raw_unit=raw_unit,
+                        raw_span=raw_span,
+                        confidence=0.85 if (qty_val and raw_unit) else 0.8,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.90 if (qty_val and raw_unit) else 0.85,
+                        source_context=line_clean,
+                        source="OCR",
+                    )
+                    valid_candidates.append(cand)
+                    continue
+
+        # 2. Section scoping flags for standalone checks on this line
+        is_nutrition = (
+            sec == SECTION_NUTRITION
+            or bool(NUTRITION_LINE_RE.search(line_clean))
+            or bool(NUTRITION_SECTION_HEADER_RE.search(line_clean))
+            or bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium)\b', line_clean, re.I))
+        )
+        is_serving = (
+            sec == SECTION_SERVING_SIZE
+            or bool(SERVING_SIZE_RE.search(line_clean))
+        )
+        is_other_section = (
+            sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS, SECTION_FSSAI, SECTION_BATCH)
+            or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
+            or bool(STORAGE_STOP_RE.search(line_clean))
+            or bool(MARKETING_STOP_RE.search(line_clean))
+        )
+
+        # 3. Check for standalone multipack expression on this line
+        multi_match = parse_quantity_expression(line_clean)
+        if multi_match and multi_match.get("is_multipack"):
+            raw_span = multi_match["declared_expression"]
+            has_nutrient_words = bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium|trans|saturated|dietary|fiber|calcium|iron)\b', line_clean, re.I))
+            if is_nutrition and has_nutrient_words:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_NUTRITION,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                )
+                ignored_cand['rejection_reason'] = "Value belongs to nutritional table, not declared net quantity"
+                ignored_candidates.append(ignored_cand)
+            elif is_serving:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_SERVING_SIZE,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                )
+                ignored_cand['rejection_reason'] = "Value is serving size, not package declared net quantity"
+                ignored_candidates.append(ignored_cand)
+            elif is_other_section:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=sec,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                )
+                ignored_cand['rejection_reason'] = f"Value belongs to {sec} section, not declared net quantity"
+                ignored_candidates.append(ignored_cand)
+            else:
+                cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.92,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.95,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                )
+                valid_candidates.append(cand)
+            continue
+
+        # 4. Check for standalone single quantity on this line
         for sm in STANDALONE_QTY_RE.finditer(line_clean):
             qty_val = sm.group(1)
             raw_unit = sm.group(2)
             raw_span = sm.group(0).strip()
-
-            is_nutrition = (
-                sec == SECTION_NUTRITION
-                or bool(NUTRITION_LINE_RE.search(line_clean))
-                or bool(NUTRITION_SECTION_HEADER_RE.search(line_clean))
-                or bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium)\b', line_clean, re.I))
-            )
-            is_serving = (
-                sec == SECTION_SERVING_SIZE
-                or bool(SERVING_SIZE_RE.search(line_clean))
-            )
-            is_other_section = (
-                sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS, SECTION_FSSAI, SECTION_BATCH)
-                or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
-                or bool(STORAGE_STOP_RE.search(line_clean))
-                or bool(MARKETING_STOP_RE.search(line_clean))
-            )
 
             if is_nutrition:
                 ignored_cand = build_quantity_candidate(
@@ -1833,6 +2139,41 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
     if label_match_norm:
         raw_span = label_match_norm.group(0).strip()
         after_label = label_match_norm.group(1).strip()
+        parsed_q = parse_quantity_expression(after_label)
+        if parsed_q:
+            if parsed_q["is_multipack"]:
+                winner = build_quantity_candidate(
+                    qty_val=parsed_q["unit_net_quantity"],
+                    raw_unit=parsed_q["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.90,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.95,
+                    source_context=raw_span,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=parsed_q["pack_count"],
+                    unit_net_quantity=parsed_q["unit_net_quantity"],
+                    declared_expression=parsed_q["declared_expression"],
+                    derived_total_quantity=parsed_q["derived_total_quantity"],
+                )
+            else:
+                winner = build_quantity_candidate(
+                    qty_val=parsed_q["quantity"],
+                    raw_unit=parsed_q["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.85,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.90,
+                    source_context=raw_span,
+                    source="OCR",
+                )
+            if ignored_candidates:
+                winner['ignored_candidates'] = ignored_candidates
+            return winner
+
         num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
         unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
         qty_val = num_match.group(1) if num_match else None
