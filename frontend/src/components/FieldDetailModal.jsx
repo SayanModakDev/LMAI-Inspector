@@ -249,7 +249,7 @@ const FieldDetailModal = ({ field, onClose }) => {
           {/* Legal Metrology Notice (Section 14) */}
           <div className="field-detail-disclaimer">
             <p className="text-2xs text-muted leading-relaxed m-0">
-              Confidence reflects the extraction/detection subsystem; it is not a legal compliance probability. Compliance status is evaluated deterministically according to the Legal Metrology (Packaged Commodities) Rules, 2011.
+              Confidence reflects the extraction/detection subsystem; it is not a legal compliance probability.
             </p>
           </div>
         </div>

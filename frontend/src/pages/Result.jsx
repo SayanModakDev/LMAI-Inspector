@@ -25,7 +25,6 @@ import {
 import { apiService } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
 import StatusBadge from '../components/StatusBadge';
-import ConflictCard from '../components/ConflictCard';
 import EvidenceViewer from '../components/EvidenceViewer';
 import ResultHero from '../components/ResultHero';
 import ErrorState from '../components/ErrorState';
@@ -46,6 +45,7 @@ const Result = () => {
   const [ruleFilter, setRuleFilter] = useState('ALL');
   const [ruleSearch, setRuleSearch] = useState('');
   const [expandedRuleIds, setExpandedRuleIds] = useState(new Set());
+  const [evidenceCount, setEvidenceCount] = useState(null);
 
   // Physical Verification & Manual Input State
   const [manualData, setManualData] = useState({
@@ -70,31 +70,6 @@ const Result = () => {
     } catch (_) {}
     return { name: 'Workspace User', badge: 'Not configured', station: 'Demo / Local Workspace' };
   });
-
-  const getConflictCandidates = (field) => {
-    if (Array.isArray(field.candidates) && field.candidates.length > 0) {
-      return field.candidates.map((c, idx) => ({
-        value: typeof c === 'object' ? (c.value || c.field_value || JSON.stringify(c)) : String(c),
-        source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Candidate ${idx + 1}`,
-        confidence: typeof c === 'object' ? c.confidence : 0.65,
-      }));
-    }
-    const rawVal = String(field.field_value || '').replace(/^CONFLICT:\s*/i, '');
-    if (rawVal.includes(' vs ')) {
-      return rawVal.split(/\s+vs\s+/i).map((part, idx) => ({
-        value: part.trim(),
-        source: `Panel Detection ${idx + 1}`,
-        confidence: 0.65,
-      }));
-    }
-    return [
-      {
-        value: rawVal || 'Discrepancy detected across panel views',
-        source: field.source || 'Panel Observation',
-        confidence: field.confidence || 0.65,
-      },
-    ];
-  };
 
   useEffect(() => {
     fetchInspection();
@@ -450,11 +425,12 @@ const Result = () => {
                               <div>
                                 <span className="dossier-label">Inspector Action Guidance:</span>
                                 <div className="dossier-val text-muted text-xs">
-                                  {rule.status === 'FAIL'
-                                    ? 'Record non-compliance notice under Section 36 of Legal Metrology Act, 2009.'
-                                    : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
-                                    ? 'Requires physical gauge measurement, scale verification, or manual packaging review.'
-                                    : 'Declaration satisfies mandatory statutory requirements.'}
+                                  {rule.action_guidance ||
+                                    (rule.status === 'FAIL'
+                                      ? 'Review non-compliant declaration against applicable rules.'
+                                      : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
+                                      ? 'Image-based screening cannot confirm this requirement. Physical verification is required according to the inspection configuration.'
+                                      : 'Declaration satisfies verified rule criteria.')}
                                 </div>
                               </div>
                             </div>
@@ -495,7 +471,7 @@ const Result = () => {
         <div className="physical-intro-alert mb-4">
           <ShieldCheck size={22} className="text-teal flex-shrink-0" />
           <div className="text-xs leading-relaxed">
-            <strong>Physical Verification Notice:</strong> This requirement cannot be confirmed through image-based screening alone. Calibrated physical measurement (e.g. actual net content via certified scale or numeral font height via vernier caliper) must be performed directly on the package.
+            <strong>Physical Verification Notice:</strong> Image-based screening cannot confirm this requirement. Physical verification is required according to the inspection configuration.
           </div>
         </div>
 
@@ -507,7 +483,7 @@ const Result = () => {
 
         <form onSubmit={handleManualSave} className="physical-form-grid">
           <div className="physical-form-left">
-            <h4 className="font-semibold text-sm mb-3">Certified Scale Measurement</h4>
+            <h4 className="font-semibold text-sm mb-3">Physical Scale Measurement</h4>
 
             <div className="form-group mb-3">
               <label className="form-label">
@@ -768,115 +744,7 @@ const Result = () => {
         onViewConflict={handleScrollToConflict}
       />
 
-      {/* Dedicated Review Required Banner (Section 17 strictly) */}
-      {isReviewRequired && (
-        <div className="review-required-banner card">
-          <div className="review-banner__header">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={20} className="text-warning flex-shrink-0" />
-              <div>
-                <h4 className="review-banner__title">Manual Review Required</h4>
-                <p className="review-banner__subtitle text-xs">
-                  Automated visual screening identified statutory declarations that require manual verification by the inspector before clearance.
-                </p>
-              </div>
-            </div>
-            <span className="badge badge-warning font-mono text-xs">
-              {reviewCount} Declaration{reviewCount === 1 ? '' : 's'} Pending Review
-            </span>
-          </div>
 
-          <div className="review-banner__reasons-grid">
-            {missingRules.length > 0 && (
-              <div className="review-reason-box">
-                <span className="review-reason-label font-semibold text-xs">
-                  Missing Declarations ({missingRules.length}):
-                </span>
-                <ul className="review-reason-list text-xs text-muted">
-                  {missingRules.slice(0, 4).map((r, i) => (
-                    <li key={i}>{r.parameter.replace(/_/g, ' ')} not detected in scan</li>
-                  ))}
-                  {missingRules.length > 4 && <li>+ {missingRules.length - 4} more</li>}
-                </ul>
-              </div>
-            )}
-
-            {conflictFields.length > 0 && (
-              <div className="review-reason-box review-reason-box--conflict">
-                <span className="review-reason-label font-semibold text-xs text-danger">
-                  Contradictory Declarations ({conflictFields.length}):
-                </span>
-                <ul className="review-reason-list text-xs text-secondary">
-                  {conflictFields.map((f, i) => (
-                    <li key={i}>
-                      {f.field_name?.replace(/_/g, ' ')}: Divergent values across panel views
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {physicalRules.length > 0 && (
-              <div className="review-reason-box">
-                <span className="review-reason-label font-semibold text-xs">
-                  Physical Verification Parameters ({physicalRules.length}):
-                </span>
-                <ul className="review-reason-list text-xs text-muted">
-                  {physicalRules.map((p, i) => (
-                    <li key={i}>{p.parameter.replace(/_/g, ' ')} requires certified tool measurement</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-
-          <div className="review-banner__actions">
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              onClick={() => setActiveTab('evidence')}
-            >
-              <Eye size={13} /> Review Visual Evidence
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              onClick={() => setActiveTab('matrix')}
-            >
-              <Layers size={13} /> View Rule Details
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              onClick={() => setActiveTab('physical')}
-            >
-              <Scale size={13} /> Physical Scale Measurement
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              onClick={handleGenerateReport}
-              disabled={generatingReport}
-            >
-              <Printer size={13} /> Generate Report
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Conflicting Evidence Cards (if multi-field conflict) */}
-      {conflictFields.length > 1 && (
-        <div className="conflicts-section">
-          {conflictFields.map((f, i) => (
-            <ConflictCard
-              key={i}
-              parameter={f.field_name}
-              candidates={getConflictCandidates(f)}
-              notes="Cross-panel reconciliation identified divergent values across views. The system does not pick a winner; manual review required."
-            />
-          ))}
-        </div>
-      )}
 
       {/* Workstation View Tabs */}
       <div className="workstation-tab-bar" role="tablist" aria-label="Inspection workstation views">
@@ -889,7 +757,7 @@ const Result = () => {
         >
           <Eye size={15} />
           <span>Evidence Workstation</span>
-          <span className="tab-badge">{inspection.extracted_fields?.length || ruleResults.length}</span>
+          <span className="tab-badge">{evidenceCount ?? (inspection.extracted_fields?.length || ruleResults.length)}</span>
         </button>
 
         <button
@@ -939,6 +807,7 @@ const Result = () => {
             ruleResults={ruleResults}
             barcodeResult={inspection.ocr_result?.ocr_data?.barcode_result}
             product={inspection.product}
+            onCountChange={setEvidenceCount}
           />
 
           {/* Compliance Rule Matrix Section beneath Evidence Workstation (Section 15) */}
