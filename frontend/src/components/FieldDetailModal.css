@@ -1,52 +1,62 @@
-/* Field Detail Modal Styles */
+/* FieldDetailModal Styles */
 .modal-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(10, 17, 31, 0.7);
-  backdrop-filter: blur(4px);
+  background-color: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 999;
   padding: 1rem;
   animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .field-detail-modal {
   background: #FFFFFF;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg), 0 20px 40px rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-xl);
   width: 100%;
-  max-width: 620px;
+  max-width: 640px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid var(--border-subtle);
+  animation: slideUp 0.15s ease-out;
 }
 
-@keyframes modalPop {
+@keyframes slideUp {
   from {
+    transform: translateY(12px);
     opacity: 0;
-    transform: scale(0.96) translateY(8px);
   }
   to {
+    transform: translateY(0);
     opacity: 1;
-    transform: scale(1) translateY(0);
   }
 }
 
 .field-detail-modal__header {
   padding: 1.15rem 1.35rem;
-  background-color: var(--primary-900);
+  background-color: #0F1C30;
   color: #FFFFFF;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  border-bottom: 1px solid #1E314B;
 }
 
 .field-detail-modal__title {
@@ -54,38 +64,39 @@
   font-weight: 700;
   color: #FFFFFF;
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .field-detail-modal__key {
-  color: var(--primary-200);
+  color: #94A3B8;
+  display: block;
+  margin-top: 0.15rem;
 }
 
 .field-detail-modal__close-btn {
-  background: rgba(255, 255, 255, 0.1);
+  background: transparent;
   border: none;
-  color: #FFFFFF;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
+  color: #94A3B8;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .field-detail-modal__close-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
   color: #FFFFFF;
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .field-detail-modal__body {
-  padding: 1.35rem;
+  padding: 1.25rem 1.35rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: 1rem;
 }
 
 .field-detail-status-row {
@@ -205,6 +216,49 @@
   font-size: 0.825rem;
   color: #78350F;
   line-height: 1.45;
+  margin: 0;
+}
+
+/* Collapsible Technical Metadata Section (Section 13) */
+.technical-metadata-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background-color: #FFFFFF;
+}
+
+.technical-metadata-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  background-color: #F8FAFC;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.technical-metadata-toggle:hover {
+  background-color: #F1F5F9;
+}
+
+.technical-metadata-body {
+  padding: 0.75rem 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background-color: #FFFFFF;
+}
+
+.technical-json-block {
+  background-color: #0B1321;
+  color: #93C5FD;
+  padding: 0.65rem;
+  border-radius: var(--radius-xs);
+  overflow-x: auto;
+  max-height: 180px;
   margin: 0;
 }
 

@@ -482,3 +482,57 @@
     grid-template-columns: 1fr;
   }
 }
+
+.workstation-combined-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.compliance-matrix-container {
+  width: 100%;
+}
+
+/* Mobile Stacking and Responsiveness (Section 29) */
+@media (max-width: 768px) {
+  .result-page {
+    gap: 1rem;
+  }
+
+  .matrix-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .matrix-search-input {
+    width: 100%;
+  }
+
+  .matrix-filter-buttons {
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .compliance-matrix-table th,
+  .compliance-matrix-table td {
+    padding: 0.5rem 0.65rem;
+    font-size: 0.725rem;
+  }
+
+  .report-signature-block {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .signature-box {
+    width: 100%;
+  }
+}
+

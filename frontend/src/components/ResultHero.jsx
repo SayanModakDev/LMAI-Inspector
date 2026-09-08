@@ -14,6 +14,8 @@ import {
   Cpu,
   Barcode,
   Globe,
+  Tag,
+  ChevronRight,
 } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import { formatISTDateTime } from '../utils/dateUtils';
@@ -21,8 +23,12 @@ import './ResultHero.css';
 
 /**
  * ResultHero Component
- * Prominent inspection result header with dynamic counts, IST timestamps,
- * overall compliance status, and result summary bar.
+ * Primary inspection result header adhering strictly to backend source of truth:
+ * - Summary counts derived directly from backend summary object
+ * - Canonical overall status (COMPLIANT, NON-COMPLIANT, REQUIRES REVIEW)
+ * - Concise dynamic explanation based on backend findings
+ * - Product Identity conflict handling (never picks an arbitrary winner)
+ * - Metadata summary bar
  */
 const ResultHero = ({
   inspection,
@@ -30,18 +36,40 @@ const ResultHero = ({
   reportUrl = null,
   generatingReport = false,
   onGenerateReport,
+  onViewConflict,
 }) => {
   if (!inspection) return null;
 
-  // Derive real dynamic counts from backend rule_results
-  const passCount = ruleResults.filter((r) => r.status === 'PASS').length;
-  const failCount = ruleResults.filter((r) => r.status === 'FAIL').length;
-  const reviewCount = ruleResults.filter(
-    (r) => r.status === 'NOT_VERIFIABLE' || r.status === 'MANUAL_CHECK'
-  ).length;
-  const naCount = ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
+  // 1. Strict Canonical Summary Counts (directly from backend summary)
+  const summary = inspection.summary || {};
+  const passCount =
+    summary.passed_count ??
+    summary.passed ??
+    ruleResults.filter((r) => r.status === 'PASS').length;
 
-  // Canonical overall status normalization (strictly adhering to allowed 3 statuses)
+  const failCount =
+    summary.failed_count ??
+    summary.failed ??
+    ruleResults.filter((r) => r.status === 'FAIL').length;
+
+  const reviewCount =
+    summary.review_count ??
+    summary.review ??
+    ruleResults.filter(
+      (r) =>
+        r.status === 'NOT_VERIFIABLE' ||
+        r.status === 'MANUAL_CHECK' ||
+        r.status === 'REVIEW' ||
+        r.status === 'NEEDS_REVIEW'
+    ).length;
+
+  const naCount =
+    summary.not_applicable_count ??
+    summary.na_count ??
+    summary.not_applicable ??
+    ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
+
+  // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
   const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
   let canonicalStatus = 'REQUIRES REVIEW';
   let bannerModifier = 'review';
@@ -57,193 +85,317 @@ const ResultHero = ({
     bannerModifier = 'review';
   }
 
-  // Derive concise explanation from backend reason data
-  const getConciseExplanation = () => {
+  // 3. Collect Review / Failure Reasons Dynamically
+  const reviewRules = ruleResults.filter(
+    (r) =>
+      r.status === 'NOT_VERIFIABLE' ||
+      r.status === 'MANUAL_CHECK' ||
+      r.status === 'REVIEW' ||
+      r.status === 'NEEDS_REVIEW'
+  );
+
+  const failRules = ruleResults.filter((r) => r.status === 'FAIL');
+
+  // 4. Concise Dynamic Explanation
+  const getExplanationContent = () => {
     if (canonicalStatus === 'NON-COMPLIANT') {
-      const firstFail = ruleResults.find((r) => r.status === 'FAIL');
-      if (firstFail?.reason || firstFail?.message) {
-        return `Non-compliance identified: ${firstFail.reason || firstFail.message}`;
-      }
-      if (inspection.findings?.failed?.length > 0) {
-        return `Non-compliance identified: ${inspection.findings.failed[0]}`;
-      }
-      return 'Mandatory statutory declaration requirements were not satisfied.';
+      const firstFail = failRules[0];
+      const failReason =
+        firstFail?.reason ||
+        firstFail?.message ||
+        (inspection.findings?.failed && inspection.findings.failed[0]) ||
+        'One or more mandatory statutory declarations failed deterministic validation requirements.';
+      return {
+        main: 'Deterministic screening identified statutory violations under Legal Metrology Rules.',
+        reasons: failRules.map((r) => r.reason || r.message || r.parameter?.replace(/_/g, ' ')).filter(Boolean),
+      };
     }
 
     if (canonicalStatus === 'REQUIRES REVIEW') {
-      // Check for conflict
-      const hasConflict = (inspection.extracted_fields || []).some(
-        (f) => String(f.field_value).startsWith('CONFLICT:') || f.source === 'MULTI_IMAGE_CONFLICT'
-      );
-      if (hasConflict) {
-        return 'Conflicting declarations detected across package views. Physical/manual review required.';
-      }
-      // Check for physical verification rules
-      const physicalRule = ruleResults.find(
-        (r) =>
-          (r.parameter === 'ACTUAL_NET_CONTENT' || r.parameter === 'FONT_SIZE_COMPLIANCE') &&
-          r.status === 'NOT_VERIFIABLE'
-      );
-      if (physicalRule?.reason) {
-        return physicalRule.reason;
-      }
-      if (inspection.findings?.needs_review?.length > 0) {
-        return inspection.findings.needs_review[0];
-      }
-      return 'One or more declarations could not be conclusively verified.';
+      return {
+        main: 'Manual review is required because one or more declarations could not be conclusively verified.',
+        reasons: reviewRules
+          .slice(0, 3)
+          .map((r) => r.reason || r.message || `${(r.parameter || '').replace(/_/g, ' ')} requires verification`)
+          .filter(Boolean),
+        extraCount: Math.max(0, reviewRules.length - 3),
+      };
     }
 
-    // COMPLIANT
-    return 'All statutory declarations satisfy mandatory Legal Metrology requirements.';
+    return {
+      main: 'All statutory declarations satisfy mandatory Legal Metrology requirements.',
+      reasons: [],
+    };
   };
 
-  const conciseExplanation = getConciseExplanation();
+  const explanation = getExplanationContent();
 
-  // Summary fields detection (only display fields that exist in backend response)
-  const productIdentity =
-    inspection.product_name ||
+  // 5. Product Identity Conflict Detection
+  const isProductNameConflict =
+    String(inspection.product_name || '').startsWith('CONFLICT:') ||
+    (inspection.extracted_fields || []).some(
+      (f) =>
+        (f.field_name === 'PRODUCT_NAME' || f.parameter === 'PRODUCT_NAME') &&
+        (String(f.field_value || '').startsWith('CONFLICT:') ||
+          f.source === 'MULTI_IMAGE_CONFLICT' ||
+          f.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
+          f.candidate_classification === 'TRUE_CONFLICT' ||
+          f.status === 'AMBIGUOUS' ||
+          f.is_ambiguous ||
+          (Array.isArray(f.candidates) && f.candidates.length > 1))
+    ) ||
+    ruleResults.some(
+      (r) =>
+        r.parameter === 'PRODUCT_NAME' &&
+        r.status === 'NOT_VERIFIABLE' &&
+        (r.reason || '').toLowerCase().includes('competing')
+    );
+
+  const productIdentity = isProductNameConflict
+    ? null
+    : (inspection.product_name ||
+       inspection.brand ||
+       inspection.product?.product_name ||
+       inspection.product?.brand ||
+       null);
+
+  const brandName =
     inspection.brand ||
-    inspection.product?.product_name ||
     inspection.product?.brand ||
+    inspection.extracted_fields?.find((f) => f.field_name === 'BRAND')?.field_value ||
     null;
 
-  const packageClassification = [inspection.package_type, inspection.category]
-    .filter(Boolean)
-    .join(' • ');
-
-  const importStatus = inspection.import_status || inspection.product?.country_of_origin || null;
+  const categoryName = inspection.category || inspection.product?.category || null;
+  const productType = inspection.product_type || inspection.product?.product_type || null;
+  const packageType = inspection.package_type || inspection.product?.package_type || 'RETAIL';
+  const importStatus = inspection.import_status || inspection.product?.import_status || inspection.product?.country_of_origin || 'DOMESTIC';
 
   const imageCount = Array.isArray(inspection.images) && inspection.images.length > 0
     ? inspection.images.length
     : (inspection.image_path ? 1 : null);
 
-  // OCR subsystem availability
   const ocrData = inspection.ocr_result?.ocr_data;
   const ocrItemsCount = Array.isArray(ocrData?.ocr_items) ? ocrData.ocr_items.length : null;
   const ocrEngine = inspection.ocr_result?.ocr_engine || (inspection.ocr_result ? 'PaddleOCR' : null);
 
-  // Barcode subsystem availability
   const barcodeResult = ocrData?.barcode_result;
   const barcodeValue = barcodeResult?.value || null;
-  const barcodeDecoder = barcodeResult?.source || (barcodeValue ? 'Detected' : null);
+
+  const handleScrollToConflict = (e) => {
+    e?.preventDefault();
+    if (onViewConflict) {
+      onViewConflict();
+    } else {
+      const el = document.getElementById('product-conflict-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  };
 
   return (
     <div className="results-hero-container">
       {/* Primary Hero Header */}
       <div className={`results-hero-card results-hero-card--${bannerModifier}`}>
         <div className="results-hero-main">
+          {/* Top Identifier Row */}
           <div className="results-hero-id-row">
-            <span className="results-hero-title">Inspection Result</span>
+            <span className="results-hero-title">Inspection Dossier</span>
             <span className="results-hero-id font-mono">#{inspection.id}</span>
             <span className="results-hero-dot">•</span>
             <span className="results-hero-timestamp">
               {formatISTDateTime(inspection.created_at || inspection.inspection_date)}
             </span>
+            {categoryName && (
+              <>
+                <span className="results-hero-dot">•</span>
+                <span className="badge badge-gray text-2xs font-semibold">{categoryName}</span>
+              </>
+            )}
           </div>
 
+          {/* Overall Screening Status + Dynamic Explanation */}
           <div className="results-hero-status-row">
             <div className="results-hero-status-badge">
               <StatusBadge status={canonicalStatus} size="lg" showBinary={true} />
             </div>
-            <p className="results-hero-explanation">{conciseExplanation}</p>
+            <div className="results-hero-explanation-block">
+              <p className="results-hero-explanation font-medium">{explanation.main}</p>
+              {explanation.reasons.length > 0 && (
+                <div className="results-hero-reasons-list text-xs text-secondary mt-1">
+                  {explanation.reasons.map((r, idx) => (
+                    <span key={idx} className="reason-item">
+                      {idx > 0 && <span className="reason-separator"> • </span>}
+                      {r}
+                    </span>
+                  ))}
+                  {explanation.extraCount > 0 && (
+                    <span className="reason-item text-muted"> +{explanation.extraCount} more</span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Real Backend Counts Row */}
-          <div className="results-hero-counts">
-            <div className={`count-pill count-pill--pass ${passCount > 0 ? 'count-pill--active' : ''}`}>
+          {/* Backend Canonical Rule Counts Row */}
+          <div className="results-hero-counts" role="region" aria-label="Screening Rule Counters">
+            <div
+              className={`count-pill count-pill--pass ${passCount > 0 ? 'count-pill--active' : ''}`}
+              title={`${passCount} rules passed deterministic verification`}
+            >
               <CheckCircle2 size={13} />
               <span className="count-num font-mono">{passCount}</span>
-              <span className="count-label">Passed</span>
+              <span className="count-label">PASSED</span>
             </div>
 
-            <div className={`count-pill count-pill--fail ${failCount > 0 ? 'count-pill--active' : ''}`}>
+            <div
+              className={`count-pill count-pill--fail ${failCount > 0 ? 'count-pill--active' : ''}`}
+              title={`${failCount} rules failed statutory requirements`}
+            >
               <XCircle size={13} />
               <span className="count-num font-mono">{failCount}</span>
-              <span className="count-label">Failed</span>
+              <span className="count-label">FAILED</span>
             </div>
 
-            <div className={`count-pill count-pill--review ${reviewCount > 0 ? 'count-pill--active' : ''}`}>
+            <div
+              className={`count-pill count-pill--review ${reviewCount > 0 ? 'count-pill--active' : ''}`}
+              title={`${reviewCount} rules require manual verification or certified measurement`}
+            >
               <AlertTriangle size={13} />
               <span className="count-num font-mono">{reviewCount}</span>
-              <span className="count-label">Review Required</span>
+              <span className="count-label">REVIEW</span>
             </div>
 
-            <div className="count-pill count-pill--na">
+            <div
+              className="count-pill count-pill--na"
+              title={`${naCount} rules evaluated as not applicable to this package`}
+            >
               <MinusCircle size={13} />
               <span className="count-num font-mono">{naCount}</span>
-              <span className="count-label">Not Applicable</span>
+              <span className="count-label">N/A</span>
             </div>
           </div>
         </div>
 
-        {/* Workstation Top-Level Actions */}
+        {/* Top-Level Workstation Actions */}
         <div className="results-hero-actions">
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary btn-sm"
             onClick={onGenerateReport}
             disabled={generatingReport}
             title="Compile or view official Legal Metrology inspection PDF report"
           >
-            <Printer size={15} />
+            <Printer size={14} />
             <span>
               {generatingReport
                 ? 'Compiling Report...'
                 : reportUrl
-                ? 'View Inspection PDF'
+                ? 'View Inspection Report'
                 : 'Generate Report'}
             </span>
           </button>
 
-          <Link to="/history" className="btn btn-outline" title="Return to past inspection records">
-            <History size={15} />
+          {reportUrl && (
+            <a
+              href={reportUrl}
+              download={`inspection_report_${inspection.id}.pdf`}
+              className="btn btn-outline btn-sm"
+              title="Download generated PDF report dossier"
+            >
+              <span>Download PDF</span>
+            </a>
+          )}
+
+          <Link to="/history" className="btn btn-outline btn-sm" title="Return to past inspection history">
+            <History size={14} />
             <span>History</span>
           </Link>
 
-          <Link to="/scan" className="btn btn-outline" title="Start screening another package">
-            <PlusCircle size={15} />
+          <Link to="/scan" className="btn btn-outline btn-sm" title="Start screening another package">
+            <PlusCircle size={14} />
             <span>New Scan</span>
           </Link>
         </div>
       </div>
 
-      {/* Result Summary Bar (Displays only fields present in backend response) */}
-      <div className="result-summary-bar">
-        {productIdentity && (
+      {/* Metadata Summary Bar */}
+      <div className="result-summary-bar" role="region" aria-label="Key Inspection Metadata">
+        {/* Product Identity / Conflict */}
+        {isProductNameConflict ? (
+          <div className="summary-item summary-item--conflict">
+            <Package size={14} className="summary-icon text-amber-600" />
+            <div className="summary-content">
+              <span className="summary-label">Product Identity</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="badge badge-warning font-mono text-2xs font-bold">
+                  CONFLICT
+                </span>
+                <button
+                  type="button"
+                  onClick={handleScrollToConflict}
+                  className="conflict-view-btn text-2xs font-semibold text-primary inline-flex items-center gap-0.5"
+                  title="View conflicting product candidates"
+                >
+                  <span>View evidence</span>
+                  <ChevronRight size={10} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : productIdentity ? (
           <div className="summary-item">
             <Package size={14} className="summary-icon text-primary" />
             <div className="summary-content">
               <span className="summary-label">Product Identity</span>
-              <span className="summary-val font-semibold">{productIdentity}</span>
+              <span className="summary-val font-semibold truncate max-w-[200px]" title={productIdentity}>
+                {productIdentity}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Brand */}
+        {brandName && (
+          <div className="summary-item">
+            <Tag size={14} className="summary-icon text-secondary" />
+            <div className="summary-content">
+              <span className="summary-label">Brand</span>
+              <span className="summary-val font-medium">{brandName}</span>
             </div>
           </div>
         )}
 
-        {packageClassification && (
+        {/* Product Type / Classification */}
+        {(productType || packageType) && (
           <div className="summary-item">
             <Layers size={14} className="summary-icon text-secondary" />
             <div className="summary-content">
-              <span className="summary-label">Classification</span>
-              <span className="summary-val">{packageClassification}</span>
+              <span className="summary-label">Package Classification</span>
+              <span className="summary-val">
+                {[productType, packageType].filter(Boolean).join(' • ')}
+              </span>
             </div>
           </div>
         )}
 
+        {/* Import / Origin Status */}
         {importStatus && (
           <div className="summary-item">
             <Globe size={14} className="summary-icon text-secondary" />
             <div className="summary-content">
               <span className="summary-label">Origin Status</span>
-              <span className="summary-val">{importStatus}</span>
+              <span className="summary-val font-mono">{importStatus}</span>
             </div>
           </div>
         )}
 
+        {/* Package Images / Views */}
         {imageCount !== null && (
           <div className="summary-item">
             <FileCheck size={14} className="summary-icon text-teal" />
             <div className="summary-content">
-              <span className="summary-label">Package Images</span>
+              <span className="summary-label">Package Views</span>
               <span className="summary-val font-mono">
                 {imageCount} {imageCount === 1 ? 'Panel' : 'Panels'}
               </span>
@@ -251,16 +403,17 @@ const ResultHero = ({
           </div>
         )}
 
+        {/* OCR Subsystem */}
         <div className="summary-item">
           <Cpu size={14} className="summary-icon text-primary" />
           <div className="summary-content">
-            <span className="summary-label">OCR Availability</span>
+            <span className="summary-label">OCR Engine</span>
             <span className="summary-val font-mono">
               {ocrEngine ? (
                 ocrItemsCount !== null && ocrItemsCount > 0 ? (
                   `${ocrEngine} (${ocrItemsCount} boxes)`
                 ) : (
-                  `${ocrEngine} (Active)`
+                  `${ocrEngine}`
                 )
               ) : (
                 'Unavailable'
@@ -269,14 +422,15 @@ const ResultHero = ({
           </div>
         </div>
 
+        {/* Barcode Subsystem */}
         <div className="summary-item">
           <Barcode size={14} className="summary-icon text-secondary" />
           <div className="summary-content">
-            <span className="summary-label">Barcode Status</span>
+            <span className="summary-label">Barcode Evidence</span>
             <span className="summary-val font-mono">
               {barcodeValue ? (
                 <span className="text-teal font-semibold">
-                  {barcodeValue} {barcodeDecoder ? `(${barcodeDecoder})` : ''}
+                  {barcodeValue.length > 22 ? `${barcodeValue.substring(0, 20)}...` : barcodeValue}
                 </span>
               ) : (
                 <span className="text-muted">Not Detected</span>

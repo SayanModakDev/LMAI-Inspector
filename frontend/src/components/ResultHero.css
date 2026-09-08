@@ -78,21 +78,45 @@
 
 .results-hero-status-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 1rem;
   flex-wrap: wrap;
 }
 
 .results-hero-status-badge {
   flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.results-hero-explanation-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 260px;
 }
 
 .results-hero-explanation {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  font-weight: 600;
   margin: 0;
-  line-height: 1.4;
+  line-height: 1.35;
+}
+
+.results-hero-reasons-list {
+  font-size: 0.775rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.reason-item {
+  display: inline;
+}
+
+.reason-separator {
+  color: var(--border-medium);
+  padding: 0 0.25rem;
 }
 
 /* Counts Row */
@@ -101,19 +125,20 @@
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  margin-top: 0.2rem;
+  margin-top: 0.35rem;
 }
 
 .count-pill {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.3rem 0.65rem;
+  padding: 0.35rem 0.75rem;
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
   background-color: var(--bg-surface-muted);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
+  cursor: default;
 }
 
 .count-pill .count-num {
@@ -174,6 +199,27 @@
 
 .summary-item:last-child {
   border-right: none;
+}
+
+.summary-item--conflict {
+  background-color: #FEF3C7;
+  border-radius: var(--radius-sm);
+  border-right-color: #FDE68A;
+}
+
+.conflict-view-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--primary-700);
+  font-size: 0.7rem;
+  transition: color 0.15s ease;
+}
+
+.conflict-view-btn:hover {
+  color: var(--primary-900);
+  text-decoration: underline;
 }
 
 .summary-icon {
