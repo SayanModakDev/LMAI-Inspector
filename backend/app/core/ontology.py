@@ -26,6 +26,8 @@ class CanonicalDeclarationField(str, Enum):
     MANUFACTURER_ADDRESS = "MANUFACTURER_ADDRESS"
     PACKER_NAME = "PACKER_NAME"
     PACKER_ADDRESS = "PACKER_ADDRESS"
+    MARKETER_NAME = "MARKETER_NAME"
+    MARKETER_ADDRESS = "MARKETER_ADDRESS"
     IMPORTER_NAME_ADDRESS = "IMPORTER_NAME_ADDRESS"
     COUNTRY_OF_ORIGIN = "COUNTRY_OF_ORIGIN"
 
@@ -74,6 +76,8 @@ FIELD_TO_GROUP: Dict[str, DeclarationGroup] = {
     CanonicalDeclarationField.MANUFACTURER_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
     CanonicalDeclarationField.PACKER_NAME: DeclarationGroup.RESPONSIBLE_PARTY,
     CanonicalDeclarationField.PACKER_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.MARKETER_NAME: DeclarationGroup.RESPONSIBLE_PARTY,
+    CanonicalDeclarationField.MARKETER_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
     CanonicalDeclarationField.IMPORTER_NAME_ADDRESS: DeclarationGroup.RESPONSIBLE_PARTY,
     CanonicalDeclarationField.COUNTRY_OF_ORIGIN: DeclarationGroup.ORIGIN,
     CanonicalDeclarationField.MANUFACTURE_DATE: DeclarationGroup.DATES,

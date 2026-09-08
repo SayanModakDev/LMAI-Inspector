@@ -83,18 +83,28 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
     Guarantees summary counters exactly match the matrix table row count:
     passed + failed + review + not_applicable == total
     """
+    seen_rule_ids = set()
+    deduped = []
+    for r in (rule_results or []):
+        rid = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+        if rid and rid in seen_rule_ids:
+            continue
+        if rid:
+            seen_rule_ids.add(rid)
+        deduped.append(r)
+
     passed = 0
     failed = 0
     review = 0
     not_applicable = 0
 
-    for r in rule_results:
+    for r in deduped:
         status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
         if status == 'PASS':
             passed += 1
         elif status == 'FAIL':
             failed += 1
-        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW'):
+        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
             review += 1
         elif status == 'NOT_APPLICABLE':
             not_applicable += 1
@@ -112,6 +122,7 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
         'failed_count': failed,
         'review_count': review,
         'na_count': not_applicable,
+        'not_applicable_count': not_applicable,
         'total_rules': total,
     }
 
@@ -119,14 +130,24 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
 def derive_overall_result(rule_results: List[Any]) -> str:
     """Derive overall inspection result from evaluated rule results."""
     from app.core.constants import InspectionStatus
+    seen_rule_ids = set()
+    deduped = []
+    for r in (rule_results or []):
+        rid = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+        if rid and rid in seen_rule_ids:
+            continue
+        if rid:
+            seen_rule_ids.add(rid)
+        deduped.append(r)
+
     has_fail = False
     has_review = False
 
-    for r in rule_results:
+    for r in deduped:
         status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
         if status == 'FAIL':
             has_fail = True
-        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW'):
+        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
             has_review = True
 
     if has_fail:
@@ -246,15 +267,7 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
 
         results.append(res_item)
 
-    from app.core.constants import InspectionStatus
-
-    if has_fail:
-        overall_result = InspectionStatus.NON_COMPLIANT
-    elif has_not_verifiable:
-        overall_result = InspectionStatus.NOT_VERIFIABLE
-    else:
-        overall_result = InspectionStatus.COMPLIANT
-
+    overall_result = derive_overall_result(results)
     return results, overall_result
 
 

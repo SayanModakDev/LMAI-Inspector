@@ -146,7 +146,7 @@ def _table(rows: List[List[Any]], widths: List[float], header: bool = True, cust
     return table
 
 
-def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models.Report:
+def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[Any] = None) -> models.Report:
     """Generate a 4-page professional inspection-support PDF report centered around the Rule Matrix."""
     started = time.perf_counter()
     file_name = f"inspection_report_{inspection.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
@@ -236,28 +236,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
         except Exception as e:
             logger.warning("Failed to load rules from db: %s", e)
 
-    # Determine canonical overall result
-    canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
-    if canonical_result == InspectionStatus.COMPLIANT:
-        overall_label = "1 — COMPLIANT"
-        overall_bg = colors.HexColor('#E8F5E9')
-        overall_border = colors.HexColor('#2E7D32')
-        overall_color = '#1B5E20'
-        overall_desc = "All applicable statutory declarations under Legal Metrology Rules passed deterministic verification."
-    elif canonical_result == InspectionStatus.NON_COMPLIANT:
-        overall_label = "0 — NON-COMPLIANT"
-        overall_bg = colors.HexColor('#FFEBEE')
-        overall_border = colors.HexColor('#C62828')
-        overall_color = '#B71C1C'
-        overall_desc = "One or more mandatory statutory declarations failed deterministic validation requirements."
-    else:
-        overall_label = "REQUIRES REVIEW"
-        overall_bg = colors.HexColor('#FFF8E1')
-        overall_border = colors.HexColor('#F57F17')
-        overall_color = '#B45309'
-        overall_desc = "One or more declarations have unverified or conflicting evidence. Manual inspector review is required."
-
-    # Deduplicate rule results by rule_id preserving order
+    # Deduplicate rule results by rule_id preserving order (Single Source of Truth)
     seen_rule_ids = set()
     deduped_results = []
     for r in (inspection.rule_results or []):
@@ -269,13 +248,38 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
         deduped_results.append(r)
     results_list = deduped_results
 
-    # Compute summary counters using shared calculate_rule_summary
-    from app.rules.rule_engine import calculate_rule_summary
+    # Compute summary counters and overall status using shared rule_engine methods
+    from app.rules.rule_engine import calculate_rule_summary, derive_overall_result
     summary_counts = calculate_rule_summary(results_list)
     passed_count = summary_counts['passed']
     failed_count = summary_counts['failed']
     review_count = summary_counts['review']
     na_count = summary_counts['not_applicable']
+
+    # Determine canonical overall result from the final rule-result collection (or inspection fallback if empty)
+    if results_list:
+        derived_overall = derive_overall_result(results_list)
+        canonical_result = normalize_status(derived_overall) or InspectionStatus.NOT_VERIFIABLE
+    else:
+        canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
+    if canonical_result == InspectionStatus.COMPLIANT:
+        overall_label = "COMPLIANT"
+        overall_bg = colors.HexColor('#E8F5E9')
+        overall_border = colors.HexColor('#2E7D32')
+        overall_color = '#1B5E20'
+        overall_desc = "All applicable statutory declarations under Legal Metrology Rules passed deterministic verification."
+    elif canonical_result == InspectionStatus.NON_COMPLIANT:
+        overall_label = "NON-COMPLIANT"
+        overall_bg = colors.HexColor('#FFEBEE')
+        overall_border = colors.HexColor('#C62828')
+        overall_color = '#B71C1C'
+        overall_desc = "One or more mandatory statutory declarations failed deterministic validation requirements."
+    else:
+        overall_label = "REQUIRES REVIEW"
+        overall_bg = colors.HexColor('#FFF8E1')
+        overall_border = colors.HexColor('#F57F17')
+        overall_color = '#B45309'
+        overall_desc = "One or more declarations have unverified or conflicting evidence. Manual inspector review is required."
 
     # Package Type & Import Status with Inspector Default indicators
     pkg_type_str = inspection.package_type or "RETAIL"
@@ -394,8 +398,8 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
     # 4. Summary Metrics Cards (Passed, Failed, Require Review, Not Applicable)
     summary_cards = [
         [
-            _safe_html_p(f"<font size='13' color='#1B5E20'><b>{passed_count}</b></font><br/><font size='7.5' color='#1B5E20'><b>1 — PASSED</b></font>", ParagraphStyle('Card1', parent=body_style, alignment=1)),
-            _safe_html_p(f"<font size='13' color='#B71C1C'><b>{failed_count}</b></font><br/><font size='7.5' color='#B71C1C'><b>0 — FAILED</b></font>", ParagraphStyle('Card2', parent=body_style, alignment=1)),
+            _safe_html_p(f"<font size='13' color='#1B5E20'><b>{passed_count}</b></font><br/><font size='7.5' color='#1B5E20'><b>PASSED</b></font>", ParagraphStyle('Card1', parent=body_style, alignment=1)),
+            _safe_html_p(f"<font size='13' color='#B71C1C'><b>{failed_count}</b></font><br/><font size='7.5' color='#B71C1C'><b>FAILED</b></font>", ParagraphStyle('Card2', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#B45309'><b>{review_count}</b></font><br/><font size='7.5' color='#B45309'><b>REVIEW REQUIRED</b></font>", ParagraphStyle('Card3', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#475569'><b>{na_count}</b></font><br/><font size='7.5' color='#475569'><b>NOT APPLICABLE</b></font>", ParagraphStyle('Card4', parent=body_style, alignment=1)),
         ]
@@ -426,17 +430,17 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session) -> models
     findings_rows = []
     if findings['failed']:
         findings_rows.append([
-            _safe_html_p("<b><font color='#B71C1C'>Critical Violations (0):</font></b>", small_bold),
+            _safe_html_p(f"<b><font color='#B71C1C'>Critical Violations ({len(findings['failed'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['failed']), small_style),
         ])
     if findings['needs_review']:
         findings_rows.append([
-            _safe_html_p("<b><font color='#B45309'>Requires Review:</font></b>", small_bold),
+            _safe_html_p(f"<b><font color='#B45309'>Requires Review ({len(findings['needs_review'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['needs_review']), small_style),
         ])
     if findings['verified']:
         findings_rows.append([
-            _safe_html_p("<b><font color='#1B5E20'>Verified Declarations (1):</font></b>", small_bold),
+            _safe_html_p(f"<b><font color='#1B5E20'>Verified Declarations ({len(findings['verified'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['verified']), small_style),
         ])
     if not findings_rows:

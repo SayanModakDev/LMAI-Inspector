@@ -233,6 +233,7 @@ LABEL_DEFINITIONS: List[Tuple[Pattern, str, str]] = [
     (re.compile(r'\b(?:use\s*-?\s*by|use\s+before|consume\s+within|valid\s+till)\b', re.I), "USE_BY_DATE", "USE_BEFORE_DATE"),
     (re.compile(r'\b(?:expiry\s*date|exp\s*date|exp\.?\s*date|expiry\b|exp\b)', re.I), "EXPIRY_DATE", "EXPIRY_DATE"),
     (re.compile(r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed|pkd)?\s*(?:by|at|for)|mfg\s*(?:&|and)?\s*pkd\s*by|mfg\s*by|mfd\s*by)\b', re.I), "MANUFACTURER_NAME", "MANUFACTURER_NAME"),
+    (re.compile(r'\b(?:marketed\s*(?:&|and)?\s*distributed\s*by|marketed\s*by|mkt\s*by|mktg\s*by|marketer)\b', re.I), "MARKETER_NAME", "MARKETER_NAME"),
     (re.compile(r'\b(?:packed\s*(?:&|and)?\s*marketed\s*by|packed\s*by|pkd\s*by|packer)\b', re.I), "PACKER_NAME", "PACKER_NAME"),
     (re.compile(r'\b(?:imported\s*by|importer)\b', re.I), "IMPORTER_NAME", "IMPORTER_NAME"),
     (re.compile(r'\b(?:consumer\s*care|customer\s*care|helpline|toll\s*free|feedback|call\s*us)\b', re.I), "CONSUMER_CARE", "CONSUMER_CARE"),
@@ -515,13 +516,13 @@ class LabelValueAssociationEngine:
         # -------------------------------------------------------------------
         # 5. MANUFACTURER / PACKER / ADDRESS
         # -------------------------------------------------------------------
-        if target_field in ("MANUFACTURER_NAME", "PACKER_NAME", "MANUFACTURER_ADDRESS", "PACKER_ADDRESS"):
+        if target_field in ("MANUFACTURER_NAME", "PACKER_NAME", "MARKETER_NAME", "MANUFACTURER_ADDRESS", "PACKER_ADDRESS", "MARKETER_ADDRESS"):
             if candidate_section in (SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_MRP, SECTION_DECLARED_QUANTITY):
                 return 0.0, 0.0, f"Rejected because candidate belongs to {candidate_section} section."
             
             # Address candidates must not contain phone numbers, URLs, barcodes
             val_str = str(candidate.parsed_value or '')
-            if target_field in ("MANUFACTURER_ADDRESS", "PACKER_ADDRESS"):
+            if target_field in ("MANUFACTURER_ADDRESS", "PACKER_ADDRESS", "MARKETER_ADDRESS"):
                 if re.search(r'\b(?:1800\d+|call\s*us|helpline|toll\s*free)\b', val_str, re.I):
                     return 0.2, 0.0, "Rejected because candidate contains customer support contact details."
             
