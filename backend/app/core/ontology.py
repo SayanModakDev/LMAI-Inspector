@@ -6,7 +6,7 @@ and legal unit mappings under the Legal Metrology (Packaged Commodities) Rules, 
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class CanonicalDeclarationField(str, Enum):
@@ -176,14 +176,59 @@ def build_quantity_candidate(
     relevance_score: float = 0.9,
     source_context: str = "",
     source: str = "OCR",
+    is_multipack: bool = False,
+    pack_count: Optional[int] = None,
+    unit_net_quantity: Optional[Union[int, float]] = None,
+    declared_expression: Optional[str] = None,
+    derived_total_quantity: Optional[Union[int, float]] = None,
+    packaging_level: Optional[str] = None,
+    candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Construct a canonical quantity candidate dictionary preserving full backwards compatibility
-    with existing tests while populating the complete typed quantity data model.
+    with existing tests while populating the complete typed quantity and multipack data model.
     """
     norm_unit, qty_type = normalize_unit(raw_unit)
     if qty_type is None and raw_unit:
         qty_type = infer_quantity_type(raw_unit)
+
+    # Multipack handling & derivation
+    derived_provenance = None
+    if is_multipack:
+        if unit_net_quantity is not None and (qty_val is None or str(qty_val).strip() == ""):
+            qty_val = unit_net_quantity
+        elif qty_val is not None and unit_net_quantity is None:
+            try:
+                flt_q = float(qty_val)
+                unit_net_quantity = int(flt_q) if flt_q.is_integer() else flt_q
+            except (ValueError, TypeError):
+                pass
+
+        if pack_count is not None:
+            try:
+                pack_count = int(pack_count)
+            except (ValueError, TypeError):
+                pass
+
+        if declared_expression is None:
+            if pack_count is not None and unit_net_quantity is not None and (norm_unit or raw_unit):
+                declared_expression = f"{pack_count} × {unit_net_quantity} {raw_unit or norm_unit}"
+            else:
+                declared_expression = raw_span
+
+        if derived_total_quantity is None and pack_count is not None and unit_net_quantity is not None:
+            try:
+                calc_total = float(pack_count) * float(unit_net_quantity)
+                derived_total_quantity = int(calc_total) if calc_total.is_integer() else calc_total
+            except (ValueError, TypeError):
+                pass
+
+        if pack_count is not None and unit_net_quantity is not None:
+            derived_provenance = {
+                "source": "DERIVED",
+                "formula": f"{pack_count} × {unit_net_quantity}",
+                "unit": norm_unit or raw_unit,
+            }
 
     quantity_present = qty_val is not None and str(qty_val).strip() != ""
     unit_present = norm_unit is not None and str(norm_unit).strip() != ""
@@ -197,16 +242,22 @@ def build_quantity_candidate(
             num_float = float(qty_val)
             num_val = int(num_float) if num_float.is_integer() else num_float
             num_valid = num_float > 0
-            if qty_type == QuantityType.COUNT:
+            if qty_type == QuantityType.COUNT and not is_multipack:
                 # Count declarations must be whole numbers under PCR rules
                 num_valid = num_valid and num_float.is_integer()
         except (ValueError, TypeError):
             num_valid = False
 
-    quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
+    if is_multipack:
+        count_valid = pack_count is not None and pack_count > 0
+        quantity_unit_valid = bool(count_valid and unit_present and num_valid and norm_unit)
+    else:
+        quantity_unit_valid = bool(quantity_present and unit_present and num_valid and norm_unit)
 
     str_val = str(qty_val) if qty_val is not None else None
-    if quantity_present and unit_present:
+    if is_multipack:
+        display_val = declared_expression or (f"{pack_count} × {str_val} {norm_unit}" if pack_count else raw_span)
+    elif quantity_present and unit_present:
         display_val = f"{str_val} {norm_unit}"
     elif quantity_present:
         display_val = str_val or raw_span
@@ -215,8 +266,8 @@ def build_quantity_candidate(
     else:
         display_val = raw_span
 
-    return {
-        # Canonical & display values (for backwards compatibility with tests expecting '20 g', '300 g')
+    result: Dict[str, Any] = {
+        # Canonical & display values (preserves declared expression for multipacks and display values for single units)
         "value": display_val,
         "raw_value": raw_span,
         "raw_text": raw_span,
@@ -229,12 +280,23 @@ def build_quantity_candidate(
         "raw_unit": raw_unit,
         "quantity_type": qty_type.value if qty_type else None,
 
-        # Legacy decomposition fields for rule engine / tests
+        # Legacy decomposition fields for rule engine / tests (CRITICAL: COUNT IS NEVER MAPPED TO QUANTITY_VALUE)
         "quantity_value": str_val,
         "quantity_unit": norm_unit,
         "quantity_present": quantity_present,
         "unit_present": unit_present,
         "quantity_unit_valid": quantity_unit_valid,
+
+        # Multipack semantic fields
+        "is_multipack": is_multipack,
+        "pack_count": pack_count,
+        "unit_net_quantity": unit_net_quantity,
+        "unit_quantity": unit_net_quantity,  # standard alias
+        "declared_expression": declared_expression if is_multipack else None,
+        "derived_total_quantity": derived_total_quantity if is_multipack else None,
+        "derived_total_provenance": derived_provenance,
+        "declared_expression_source": {"source": "OCR", "raw_text": raw_span},
+        "packaging_level": packaging_level or ("OUTER_PACKAGE" if is_multipack else "SINGLE_UNIT"),
 
         # Scoring & provenance
         "confidence": confidence,
@@ -244,3 +306,8 @@ def build_quantity_candidate(
         "relevance_score": relevance_score,
         "source_context": source_context,
     }
+
+    if candidates:
+        result["candidates"] = candidates
+
+    return result

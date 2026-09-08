@@ -224,7 +224,7 @@ class CanonicalFieldCandidate:
 
 LABEL_DEFINITIONS: List[Tuple[Pattern, str, str]] = [
     # (regex_pattern, semantic_label_type, target_field)
-    (re.compile(r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity)\b', re.I), "NET_QUANTITY", "DECLARED_NET_QUANTITY"),
+    (re.compile(r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity|pack\s*(?:content|contents|size|qty\.?|quantity)|package\s*(?:quantity|content|contents)|pkg\s*qty)\b', re.I), "NET_QUANTITY", "DECLARED_NET_QUANTITY"),
     (re.compile(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\b', re.I), "MRP", "MRP"),
     (re.compile(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?|lot\s*[:#]|batch\s*[:#])\b', re.I), "BATCH_NUMBER", "BATCH_NUMBER"),
     (re.compile(r'\b(?:mfg\s*date|mfd\s*date|date\s+of\s+manufacture|manufacturing\s+date|mfd\b|mfg\b)', re.I), "MANUFACTURE_DATE", "MANUFACTURE_DATE"),
@@ -647,19 +647,47 @@ class LabelValueAssociationEngine:
         qty_pat = re.compile(r'\b([+-]?\d+(?:\.\d+)?)\s*(g|gm|gms|kg|kgs|ml|l|ltr|litre|litres|liter|liters|pcs|pieces|tablets|capsules|units|n)\b', re.I)
         for idx, line in enumerate(lines):
             line_sec = section_map.get(idx, SECTION_UNKNOWN)
+
+            # Check for multipack on line first
+            from app.extraction.declaration_extractor import parse_quantity_expression
+            multi_parsed = parse_quantity_expression(line)
+            if multi_parsed and multi_parsed.get("is_multipack"):
+                norm_u = multi_parsed["unit"]
+                q_type = infer_quantity_type(norm_u)
+                detected_values.append(ValueCandidate(
+                    raw_text=multi_parsed["declared_expression"],
+                    parsed_value=multi_parsed["unit_net_quantity"],
+                    unit=norm_u,
+                    line_id=idx,
+                    source_image=image_name,
+                    confidence=0.95,
+                    value_type="QUANTITY",
+                    semantic_section=line_sec,
+                    metadata={
+                        "is_multipack": True,
+                        "pack_count": multi_parsed["pack_count"],
+                        "unit_net_quantity": multi_parsed["unit_net_quantity"],
+                        "declared_expression": multi_parsed["declared_expression"],
+                        "derived_total_quantity": multi_parsed["derived_total_quantity"],
+                        "quantity_type": q_type.value if q_type else "MASS",
+                    },
+                ))
+                continue
+
             for m in qty_pat.finditer(line):
                 val_num = float(m.group(1)) if '.' in m.group(1) else int(m.group(1))
-                val_unit = normalize_unit(m.group(2))
+                norm_u, _ = normalize_unit(m.group(2))
+                q_type = infer_quantity_type(norm_u)
                 detected_values.append(ValueCandidate(
                     raw_text=m.group(0).strip(),
                     parsed_value=val_num,
-                    unit=val_unit,
+                    unit=norm_u,
                     line_id=idx,
                     source_image=image_name,
                     confidence=0.90,
                     value_type="QUANTITY",
                     semantic_section=line_sec,
-                    metadata={"quantity_type": infer_quantity_type(val_unit).value},
+                    metadata={"quantity_type": q_type.value if q_type else "MASS"},
                 ))
 
         # MRP / Prices
