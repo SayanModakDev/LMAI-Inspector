@@ -4,18 +4,21 @@ import {
   ZoomOut,
   RotateCcw,
   Search,
-  Filter,
-  Eye,
   Crosshair,
-  ShieldCheck,
   AlertTriangle,
-  XCircle,
   CheckCircle2,
-  MinusCircle,
+  XCircle,
   Barcode as BarcodeIcon,
   Layers,
   ChevronRight,
   Info,
+  ExternalLink,
+  Eye,
+  Tag,
+  Building2,
+  Calendar,
+  Utensils,
+  Package,
 } from 'lucide-react';
 import ConfidenceBadge from './ConfidenceBadge';
 import StatusBadge from './StatusBadge';
@@ -23,19 +26,35 @@ import FieldDetailModal from './FieldDetailModal';
 import './EvidenceViewer.css';
 
 /**
- * Group definitions for statutory legal metrology declarations
+ * Group definitions for statutory legal metrology declarations (Strict Section 10 adherence)
  */
 const PARAMETER_GROUPS = {
   IDENTITY: ['PRODUCT_NAME', 'BRAND', 'GENERIC_NAME'],
-  COMMERCIAL: ['MRP', 'NET_QUANTITY', 'DECLARED_NET_QUANTITY', 'UNIT_SALE_PRICE'],
+  QUANTITY: [
+    'DECLARED_NET_QUANTITY',
+    'NET_QUANTITY',
+    'MULTIPACK_EXPRESSION',
+    'PACK_COUNT',
+    'UNIT_QUANTITY',
+    'UNIT_NET_QUANTITY',
+    'UNIT',
+    'DERIVED_TOTAL',
+  ],
+  COMMERCIAL: ['MRP', 'UNIT_SALE_PRICE'],
   MANUFACTURER: [
     'MANUFACTURER_NAME',
     'MANUFACTURER',
     'MANUFACTURER_ADDRESS',
-    'ADDRESS',
-    'COUNTRY_OF_ORIGIN',
-    'IMPORTER',
+    'MARKETER_NAME',
+    'MARKETER',
+    'MARKETER_ADDRESS',
+    'PACKER_NAME',
     'PACKER',
+    'PACKER_ADDRESS',
+    'IMPORTER_NAME',
+    'IMPORTER',
+    'IMPORTER_ADDRESS',
+    'COUNTRY_OF_ORIGIN',
   ],
   DATES: [
     'MONTH_YEAR_MANUFACTURE',
@@ -47,17 +66,29 @@ const PARAMETER_GROUPS = {
     'DATE_EXPIRY',
   ],
   FOOD: ['FSSAI_LICENSE', 'FSSAI', 'VEG_NON_VEG', 'INGREDIENTS'],
-  IDENTIFIERS: ['BARCODE', 'EAN', 'UPC', 'QR_CODE'],
+  IDENTIFIERS: ['BARCODE', 'BATCH_NUMBER', 'EAN', 'UPC', 'QR_CODE'],
 };
 
 const GROUP_LABELS = {
   IDENTITY: 'Identity & Designation',
+  QUANTITY: 'Quantity & Content',
   COMMERCIAL: 'Commercial & Pricing',
-  MANUFACTURER: 'Origin & Manufacturer',
+  MANUFACTURER: 'Origin, Manufacturer & Marketer',
   DATES: 'Manufacturing & Expiry Dates',
   FOOD: 'Food Safety & Ingredients',
   IDENTIFIERS: 'Product Identifiers',
   OTHER: 'Additional Declarations',
+};
+
+const GROUP_ICONS = {
+  IDENTITY: Package,
+  QUANTITY: Layers,
+  COMMERCIAL: Tag,
+  MANUFACTURER: Building2,
+  DATES: Calendar,
+  FOOD: Utensils,
+  IDENTIFIERS: BarcodeIcon,
+  OTHER: Info,
 };
 
 const getGroupForParameter = (param) => {
@@ -72,16 +103,25 @@ const formatParamLabel = (param) => {
   if (!param) return 'Declaration';
   const customNames = {
     PRODUCT_NAME: 'Product Name',
-    BRAND: 'Brand Identity',
+    BRAND: 'Brand Name',
     GENERIC_NAME: 'Generic / Common Name',
     MRP: 'Maximum Retail Price (MRP)',
     DECLARED_NET_QUANTITY: 'Declared Net Quantity',
     NET_QUANTITY: 'Declared Net Quantity',
+    MULTIPACK_EXPRESSION: 'Multipack Expression',
     UNIT_SALE_PRICE: 'Unit Sale Price (USP)',
     MANUFACTURER_NAME: 'Manufacturer Name',
     MANUFACTURER: 'Manufacturer',
     MANUFACTURER_ADDRESS: 'Manufacturer Address',
-    ADDRESS: 'Registered Address',
+    MARKETER_NAME: 'Marketer Name',
+    MARKETER: 'Marketer',
+    MARKETER_ADDRESS: 'Marketer Address',
+    PACKER_NAME: 'Packer Name',
+    PACKER: 'Packer',
+    PACKER_ADDRESS: 'Packer Address',
+    IMPORTER_NAME: 'Importer Name',
+    IMPORTER: 'Importer',
+    IMPORTER_ADDRESS: 'Importer Address',
     COUNTRY_OF_ORIGIN: 'Country of Origin',
     MONTH_YEAR_MANUFACTURE: 'Month & Year of Manufacture',
     MANUFACTURE_DATE: 'Date of Manufacture',
@@ -93,6 +133,7 @@ const formatParamLabel = (param) => {
     VEG_NON_VEG: 'Vegetarian / Non-Vegetarian Symbol',
     INGREDIENTS: 'List of Ingredients',
     BARCODE: 'Commodity Barcode',
+    BATCH_NUMBER: 'Batch / Lot Number',
   };
   if (customNames[param.toUpperCase()]) return customNames[param.toUpperCase()];
   return param
@@ -102,7 +143,84 @@ const formatParamLabel = (param) => {
 };
 
 /**
- * Enhanced EvidenceViewer Component (55% Image / 45% Evidence Workstation)
+ * Universal Multipack Parser Helper
+ * Extracts or derives multipack decomposition without hardcoding
+ */
+const parseMultipackDetails = (item) => {
+  if (!item) return null;
+
+  // Check if item already carries structured multipack keys
+  if (item.is_multipack && item.pack_count) {
+    const packCount = item.pack_count;
+    const unitQty = item.unit_quantity || item.unit_net_quantity;
+    const unit = item.unit || 'g';
+    const derivedTotal = item.derived_total_quantity || (packCount * unitQty);
+    const declaredExpr = item.declared_expression || `${packCount} × ${unitQty} ${unit}`;
+    return {
+      isMultipack: true,
+      packCount,
+      unitQuantity: unitQty,
+      unit,
+      derivedTotal,
+      declaredExpression: declaredExpr,
+    };
+  }
+
+  // Check evidence_data / candidate candidate metadata
+  const meta = item.metadata || item.evidence_data || {};
+  if (meta.is_multipack && meta.pack_count) {
+    const packCount = meta.pack_count;
+    const unitQty = meta.unit_quantity || meta.unit_net_quantity;
+    const unit = meta.unit || 'g';
+    const derivedTotal = meta.derived_total_quantity || (packCount * unitQty);
+    const declaredExpr = meta.declared_expression || `${packCount} × ${unitQty} ${unit}`;
+    return {
+      isMultipack: true,
+      packCount,
+      unitQuantity: unitQty,
+      unit,
+      derivedTotal,
+      declaredExpression: declaredExpr,
+    };
+  }
+
+  // Fallback: parse string representation (e.g. "12 X 25g" or "12 × 25 g")
+  const valStr = String(item.field_value || item.raw_value || item.raw_text || '').trim();
+  const multiMatch = valStr.match(/^(\d+)\s*(?:[xX×*]|packs?\s+of|units?\s+of)\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/i);
+  if (multiMatch) {
+    const packCount = parseInt(multiMatch[1], 10);
+    const unitQty = parseFloat(multiMatch[2]);
+    const unit = multiMatch[3];
+    return {
+      isMultipack: true,
+      packCount,
+      unitQuantity: unitQty,
+      unit,
+      derivedTotal: packCount * unitQty,
+      declaredExpression: `${packCount} × ${unitQty} ${unit}`,
+    };
+  }
+
+  const invertedMatch = valStr.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*(?:[xX×*]|packs?\s+of)\s*(\d+)/i);
+  if (invertedMatch) {
+    const unitQty = parseFloat(invertedMatch[1]);
+    const unit = invertedMatch[2];
+    const packCount = parseInt(invertedMatch[3], 10);
+    return {
+      isMultipack: true,
+      packCount,
+      unitQuantity: unitQty,
+      unit,
+      derivedTotal: packCount * unitQty,
+      declaredExpression: `${packCount} × ${unitQty} ${unit}`,
+    };
+  }
+
+  return null;
+};
+
+/**
+ * Main EvidenceViewer Workstation (55% Image / 45% Evidence)
  */
 const EvidenceViewer = ({
   images = [],
@@ -147,7 +265,7 @@ const EvidenceViewer = ({
   const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 0.25, 1.0));
   const handleZoomReset = () => setZoomLevel(1.0);
 
-  // Build structured evidence items by merging extracted_fields, product, and rule results
+  // Ingest and structure all evidence items
   const allEvidenceItems = useMemo(() => {
     const itemsMap = new Map();
 
@@ -175,10 +293,20 @@ const EvidenceViewer = ({
         rule_id: matchingRule?.rule_id,
         reason: matchingRule?.reason || matchingRule?.message,
         isMissing,
+        is_multipack: field.is_multipack,
+        pack_count: field.pack_count,
+        unit_quantity: field.unit_quantity || field.unit_net_quantity,
+        unit: field.unit,
+        derived_total_quantity: field.derived_total_quantity,
+        declared_expression: field.declared_expression,
+        candidates: field.candidates,
+        competing_candidates: field.competing_candidates,
+        is_ambiguous: field.is_ambiguous || field.status === 'AMBIGUOUS',
+        role: field.role,
       });
     });
 
-    // 2. Ingest fields from product object if missing from extracted_fields
+    // 2. Ingest fields from product object if not already present
     if (product) {
       const productMapping = {
         PRODUCT_NAME: product.product_name,
@@ -220,12 +348,12 @@ const EvidenceViewer = ({
       });
     }
 
-    // 3. Ingest missing rule parameters from ruleResults so non-detected required fields are visible
+    // 3. Ingest rule results that were missing from extracted_fields so non-detected required fields are visible
     (ruleResults || []).forEach((rule) => {
       const key = (rule.parameter || '').toUpperCase();
       if (!key) return;
 
-      // Skip physical verification rules in the standard 2D OCR evidence list (handled in dedicated physical section)
+      // Skip physical verification parameters in the visual OCR evidence panel
       if (key === 'ACTUAL_NET_CONTENT' || key === 'FONT_SIZE_COMPLIANCE') return;
 
       if (!itemsMap.has(key)) {
@@ -259,19 +387,73 @@ const EvidenceViewer = ({
         raw_value: barcodeResult.value,
         confidence: barcodeResult.confidence ?? 1.0,
         source: barcodeResult.source || 'BARCODE_SCANNER',
-        extraction_method: barcodeResult.source === 'OCR_BARCODE_TEXT' ? 'OCR_FALLBACK' : 'PYZBAR_DECODER',
+        extraction_method:
+          barcodeResult.source === 'OCR_BARCODE_TEXT' ? 'OCR_FALLBACK' : 'PYZBAR_DECODER',
         bbox: null,
         source_image_index: 0,
         status: matchingRule?.status || 'PASS',
         rule_id: matchingRule?.rule_id,
-        reason: 'Detected supplementary barcode identifier.',
+        reason: 'Detected package barcode identifier.',
         isMissing: false,
-        barcodeLookup: barcodeResult.lookup,
       });
     }
 
     return Array.from(itemsMap.values());
   }, [extractedFields, ruleResults, product, barcodeResult]);
+
+  // Product Identity Conflict Detection
+  const productConflict = useMemo(() => {
+    const nameItem = allEvidenceItems.find((i) => i.field_name === 'PRODUCT_NAME');
+    if (!nameItem) return null;
+
+    const valStr = String(nameItem.field_value || '');
+    const isConflict =
+      valStr.startsWith('CONFLICT:') ||
+      nameItem.source === 'MULTI_IMAGE_CONFLICT' ||
+      nameItem.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
+      nameItem.is_ambiguous ||
+      (Array.isArray(nameItem.candidates) && nameItem.candidates.length > 1) ||
+      (Array.isArray(nameItem.competing_candidates) && nameItem.competing_candidates.length > 1);
+
+    if (!isConflict) return null;
+
+    let candidates = [];
+    if (Array.isArray(nameItem.candidates) && nameItem.candidates.length > 0) {
+      candidates = nameItem.candidates.map((c, idx) => ({
+        value: typeof c === 'object' ? (c.value || c.field_value || JSON.stringify(c)) : String(c),
+        source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Candidate ${idx + 1}`,
+        confidence: typeof c === 'object' ? c.confidence : 0.65,
+        evidence_type: typeof c === 'object' ? c.evidence_type : 'OCR_TOKEN',
+      }));
+    } else if (Array.isArray(nameItem.competing_candidates) && nameItem.competing_candidates.length > 0) {
+      candidates = nameItem.competing_candidates.map((c, idx) => ({
+        value: typeof c === 'object' ? (c.entity || c.value || String(c)) : String(c),
+        source: `Candidate ${idx + 1}`,
+        confidence: 0.65,
+        evidence_type: 'ENTITY_CANDIDATE',
+      }));
+    } else {
+      const cleanVal = valStr.replace(/^CONFLICT:\s*/i, '');
+      if (cleanVal.includes(' vs ')) {
+        candidates = cleanVal.split(/\s+vs\s+/i).map((part, idx) => ({
+          value: part.trim(),
+          source: `Panel Observation ${idx + 1}`,
+          confidence: 0.65,
+          evidence_type: 'OCR_LINE',
+        }));
+      } else {
+        candidates = [
+          { value: cleanVal || 'Competing product titles', source: 'Panel View', confidence: 0.65 },
+        ];
+      }
+    }
+
+    return {
+      parameter: 'PRODUCT_NAME',
+      status: 'REQUIRES MANUAL REVIEW',
+      candidates,
+    };
+  }, [allEvidenceItems]);
 
   // Filter evidence items
   const filteredEvidenceItems = useMemo(() => {
@@ -283,7 +465,8 @@ const EvidenceViewer = ({
         evidenceFilter === 'REVIEW' &&
         item.status !== 'NOT_VERIFIABLE' &&
         item.status !== 'MANUAL_CHECK' &&
-        item.status !== 'REVIEW'
+        item.status !== 'REVIEW' &&
+        item.status !== 'NEEDS_REVIEW'
       )
         return false;
       if (evidenceFilter === 'MISSING' && !item.isMissing) return false;
@@ -297,7 +480,7 @@ const EvidenceViewer = ({
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const name = (formatParamLabel(item.field_name)).toLowerCase();
+        const name = formatParamLabel(item.field_name).toLowerCase();
         const key = item.field_name.toLowerCase();
         const val = String(item.field_value || '').toLowerCase();
         const reason = String(item.reason || '').toLowerCase();
@@ -310,10 +493,11 @@ const EvidenceViewer = ({
     });
   }, [allEvidenceItems, evidenceFilter, sourceFilter, searchQuery]);
 
-  // Group filtered items
+  // Group filtered items into canonical Section 10 categories
   const groupedEvidence = useMemo(() => {
     const groups = {
       IDENTITY: [],
+      QUANTITY: [],
       COMMERCIAL: [],
       MANUFACTURER: [],
       DATES: [],
@@ -331,11 +515,10 @@ const EvidenceViewer = ({
     return groups;
   }, [filteredEvidenceItems]);
 
-  // Click on evidence card
+  // Select field and switch to panel if known
   const handleSelectField = (item) => {
     setActiveFieldKey(item.field_name === activeFieldKey ? null : item.field_name);
 
-    // If item has known source panel, switch to that panel
     if (
       item.source_image_index !== undefined &&
       item.source_image_index >= 0 &&
@@ -354,13 +537,11 @@ const EvidenceViewer = ({
   const renderBBoxOverlay = () => {
     if (!showBBoxes) return null;
 
-    // Collect all bounding boxes for the active panel
     const bboxesToRender = [];
 
     allEvidenceItems.forEach((item) => {
       if (!item.bbox) return;
 
-      // Only render if matches active panel
       const itemPanel = item.source_image_index ?? 0;
       if (itemPanel !== selectedPanelIndex) return;
 
@@ -391,7 +572,9 @@ const EvidenceViewer = ({
               <polygon
                 key={idx}
                 points={pointsString}
-                className={`evidence-bbox-shape ${isSelected ? 'evidence-bbox-shape--selected' : ''} ${isHovered ? 'evidence-bbox-shape--hovered' : ''}`}
+                className={`evidence-bbox-shape ${
+                  isSelected ? 'evidence-bbox-shape--selected' : ''
+                } ${isHovered ? 'evidence-bbox-shape--hovered' : ''}`}
                 onMouseEnter={() => setHoveredFieldKey(item.field_name)}
                 onMouseLeave={() => setHoveredFieldKey(null)}
                 onClick={() => {
@@ -410,13 +593,11 @@ const EvidenceViewer = ({
             let x, y, w, h;
 
             if (a <= 1.0 && b <= 1.0 && c <= 1.0 && d <= 1.0) {
-              // Normalized [ymin, xmin, ymax, xmax]
               x = b * imageDims.width;
               y = a * imageDims.height;
               w = (d - b) * imageDims.width;
               h = (c - a) * imageDims.height;
             } else {
-              // Pixel coordinates [ymin, xmin, ymax, xmax] or [x1, y1, x2, y2]
               const minX = Math.min(b, d);
               const minY = Math.min(a, c);
               w = Math.abs(d - b);
@@ -432,7 +613,9 @@ const EvidenceViewer = ({
                 y={y}
                 width={Math.max(w, 8)}
                 height={Math.max(h, 8)}
-                className={`evidence-bbox-shape ${isSelected ? 'evidence-bbox-shape--selected' : ''} ${isHovered ? 'evidence-bbox-shape--hovered' : ''}`}
+                className={`evidence-bbox-shape ${
+                  isSelected ? 'evidence-bbox-shape--selected' : ''
+                } ${isHovered ? 'evidence-bbox-shape--hovered' : ''}`}
                 onMouseEnter={() => setHoveredFieldKey(item.field_name)}
                 onMouseLeave={() => setHoveredFieldKey(null)}
                 onClick={() => {
@@ -538,8 +721,12 @@ const EvidenceViewer = ({
           </div>
         )}
 
-        {/* Image Stage Container with Pan/Zoom */}
-        <div className={`image-stage-viewport ${zoomLevel > 1.0 ? 'image-stage-viewport--zoomed' : ''}`}>
+        {/* Image Viewport Container */}
+        <div
+          className={`image-stage-viewport ${
+            zoomLevel > 1.0 ? 'image-stage-viewport--zoomed' : ''
+          }`}
+        >
           <div
             className="image-stage-content"
             style={{
@@ -553,6 +740,7 @@ const EvidenceViewer = ({
               src={imageSrc}
               alt={`Package Inspection Panel ${selectedPanelIndex + 1}`}
               className="inspection-image"
+              loading="lazy"
               onLoad={handleImageLoad}
               onError={(e) => {
                 e.target.src = '/placeholder.jpg';
@@ -574,9 +762,7 @@ const EvidenceViewer = ({
             </span>
           </div>
           {activeImage?.file_name && (
-            <span className="text-2xs font-mono text-muted">
-              {activeImage.file_name}
-            </span>
+            <span className="text-2xs font-mono text-muted">{activeImage.file_name}</span>
           )}
         </div>
       </div>
@@ -628,15 +814,78 @@ const EvidenceViewer = ({
           </div>
         </div>
 
+        {/* Confidence System Notice */}
+        <div className="evidence-confidence-notice">
+          <Info size={12} className="flex-shrink-0 text-muted" />
+          <span>
+            Confidence reflects the extraction/detection subsystem; it is not a legal compliance probability.
+          </span>
+        </div>
+
         {/* Grouped Declarations List */}
         <div className="evidence-groups-container">
+          {/* Dedicated Product Identity Conflict Section (Section 12 strictly) */}
+          {productConflict && (
+            <div id="product-conflict-section" className="product-identity-conflict-box">
+              <div className="conflict-box-header">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold text-xs uppercase tracking-wide text-amber-900">
+                      Product Identity Conflict
+                    </span>
+                    <p className="text-2xs text-amber-800 m-0">
+                      Multiple package views or candidate text lines returned contradictory product identities.
+                    </p>
+                  </div>
+                </div>
+                <span className="badge badge-warning font-mono text-2xs font-bold">
+                  REQUIRES MANUAL REVIEW
+                </span>
+              </div>
+
+              <div className="conflict-candidates-grid">
+                {productConflict.candidates.map((cand, idx) => (
+                  <div key={idx} className="conflict-candidate-card">
+                    <div className="conflict-candidate-card__top">
+                      <span className="candidate-badge font-mono text-2xs font-bold">
+                        Candidate {String.fromCharCode(65 + idx)}
+                      </span>
+                      {cand.confidence !== null && cand.confidence !== undefined && (
+                        <span className="candidate-conf font-mono text-2xs">
+                          {Math.round((cand.confidence || 0) * 100)}% conf
+                        </span>
+                      )}
+                    </div>
+                    <div className="candidate-val font-semibold text-main text-xs">
+                      {cand.value}
+                    </div>
+                    <div className="candidate-meta text-2xs text-muted flex items-center justify-between mt-1">
+                      <span>Source: {cand.source || 'Panel Observation'}</span>
+                      {cand.evidence_type && <span>Type: {cand.evidence_type}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="conflict-resolution-note text-2xs text-amber-900 bg-amber-100 p-1.5 rounded">
+                The system does not rank a winner or guess. The inspector must determine the official product identity during physical review.
+              </div>
+            </div>
+          )}
+
+          {/* Canonical Grouped Declarations */}
           {Object.entries(groupedEvidence).map(([groupKey, items]) => {
             if (items.length === 0) return null;
+            const GroupIcon = GROUP_ICONS[groupKey] || Info;
 
             return (
               <div key={groupKey} className="evidence-group-section">
                 <div className="evidence-group-header">
-                  <span className="group-title">{GROUP_LABELS[groupKey] || groupKey}</span>
+                  <div className="flex items-center gap-1.5">
+                    <GroupIcon size={13} className="text-secondary" />
+                    <span className="group-title">{GROUP_LABELS[groupKey] || groupKey}</span>
+                  </div>
                   <span className="group-count font-mono text-2xs text-muted">
                     {items.length}
                   </span>
@@ -646,12 +895,26 @@ const EvidenceViewer = ({
                   {items.map((item, idx) => {
                     const isSelected = activeFieldKey === item.field_name;
                     const isHovered = hoveredFieldKey === item.field_name;
-                    const isConflict = String(item.field_value || '').startsWith('CONFLICT:');
+                    const isConflict =
+                      String(item.field_value || '').startsWith('CONFLICT:') || item.is_ambiguous;
+
+                    const multipack = parseMultipackDetails(item);
+
+                    // Barcode URL detection
+                    const isBarcodeField = item.field_name === 'BARCODE';
+                    const isUrlBarcode =
+                      isBarcodeField &&
+                      item.field_value &&
+                      /^https?:\/\//i.test(String(item.field_value).trim());
 
                     return (
                       <div
                         key={idx}
-                        className={`evidence-card ${isSelected ? 'evidence-card--selected' : ''} ${isHovered ? 'evidence-card--hovered' : ''} ${isConflict ? 'evidence-card--conflict' : ''} ${item.isMissing ? 'evidence-card--missing' : ''}`}
+                        className={`evidence-card ${
+                          isSelected ? 'evidence-card--selected' : ''
+                        } ${isHovered ? 'evidence-card--hovered' : ''} ${
+                          isConflict ? 'evidence-card--conflict' : ''
+                        } ${item.isMissing ? 'evidence-card--missing' : ''}`}
                         onClick={() => handleSelectField(item)}
                         onMouseEnter={() => setHoveredFieldKey(item.field_name)}
                         onMouseLeave={() => setHoveredFieldKey(null)}
@@ -668,6 +931,11 @@ const EvidenceViewer = ({
                             </span>
                             <span className="evidence-card__key font-mono text-2xs text-muted">
                               {item.field_name}
+                              {item.role && (
+                                <span className="entity-role-tag font-mono ml-1">
+                                  [{item.role}]
+                                </span>
+                              )}
                             </span>
                           </div>
 
@@ -676,21 +944,97 @@ const EvidenceViewer = ({
                           </div>
                         </div>
 
+                        {/* Value Row / Multipack Decomposition */}
                         <div className="evidence-card__value-row">
-                          <div className="evidence-card__val font-mono">
-                            {item.isMissing ? (
-                              <span className="text-muted italic">Evidence not detected</span>
-                            ) : (
-                              String(item.field_value)
-                            )}
-                          </div>
+                          {multipack ? (
+                            <div className="multipack-breakdown-box">
+                              <div className="multipack-expr-line">
+                                <span className="font-mono font-bold text-sm text-main">
+                                  {multipack.declaredExpression}
+                                </span>
+                                <span className="badge badge-primary font-mono text-2xs">
+                                  Multipack
+                                </span>
+                              </div>
+
+                              <div className="multipack-metrics-grid">
+                                <div className="multipack-submetric">
+                                  <span className="submetric-label">Pack Count</span>
+                                  <span className="submetric-val font-mono font-bold">
+                                    {multipack.packCount}
+                                  </span>
+                                </div>
+                                <div className="multipack-submetric">
+                                  <span className="submetric-label">Unit Quantity</span>
+                                  <span className="submetric-val font-mono font-bold">
+                                    {multipack.unitQuantity} {multipack.unit}
+                                  </span>
+                                </div>
+                                <div className="multipack-submetric multipack-submetric--derived">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="submetric-label">Derived Total</span>
+                                    <span className="badge badge-derived font-mono text-2xs font-bold">
+                                      DERIVED
+                                    </span>
+                                  </div>
+                                  <span className="submetric-val font-mono font-bold text-teal">
+                                    {multipack.derivedTotal} {multipack.unit}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="multipack-derived-caption text-2xs text-muted">
+                                Derived total quantity ({multipack.packCount} × {multipack.unitQuantity} {multipack.unit}) — not printed as a single declaration.
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="evidence-card__val font-mono">
+                              {item.isMissing ? (
+                                <span className="text-muted italic">Evidence not detected</span>
+                              ) : isBarcodeField && isUrlBarcode ? (
+                                <div className="barcode-url-box flex items-center justify-between gap-2">
+                                  <span className="truncate max-w-[280px]" title={item.field_value}>
+                                    {String(item.field_value)}
+                                  </span>
+                                  <a
+                                    href={String(item.field_value)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="barcode-open-link text-2xs font-semibold inline-flex items-center gap-0.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Open barcode payload URL in a safe new tab"
+                                  >
+                                    <span>Open URL</span>
+                                    <ExternalLink size={10} />
+                                  </a>
+                                </div>
+                              ) : (
+                                String(item.field_value)
+                              )}
+                            </div>
+                          )}
                         </div>
 
+                        {/* Card Bottom: Metadata & Inspect Button */}
                         <div className="evidence-card__bottom">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="source-pill font-mono text-2xs">
                               {item.source}
                             </span>
+                            {item.source_image_index !== undefined && (
+                              <button
+                                type="button"
+                                className="panel-link-btn font-mono text-2xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (item.source_image_index < images.length) {
+                                    setSelectedPanelIndex(item.source_image_index);
+                                  }
+                                }}
+                                title={`Jump to Panel ${item.source_image_index + 1}`}
+                              >
+                                Panel {item.source_image_index + 1}
+                              </button>
+                            )}
                             {item.confidence !== null && item.confidence !== undefined && (
                               <ConfidenceBadge
                                 confidence={item.confidence}
@@ -698,7 +1042,10 @@ const EvidenceViewer = ({
                               />
                             )}
                             {item.bbox && (
-                              <span className="bbox-pill text-2xs font-mono" title="Spatial BBox detected">
+                              <span
+                                className="bbox-pill text-2xs font-mono"
+                                title="Spatial coordinate box detected"
+                              >
                                 BBox
                               </span>
                             )}

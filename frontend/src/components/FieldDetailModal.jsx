@@ -1,16 +1,32 @@
-import React, { useEffect } from 'react';
-import { X, CheckCircle2, XCircle, AlertTriangle, MinusCircle, FileText, Image, Crosshair, Shield } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  X,
+  FileText,
+  Image,
+  Crosshair,
+  Shield,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+} from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import ConfidenceBadge from './ConfidenceBadge';
 import './FieldDetailModal.css';
 
 /**
  * FieldDetailModal Component
- * Deep inspection modal for a selected package declaration.
- * Displays normalized value, raw extracted text, confidence, source image/panel,
- * evidence type, validation status, statutory rule reason, and bounding box coordinates.
+ * Deep inspection modal for a selected package declaration:
+ * - Canonical / Normalized Value
+ * - Raw OCR text
+ * - Confidence & Source
+ * - Associated Rule ID & Statutory Reason
+ * - Collapsible "Evidence details" for technical metadata (BBox, provenance, candidate metadata)
+ * - Clear confidence disclaimer
  */
 const FieldDetailModal = ({ field, onClose }) => {
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -48,6 +64,20 @@ const FieldDetailModal = ({ field, onClose }) => {
   const bboxString = formatBBoxString(field.bbox);
   const rawText = field.raw_text || field.raw_value || field.text_content || field.field_value;
   const isMissing = !field.field_value && !field.raw_value;
+
+  // Additional technical metadata
+  const technicalMeta = {
+    extraction_method: field.extraction_method || field.source || 'OCR Rule Parser',
+    source_panel: `Panel ${(field.source_image_index || 0) + 1}`,
+    confidence_raw: field.confidence,
+    rule_id: field.rule_id,
+    bbox: field.bbox,
+    role: field.role,
+    is_multipack: field.is_multipack,
+    pack_count: field.pack_count,
+    unit_quantity: field.unit_quantity || field.unit_net_quantity,
+    derived_total: field.derived_total_quantity,
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
@@ -126,7 +156,7 @@ const FieldDetailModal = ({ field, onClose }) => {
             </div>
           </div>
 
-          {/* Detailed Metadata Attributes */}
+          {/* Primary Metadata Table */}
           <div className="field-detail-meta-table">
             <div className="meta-row">
               <span className="meta-row__label">
@@ -159,19 +189,19 @@ const FieldDetailModal = ({ field, onClose }) => {
               </div>
             )}
 
-            {bboxString && (
+            {field.role && (
               <div className="meta-row">
                 <span className="meta-row__label">
-                  <Crosshair size={13} className="text-muted" /> Spatial Region (BBox):
+                  <FileText size={13} className="text-muted" /> Declared Role:
                 </span>
-                <span className="meta-row__value font-mono text-xs">
-                  {bboxString}
+                <span className="meta-row__value font-mono font-semibold text-teal">
+                  {field.role}
                 </span>
               </div>
             )}
           </div>
 
-          {/* Statutory Reason / Finding Notice */}
+          {/* Statutory Finding Notice */}
           {field.reason && (
             <div className="field-detail-reason-card">
               <div className="field-detail-reason-card__title">
@@ -182,10 +212,44 @@ const FieldDetailModal = ({ field, onClose }) => {
             </div>
           )}
 
-          {/* Legal Metrology Notice */}
+          {/* Collapsible Technical Metadata Section (Section 13) */}
+          <div className="technical-metadata-section">
+            <button
+              type="button"
+              className="technical-metadata-toggle"
+              onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+              aria-expanded={showTechnicalDetails}
+            >
+              <div className="flex items-center gap-1.5 font-semibold text-xs text-secondary">
+                <Code2 size={13} />
+                <span>Evidence Technical Details</span>
+              </div>
+              {showTechnicalDetails ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+
+            {showTechnicalDetails && (
+              <div className="technical-metadata-body">
+                {bboxString && (
+                  <div className="meta-row">
+                    <span className="meta-row__label">
+                      <Crosshair size={13} className="text-muted" /> Spatial BBox:
+                    </span>
+                    <span className="meta-row__value font-mono text-2xs">
+                      {bboxString}
+                    </span>
+                  </div>
+                )}
+                <pre className="technical-json-block font-mono text-2xs">
+                  {JSON.stringify(technicalMeta, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+
+          {/* Legal Metrology Notice (Section 14) */}
           <div className="field-detail-disclaimer">
-            <p className="text-2xs text-muted leading-relaxed">
-              Confidence reflects the extraction/detection subsystem and does not determine legal compliance. Legal status is evaluated deterministically according to the Legal Metrology (Packaged Commodities) Rules, 2011.
+            <p className="text-2xs text-muted leading-relaxed m-0">
+              Confidence reflects the extraction/detection subsystem; it is not a legal compliance probability. Compliance status is evaluated deterministically according to the Legal Metrology (Packaged Commodities) Rules, 2011.
             </p>
           </div>
         </div>
