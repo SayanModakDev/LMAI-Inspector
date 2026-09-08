@@ -109,8 +109,14 @@ MANUFACTURER_KEYWORDS = [
     'manufactured at', 'manufactured for', 'manufactured by', 'manufactured:',
     'mfg & mkt by', 'mfg & pkd by', 'mfd & pkd by', 'mfd & mkt by',
     'mfg. by', 'mfd. by', 'mfg by', 'mfd by',
-    'marketed by', 'packed at', 'packed by', 'puckea by',
-    'packer', 'manufacturer', 'made by',
+    'manufacturer', 'made by',
+]
+MARKETER_KEYWORDS = [
+    'manufactured & marketed by', 'manufactured and marketed by', 'manufactured/marketed by',
+    'marketed & distributed by', 'marketed and distributed by',
+    'marketed by', 'marketed at', 'marketed for',
+    'mkt & dist by', 'mkt by', 'mktg by', 'mkt. by',
+    'marketer', 'distributed by',
 ]
 PACKER_KEYWORDS = [
     'manufactured & packed by', 'manufactured and packed by', 'manufactured/packed by',
@@ -135,6 +141,7 @@ SECTION_FRONT_PRODUCT = "FRONT_PRODUCT"
 SECTION_DECLARED_QUANTITY = "DECLARED_QUANTITY"
 SECTION_MRP = "MRP"
 SECTION_MANUFACTURER = "MANUFACTURER"
+SECTION_MARKETER = "MARKETER"
 SECTION_PACKER = "PACKER"
 SECTION_ADDRESS = "ADDRESS"
 SECTION_DATE = "DATE"
@@ -242,7 +249,16 @@ COMPANY_SUFFIX_RE = re.compile(
 NON_COMPANY_LIMITED_WORDS = {'edition', 'offer', 'period', 'time', 'stock', 'validity', 'warranty', 'qty', 'quantity'}
 INLINE_SECTION_PATTERNS = {
     'manufacturer': [
-        r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfg\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|mfd\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|packed\s+(?:by|at)|marketed\s+by|imported\s+by|packer\b|manufacturer\b|made\s+by\b)',
+        r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfg\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|mfd\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|manufacturer\b|made\s+by\b)',
+    ],
+    'marketer': [
+        r'\b(?:marketed\s*(?:&|and)?\s*(?:distributed)?\s*(?:by|at|for)|mkt\s*by|mktg\s*by|mkt\.\s*by|marketer\b|distributed\s+by\b)',
+    ],
+    'packer': [
+        r'\b(?:packed\s*(?:&|and)?\s*(?:marketed)?\s*(?:by|at|for)|packed\s+(?:by|at)|pkd\s*by|pkg\s*by|packer\b|packaged\s+by\b)',
+    ],
+    'importer': [
+        r'\b(?:imported\s+by|importer\b)',
     ],
     'ingredients': [
         r'\b(?:ingredients?|composition|ingredient\s+list)\b',
@@ -301,6 +317,8 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
         return SECTION_INGREDIENTS
     if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in PACKER_KEYWORDS) and re.search(r'\b(?:packed|pkd|pkg|packer)\b', cleaned, re.I):
         return SECTION_PACKER
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MARKETER_KEYWORDS) and re.search(r'\b(?:marketed|mkt|mktg|marketer|distributed)\b', cleaned, re.I):
+        return SECTION_MARKETER
     if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MANUFACTURER_KEYWORDS) or COMPANY_SUFFIX_RE.search(cleaned):
         return SECTION_MANUFACTURER
     if CONSUMER_CARE_STOP_RE.search(cleaned):
@@ -1691,7 +1709,11 @@ def _clean_address_text(raw_addr: str) -> str:
             break
         if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', part_clean):
             break
-        if re.search(r'\b(?:marketed\s+by|packed\s+by|imported\s+by)\b', part_clean, re.I):
+        if re.search(r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:by|at|for)|mfg\s*by|mfd\s*by|marketed\s*by|packed\s*by|imported\s*by|distributed\s*by)\b', part_clean, re.I):
+            break
+        if COMPANY_SUFFIX_RE.search(part_clean):
+            break
+        if re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', part_clean, re.I):
             break
 
         # Check for inline section cut inside the part
@@ -1753,6 +1775,13 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
             break
         if current_section in ('ingredients', 'nutrition') and _extract_company_entity_from_line(line_clean):
             break
+        if current_section in ('manufacturer', 'marketer', 'packer'):
+            if VENDOR_PREFIX_RE.search(line_clean):
+                break
+            if collected and (COMPANY_SUFFIX_RE.search(line_clean) or _extract_company_entity_from_line(line_clean)):
+                break
+            if NET_QTY_POSITIVE_CONTEXT_RE.search(line_clean) or re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', line_clean, re.I):
+                break
         earliest_other_pos = len(line_clean)
         for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
             if sec_name == current_section:
@@ -1843,6 +1872,66 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
             addr_parts.extend(cont_lines)
             address = _clean_address_text(', '.join(part for part in addr_parts if part))
             return comp_name, address or None
+
+    return None, None
+
+
+def _extract_marketer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Extract marketer name and address cleanly when marketed by / distributed by is declared."""
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        matched_kw = None
+        for kw in MARKETER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'marketer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'marketer', max_lines=6)
+
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                return name, address or None
+
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                    return name, address or None
+
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
+                elif cleaned_after:
+                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    address = _clean_address_text(', '.join(cont_lines))
+                else:
+                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                address = _clean_address_text(vendor['address']) or None
+                return name or None, address
 
     return None, None
 
@@ -2838,20 +2927,78 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         fields['DECLARED_NET_QUANTITY'] = qty_field
 
     mfg_name, mfg_addr = _extract_manufacturer_and_address(lines)
-    if mfg_name:
-        fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.8, 'source': 'OCR'}
-    if mfg_addr:
-        fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.7, 'source': 'OCR'}
-
+    mkt_name, mkt_addr = _extract_marketer_and_address(lines)
     packer_name, packer_addr = _extract_packer_and_address(lines)
-    if packer_name:
-        fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.8, 'source': 'OCR'}
+
+    if mfg_name:
+        fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MANUFACTURER'}
+    if mfg_addr:
+        fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MANUFACTURER'}
+
+    if mkt_name:
+        fields['MARKETER_NAME'] = {'value': mkt_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MARKETER'}
         if 'MANUFACTURER_NAME' not in fields:
-            fields['MANUFACTURER_NAME'] = {'value': packer_name, 'confidence': 0.78, 'source': 'OCR', 'entity_type': 'PACKER'}
-    if packer_addr:
-        fields['PACKER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.7, 'source': 'OCR'}
+            fields['MANUFACTURER_NAME'] = {'value': mkt_name, 'confidence': 0.8, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
+    if mkt_addr:
+        fields['MARKETER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MARKETER'}
         if 'MANUFACTURER_ADDRESS' not in fields:
-            fields['MANUFACTURER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.68, 'source': 'OCR', 'entity_type': 'PACKER'}
+            fields['MANUFACTURER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.75, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
+
+    if packer_name:
+        fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'PACKER'}
+        if 'MANUFACTURER_NAME' not in fields:
+            fields['MANUFACTURER_NAME'] = {'value': packer_name, 'confidence': 0.78, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
+    if packer_addr:
+        fields['PACKER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'PACKER'}
+        if 'MANUFACTURER_ADDRESS' not in fields:
+            fields['MANUFACTURER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.68, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
+
+    # Collect distinct responsible entities with structured roles without merging
+    entities = []
+    if mfg_name:
+        entities.append({'role': 'MANUFACTURER', 'name': mfg_name, 'address': mfg_addr})
+    if mkt_name and mkt_name != mfg_name:
+        entities.append({'role': 'MARKETER', 'name': mkt_name, 'address': mkt_addr})
+    if packer_name and packer_name not in (mfg_name, mkt_name):
+        entities.append({'role': 'PACKER', 'name': packer_name, 'address': packer_addr})
+
+    if len(entities) > 1:
+        if 'MANUFACTURER_NAME' in fields:
+            fields['MANUFACTURER_NAME']['entities'] = entities
+
+        # Ambiguous address association check:
+        # If multiple distinct entities exist and their address association is shared, identical, or unlinked
+        addrs = [e.get('address') for e in entities if e.get('address')]
+        if len(entities) >= 2 and len(set(addrs)) == 1 and addrs[0]:
+            if 'MANUFACTURER_ADDRESS' in fields:
+                fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
+                fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
+                fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
+                    {'entity': e['name'], 'role': e['role'], 'address': addrs[0]} for e in entities
+                ]
+                fields['MANUFACTURER_ADDRESS']['reason'] = (
+                    f"Ambiguous address association between multiple declared entities: "
+                    f"{', '.join(e['name'] for e in entities)}"
+                )
+
+    # Check for multiple standalone corporate entities without explicit manufacturer/marketer prefixes
+    standalone_comps = []
+    for idx, line in enumerate(lines):
+        comp = _extract_company_entity_from_line(line)
+        if comp and not any(kw in line.lower() for kw in MANUFACTURER_KEYWORDS + MARKETER_KEYWORDS + PACKER_KEYWORDS):
+            standalone_comps.append((comp[0], idx, comp[1]))
+    if len(standalone_comps) >= 2 and not mfg_name and not mkt_name:
+        if 'MANUFACTURER_ADDRESS' in fields:
+            fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
+            fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
+            fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
+                {'entity': sc[0], 'address': fields['MANUFACTURER_ADDRESS'].get('value')}
+                for sc in standalone_comps
+            ]
+            fields['MANUFACTURER_ADDRESS']['reason'] = (
+                f"Ambiguous address association between competing entities: "
+                f"{', '.join(sc[0] for sc in standalone_comps)}"
+            )
 
     for line_index, line in enumerate(lines):
         lower = line.lower()
