@@ -311,3 +311,124 @@ def build_quantity_candidate(
         result["candidates"] = candidates
 
     return result
+
+
+class DatePrecision(str, Enum):
+    FULL_DATE = "FULL_DATE"
+    MONTH_YEAR = "MONTH_YEAR"
+
+
+class ContactType(str, Enum):
+    TOLL_FREE = "TOLL_FREE"
+    PHONE = "PHONE"
+    EMAIL = "EMAIL"
+    WEBSITE = "WEBSITE"
+    POSTAL = "POSTAL"
+    CONSUMER_CARE_CELL = "CONSUMER_CARE_CELL"
+
+
+def build_date_candidate(
+    raw_date: str,
+    normalized_date: Optional[str] = None,
+    norm_val: Optional[str] = None,
+    precision: str = DatePrecision.FULL_DATE.value,
+    parsed_components: Optional[Dict[str, Any]] = None,
+    source_label: Optional[str] = None,
+    semantic_type: str = "MANUFACTURE_DATE",
+    confidence: float = 0.8,
+    source: str = "OCR",
+    source_image_id: Optional[int] = None,
+    source_image_index: Optional[int] = None,
+    bbox: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Construct a canonical date candidate preserving raw declaration, precision, and parsed parts."""
+    norm_val = normalized_date or norm_val or raw_date
+    return {
+        "value": raw_date,
+        "raw_value": raw_date,
+        "raw_date": raw_date,
+        "normalized_value": norm_val,
+        "normalized_date": norm_val,
+        "precision": precision,
+        "parsed_components": parsed_components or {},
+        "source_label": source_label,
+        "semantic_type": semantic_type,
+        "evidence": {
+            "raw_text": raw_date,
+            "label": source_label,
+            "precision": precision,
+        },
+        "confidence": confidence,
+        "source": source,
+        "source_image_id": source_image_id,
+        "source_image_index": source_image_index,
+        "bbox": bbox,
+    }
+
+
+def build_consumer_care_candidate(
+    value: str,
+    raw_text: str,
+    contacts: Optional[List[Dict[str, Any]]] = None,
+    primary_contact_type: Optional[str] = None,
+    primary_contact_value: Optional[str] = None,
+    confidence: float = 0.8,
+    source: str = "OCR",
+    source_image_id: Optional[int] = None,
+    source_image_index: Optional[int] = None,
+    bbox: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Construct a canonical consumer care candidate with structured contact channels."""
+    contact_list = contacts or []
+    c_type = primary_contact_type
+    c_val = primary_contact_value
+    if not c_type and contact_list:
+        c_type = contact_list[0].get("contact_type")
+        c_val = contact_list[0].get("contact_value")
+
+    return {
+        "value": value,
+        "raw_value": raw_text,
+        "raw_text": raw_text,
+        "contact_type": c_type,
+        "contact_value": c_val,
+        "primary_contact_type": c_type,
+        "primary_contact_value": c_val,
+        "contacts": contact_list,
+        "confidence": confidence,
+        "source": source,
+        "source_image_id": source_image_id,
+        "source_image_index": source_image_index,
+        "bbox": bbox,
+    }
+
+
+def build_product_name_candidate(
+    value: Optional[str],
+    raw_text: Optional[str] = None,
+    status: str = "VALID",
+    competing_candidates: Optional[List[Dict[str, Any]]] = None,
+    confidence: float = 0.85,
+    source: str = "OCR",
+    source_image_id: Optional[int] = None,
+    source_image_index: Optional[int] = None,
+    bbox: Optional[Any] = None,
+    reconciliation_status: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Construct a canonical product name candidate tracking semantic association and ambiguity."""
+    is_ambiguous = status in ("AMBIGUOUS", "REVIEW", "CONFLICTING_EVIDENCE")
+    return {
+        "value": value,
+        "raw_value": raw_text or value,
+        "raw_text": raw_text or value,
+        "status": status,
+        "reconciliation_status": reconciliation_status or ("REVIEW" if is_ambiguous else "CONFIRMED"),
+        "is_ambiguous": is_ambiguous,
+        "competing_candidates": competing_candidates or [],
+        "confidence": confidence,
+        "source": source,
+        "source_image_id": source_image_id,
+        "source_image_index": source_image_index,
+        "bbox": bbox,
+    }
+

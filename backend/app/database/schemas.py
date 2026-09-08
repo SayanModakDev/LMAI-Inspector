@@ -3,7 +3,7 @@ Pydantic schemas for API request/response validation.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 
 
@@ -20,10 +20,9 @@ class ScanResponse(BaseModel):
     product_name: Optional[str] = None
     brand: Optional[str] = None
     product_type: Optional[str] = None
-    brand: Optional[str] = None
-    product_type: Optional[str] = None
     extracted_fields: dict = {}
     rule_results: List[dict] = []
+    summary: Optional[Dict[str, int]] = None
     overall_result: Optional[str] = None
     priority: str = "MEDIUM"
     evidence: List[dict] = []
@@ -58,6 +57,7 @@ class InspectionDetail(BaseModel):
     ocr_result: Optional[dict] = None
     extracted_fields: List[dict] = []
     rule_results: List[dict] = []
+    summary: Optional[Dict[str, int]] = None
     evidence: List[dict] = []
     report: Optional[dict] = None
 

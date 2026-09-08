@@ -14,6 +14,11 @@ from app.core.ontology import (
     build_quantity_candidate,
     infer_quantity_type,
     normalize_unit,
+    DatePrecision,
+    ContactType,
+    build_date_candidate,
+    build_consumer_care_candidate,
+    build_product_name_candidate,
 )
 from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token
 from app.extraction.evidence_model import (
@@ -640,19 +645,184 @@ def _lines_after_label(lines: List[str], index: int, max_lines: int = 4) -> str:
     return ', '.join(item for item in collected if item)
 
 
-def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]]) -> Optional[str]:
-    """Score front-label candidates; do not let a marketing adjective become a product."""
+def parse_date_with_precision(date_str: str) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Parse a date string and determine its precision (FULL_DATE vs MONTH_YEAR).
+
+    Returns:
+        (is_valid, normalized_date_string, metadata_dict)
+    """
+    if not date_str or not _is_valid_date_token(date_str):
+        return False, None, None
+
+    token = date_str.strip()
+    month_names = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+
+    # Check for text month
+    m_text = re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*', token, re.IGNORECASE)
+    if m_text:
+        month_str = m_text.group(1).lower()
+        month = month_names.get(month_str, 1)
+        nums = [int(n) for n in re.findall(r'\d+', token)]
+        if len(nums) == 1:
+            year = nums[0]
+            if year < 100:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+            norm = f"{month:02d}/{year}"
+            return True, norm, {
+                "precision": DatePrecision.MONTH_YEAR.value,
+                "raw_text": date_str,
+                "normalized_date": norm,
+                "parsed_components": {"month": month, "year": year}
+            }
+        elif len(nums) == 2:
+            day, year = nums
+            if year < 100:
+                year += 2000 if year <= 50 else 1900
+            if not (1 <= day <= 31 and 1990 <= year <= 2099):
+                return False, None, None
+            norm = f"{day:02d}/{month:02d}/{year}"
+            return True, norm, {
+                "precision": DatePrecision.FULL_DATE.value,
+                "raw_text": date_str,
+                "normalized_date": norm,
+                "parsed_components": {"day": day, "month": month, "year": year}
+            }
+        return False, None, None
+
+    # Numeric parts separated by /, -, or .
+    parts = [p for p in re.split(r'[/.-]', token) if p != '']
+    if len(parts) not in (2, 3):
+        return False, None, None
+
+    try:
+        numbers = [int(p) for p in parts]
+    except ValueError:
+        return False, None, None
+
+    if len(parts) == 2:
+        first, second = numbers
+        p1_len, p2_len = len(parts[0]), len(parts[1])
+        if p1_len == 4 and (1990 <= first <= 2099) and (1 <= second <= 12):
+            year, month = first, second
+        elif 1 <= first <= 12:
+            month = first
+            year = second
+            if p2_len == 2:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+        else:
+            return False, None, None
+
+        norm = f"{month:02d}/{year}"
+        return True, norm, {
+            "precision": DatePrecision.MONTH_YEAR.value,
+            "raw_text": date_str,
+            "normalized_date": norm,
+            "parsed_components": {"month": month, "year": year}
+        }
+
+    if len(parts) == 3:
+        p1_len, p2_len, p3_len = len(parts[0]), len(parts[1]), len(parts[2])
+        if p1_len == 4 and (1990 <= numbers[0] <= 2099) and (1 <= numbers[1] <= 12) and (1 <= numbers[2] <= 31):
+            year, month, day = numbers[0], numbers[1], numbers[2]
+        elif (1 <= numbers[0] <= 31) and (1 <= numbers[1] <= 12):
+            day, month = numbers[0], numbers[1]
+            year = numbers[2]
+            if p3_len == 2:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+        else:
+            return False, None, None
+
+        norm = f"{day:02d}/{month:02d}/{year}"
+        return True, norm, {
+            "precision": DatePrecision.FULL_DATE.value,
+            "raw_text": date_str,
+            "normalized_date": norm,
+            "parsed_components": {"day": day, "month": month, "year": year}
+        }
+
+    return False, None, None
+
+
+def _is_disallowed_product_name_line(line: str) -> bool:
+    """Reject corporate entities, brand-only tokens, ingredient lists, botanical Latin names,
+    batch IDs, licenses, addresses, and decorative slogans from becoming PRODUCT_NAME.
+    """
+    line_clean = line.strip()
+    if not line_clean:
+        return True
+
+    lower = line_clean.lower()
+
+    # 1. Corporate entities / Manufacturers / Packers / Marketers
+    if COMPANY_SUFFIX_RE.search(line_clean) or VENDOR_PREFIX_RE.search(line_clean):
+        return True
+    if re.search(r'\b(?:pvt\.?\s*ltd|private\s+limited|limited\b|ltd\b|llp\b|corp\b|corporation\b|inc\b|mfg|mfd|manufactur\w*|pack\w*|market\w*|import\w*)\b', lower):
+        return True
+
+    # 2. Ingredient lists or composition headers
+    if INGREDIENTS_LINE_RE.search(line_clean) or re.search(r'\b(?:ingredients?|contains?|composition)\s*[:.]', lower):
+        return True
+
+    # 3. Botanical / Latin binomial names
+    # e.g., (Azadirachta indica), Camellia sinensis, Mangifera indica, Linn., etc.
+    if re.search(r'\b(?:[A-Z][a-z]+\s+(?:indica|sativa|sinensis|officinalis|vulgaris|sanctum|tinctoria|zeylanica|sp\.|var\.)|\([A-Z][a-z]+\s+[a-z]+\))\b', line_clean):
+        return True
+
+    # 4. Batch IDs, FSSAI licenses, dates, pricing, net quantity
+    if re.search(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?|fssai|lic\.?\s*(?:no\.?|number)?|regd?\s*no\.?)\b', lower):
+        return True
+    if re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|inr|exp(?:iry)?|mfd|pkd|use\s*by|best\s*before)\b', lower):
+        return True
+    if re.search(r'\b\d+\s*(?:g|kg|ml|l|ltr|gm|pieces?|tablets?)\b', lower):
+        return True
+
+    # 5. Addresses & Locations
+    if re.search(r'\b(?:plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|sector\b|phase\s+[ivx0-9]+|gidc|industrial\s*area|pin(?:code)?\s*[:.\s-]*\d{6})\b', lower):
+        return True
+
+    # 6. Decorative marketing slogans
+    if any(lower == term.lower() for term in MARKETING_TERMS):
+        return True
+    if re.search(r'^(?:100\s*%\s*(?:pure|natural|veg(?:etarian)?)|best\s+quality|premium\s+quality|original\s+taste|fresh\s+and\s+pure|delicious\s+taste|new\s+look)$', lower):
+        return True
+
+    return False
+
+
+def _extract_product_name_candidates(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None
+) -> Tuple[Optional[str], List[Dict[str, Any]], str]:
+    """Score front-label candidates and detect ambiguity when multiple plausible candidates exist.
+
+    Returns:
+        (primary_candidate, competing_candidates, status)
+        where status is 'VALID' or 'AMBIGUOUS'.
+    """
     scored = []
     for index, line in enumerate(lines[:25]):
+        if _is_disallowed_product_name_line(line):
+            continue
         words = re.findall(r"[A-Za-z][A-Za-z&'-]*", line)
-        lowered = [word.lower() for word in words]
-        if not words or len(words) > 8 or ':' in line or any(word in MARKETING_TERMS for word in lowered) and len(words) <= 3:
+        lowered = [w.lower() for w in words]
+        if not words or len(words) > 8 or ':' in line:
             continue
-        if re.search(r'\b(?:manufactured|manufacturing|marketed|packed|ingredients|nutrition|fssai|consumer|address|mrp|net\s*(?:wt|weight)|pvt\.?\s*ltd|private\s+limited|ltd\b|limited\b|plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|sector\b|phase\s+[ivx0-9]+|gidc|industrial\s*area)\b', line, re.I):
+        if any(w in MARKETING_TERMS for w in lowered) and len(words) <= 3:
             continue
+
         score = 1.0 + max(0, 8 - index) * 0.08
-        if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice)\b', line, re.I):
+        if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice|toothpaste|noodles)\b', line, re.I):
             score += 4.0
+
         if ocr_items:
             item = next((x for x in ocr_items if str(x.get('text', '')).strip().lower() == line.lower()), None)
             if item:
@@ -666,7 +836,145 @@ def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]
                     if (bbox[1] - min_y) / y_range < 0.6:
                         score += 0.5
         scored.append((score, line))
-    return max(scored, default=(0, None), key=lambda item: item[0])[1]
+
+    if not scored:
+        return None, [], "VALID"
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top_score, top_cand = scored[0]
+
+    competing = []
+    for s, c in scored[1:4]:
+        if s >= 1.0 and _product_names_conflict(top_cand, c) and (s / top_score) > 0.70:
+            competing.append(c)
+
+    if competing:
+        all_competing = [top_cand] + [c for c in competing if c != top_cand]
+        return top_cand, all_competing, "AMBIGUOUS"
+
+    return top_cand, [], "VALID"
+
+
+def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """Score front-label candidates; do not let a marketing adjective become a product."""
+    cand, _, _ = _extract_product_name_candidates(lines, ocr_items)
+    return cand
+
+
+def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[Dict[str, Any]]:
+    """Extract clean, structured consumer care contact channels.
+
+    Finds toll-free phone, telephone/mobile, email, website, and postal contacts.
+    Never appends arbitrary continuation lines or unrelated trailing text.
+    """
+    contacts: List[Dict[str, str]] = []
+    seen_contacts = set()
+
+    def _add_contact(c_type: str, c_val: str):
+        key = (c_type, c_val.lower().strip())
+        if key not in seen_contacts:
+            seen_contacts.add(key)
+            contacts.append({"contact_type": c_type, "contact_value": c_val.strip()})
+
+    # 1. Search for toll-free numbers across lines and text
+    tf_pattern = re.compile(r'\b(1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b')
+    for m in tf_pattern.finditer(text):
+        _add_contact(ContactType.TOLL_FREE.value, m.group(1).replace(' ', '-'))
+
+    # 2. Search for email addresses
+    email_pattern = re.compile(r'\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b')
+    for m in email_pattern.finditer(text):
+        _add_contact(ContactType.EMAIL.value, m.group(1))
+
+    # 3. Search for websites (avoiding generic word matching)
+    web_pattern = re.compile(r'\b(https?://[^\s,;]+|www\.[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:/[^\s,;]*)?)\b', re.I)
+    for m in web_pattern.finditer(text):
+        _add_contact(ContactType.WEBSITE.value, m.group(1))
+
+    # 4. Search for phone / helpline numbers specifically linked to consumer care / helpline context
+    phone_prefix_pattern = re.compile(
+        r'(?:(?:helpline|toll\s*free|call\s*us(?:\s*at)?|ph(?:one)?|tel(?:ephone)?|contact(?:\s*no\.?)?|mobile)\s*[:.\s-]*)\s*([+]?[0-9\s\-]{8,15})',
+        re.I
+    )
+    for m in phone_prefix_pattern.finditer(text):
+        raw_num = m.group(1).strip()
+        digits = re.sub(r'\D', '', raw_num)
+        if 8 <= len(digits) <= 12 and not raw_num.startswith('1800'):
+            _add_contact(ContactType.PHONE.value, raw_num)
+
+    # 5. Check if any line explicitly identifies Consumer Care Cell / address
+    matched_label_line = None
+    for idx, line in enumerate(lines):
+        lower = line.lower()
+        if any(kw in lower for kw in ('consumer care', 'customer care', 'customer support', 'write to:')):
+            matched_label_line = line
+            after_kw = line
+            for kw in ('consumer care cell', 'consumer care', 'customer care', 'customer support', 'write to'):
+                if kw in lower:
+                    pos = lower.find(kw) + len(kw)
+                    after_kw = line[pos:].strip(' :;,-')
+                    break
+            if after_kw and not any(ch in after_kw for ch in ('@', 'www.', 'http')):
+                clean_target = _clean_address_text(after_kw)
+                if clean_target and len(clean_target) > 5:
+                    _add_contact(ContactType.POSTAL.value, clean_target)
+            break
+
+    if not contacts:
+        cc_match = _search_patterns(text, CONSUMER_CARE_PATTERNS)
+        if cc_match:
+            val_clean = cc_match.strip(' :;,-')
+            if '@' in val_clean:
+                _add_contact(ContactType.EMAIL.value, val_clean)
+            elif re.search(r'\d{6,}', val_clean):
+                _add_contact(ContactType.PHONE.value, val_clean)
+            else:
+                _add_contact(ContactType.CONSUMER_CARE_CELL.value, val_clean)
+
+    if not contacts and not matched_label_line:
+        return None
+
+    type_priority = {
+        ContactType.TOLL_FREE.value: 1,
+        ContactType.PHONE.value: 2,
+        ContactType.EMAIL.value: 3,
+        ContactType.WEBSITE.value: 4,
+        ContactType.POSTAL.value: 5,
+        ContactType.CONSUMER_CARE_CELL.value: 6,
+    }
+    contacts.sort(key=lambda c: type_priority.get(c["contact_type"], 99))
+
+    primary = contacts[0] if contacts else {"contact_type": "CONSUMER_CARE_CELL", "contact_value": matched_label_line or "Consumer Care"}
+    
+    val_strs = [c["contact_value"] for c in contacts[:2]]
+    val_summary = None
+    if matched_label_line:
+        lower_lbl = matched_label_line.lower()
+        for kw in ('consumer care cell', 'consumer care', 'customer care', 'customer support', 'helpline', 'toll free', 'call us', 'write to'):
+            if kw in lower_lbl:
+                pos = lower_lbl.find(kw) + len(kw)
+                cand_after = matched_label_line[pos:].strip(' :;,-')
+                cand_after = _cut_before_next_section(cand_after, 'consumer_care')
+                if cand_after:
+                    if any(ch in cand_after for ch in ('@', 'www.', 'http')) or re.search(r'\d{4,}', cand_after):
+                        val_summary = cand_after
+                    elif val_strs:
+                        val_summary = f"{cand_after}, {', '.join(val_strs)}"
+                    else:
+                        val_summary = cand_after
+                break
+    if not val_summary:
+        val_summary = ', '.join(val_strs) if val_strs else primary["contact_value"]
+
+    return build_consumer_care_candidate(
+        value=val_summary,
+        raw_text=matched_label_line or val_summary,
+        contacts=contacts,
+        primary_contact_type=primary["contact_type"],
+        primary_contact_value=primary["contact_value"],
+        confidence=0.8,
+        source='OCR',
+    )
 
 
 def _extract_price_number(text: str) -> Optional[float]:
@@ -1349,7 +1657,7 @@ def _cut_before_next_section(text: str, current_section: str) -> str:
 
 
 def _clean_address_text(raw_addr: str) -> str:
-    """Clean manufacturer address by stripping trailing consumer care, storage, marketing, and nutrition fragments."""
+    """Clean manufacturer address by stripping trailing consumer care, contact info, storage, marketing, and nutrition fragments."""
     if not raw_addr:
         return ""
 
@@ -1371,7 +1679,19 @@ def _clean_address_text(raw_addr: str) -> str:
             break
         if SERVING_SIZE_RE.search(part_clean) or NUTRITION_LINE_RE.search(part_clean) or NUTRITION_SECTION_HEADER_RE.search(part_clean):
             break
-        if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|fssai|lic\.?\s*(?:no\.?|number)?)\b', part_clean, re.I):
+        if INGREDIENTS_LINE_RE.search(part_clean):
+            break
+        if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|fssai|lic\.?\s*(?:no\.?|number)?|batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?)\b', part_clean, re.I):
+            break
+        if re.search(r'\b(?:ph(?:one)?|tel(?:ephone)?|mob(?:ile)?|contact)\s*[:.\s-]*\+?\d', part_clean, re.I):
+            break
+        if re.search(r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b', part_clean):
+            break
+        if re.search(r'\b(?:email|e-mail|website|web)\s*[:.\s-]*', part_clean, re.I):
+            break
+        if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', part_clean):
+            break
+        if re.search(r'\b(?:marketed\s+by|packed\s+by|imported\s+by)\b', part_clean, re.I):
             break
 
         # Check for inline section cut inside the part
@@ -1433,12 +1753,22 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
             break
         if current_section in ('ingredients', 'nutrition') and _extract_company_entity_from_line(line_clean):
             break
-        cut_line = _cut_before_next_section(line_clean, current_section)
-        if cut_line != line_clean:
+        earliest_other_pos = len(line_clean)
+        for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+            if sec_name == current_section:
+                continue
+            for pat in patterns:
+                for m in re.finditer(pat, line_clean, re.IGNORECASE):
+                    if 0 <= m.start() < earliest_other_pos:
+                        earliest_other_pos = m.start()
+
+        if earliest_other_pos < len(line_clean):
+            cut_line = line_clean[:earliest_other_pos].strip(' :;,-')
             if cut_line:
                 collected.append(cut_line.strip(' ,;'))
             break
-        collected.append(line_clean.strip(' ,;'))
+        else:
+            collected.append(line_clean.strip(' ,;'))
     return collected
 
 
@@ -1521,14 +1851,27 @@ def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
     value = raw_value.strip(' :;,-')
     if not value:
         return {'name': '', 'address': ''}
-    if re.search(r'(p\.?o\.?|plot\s*no|road|street|sector|industrial\s*area|district|state|pin(?:code)?|india)', value, re.IGNORECASE):
-        parts = re.split(r'\s+(?=(?:p\.?o\.?|plot\s*no|road|street|sector|industrial\s*area|district|state|pin(?:code)?|india))', value, maxsplit=1, flags=re.IGNORECASE)
+
+    # Check if there is a company suffix first
+    m_comp = COMPANY_SUFFIX_RE.search(value)
+    if m_comp:
+        company_name = m_comp.group(1).strip(' ,;:')
+        rest = value[m_comp.end():].strip(' ,;:')
+        clean_rest = _clean_address_text(rest)
+        return {'name': company_name, 'address': clean_rest}
+
+    # Check for known address starter keywords
+    addr_kw = r'(?:p\.?o\.?|plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|road|street|sector|phase\s+[ivx0-9]+|gidc|industrial\s*area|village|taluka|district|state|pin(?:code)?|india)'
+    if re.search(addr_kw, value, re.IGNORECASE):
+        parts = re.split(rf'\s+(?={addr_kw})', value, maxsplit=1, flags=re.IGNORECASE)
         if len(parts) == 2:
-            return {'name': parts[0].strip(', '), 'address': parts[1].strip(', ')}
+            return {'name': parts[0].strip(', '), 'address': _clean_address_text(parts[1].strip(', '))}
+
     if ',' in value:
         first, second = value.split(',', 1)
-        if len(first) > 3 and len(first) <= 200:
-            return {'name': first.strip(), 'address': second.strip()}
+        if 3 < len(first) <= 200:
+            return {'name': first.strip(), 'address': _clean_address_text(second.strip())}
+
     return {'name': value[:200], 'address': ''}
 
 
@@ -2358,9 +2701,16 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     lines = [line.strip() for line in normalized.split('\n') if line.strip()]
     fields: Dict[str, Any] = {}
 
-    first_candidate = _product_candidate(lines, ocr_items)
-    if first_candidate:
-        fields['PRODUCT_NAME'] = {'value': first_candidate[:200], 'confidence': 0.65, 'source': 'OCR'}
+    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, ocr_items)
+    if p_cand:
+        fields['PRODUCT_NAME'] = build_product_name_candidate(
+            value=p_cand[:200],
+            raw_text=p_cand,
+            status=p_status,
+            competing_candidates=competing_pnames,
+            confidence=0.65 if p_status == "AMBIGUOUS" else 0.85,
+            source='OCR',
+        )
 
     # Generalized Commodity & Brand Extraction
     # Detect generic commodity descriptors across food, personal care, and household commodities.
@@ -2412,7 +2762,13 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 if len(brand_tokens) >= 1 and not any(t.lower() in MARKETING_TERMS for t in brand_tokens):
                     cand_brand = ' '.join(brand_tokens).title()
                     fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR'}
-                    fields['PRODUCT_NAME'] = {'value': f"{cand_brand} {gen_name.title()}", 'confidence': 0.85, 'source': 'OCR'}
+                    fields['PRODUCT_NAME'] = build_product_name_candidate(
+                        value=f"{cand_brand} {gen_name.title()}",
+                        raw_text=f"{cand_brand} {gen_name.title()}",
+                        status="VALID",
+                        confidence=0.85,
+                        source='OCR_LAYOUT',
+                    )
                 elif idx > 0 and 'BRAND' not in fields:
                     # Check preceding line for brand name
                     prev_line = lines[idx - 1].strip()
@@ -2420,7 +2776,13 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                     if 1 <= len(prev_words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in prev_words) and not _is_section_boundary(prev_line):
                         cand_brand = ' '.join(prev_words).title()
                         fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
-                        fields['PRODUCT_NAME'] = {'value': f"{cand_brand} {gen_name.title()}", 'confidence': 0.85, 'source': 'OCR_LAYOUT'}
+                        fields['PRODUCT_NAME'] = build_product_name_candidate(
+                            value=f"{cand_brand} {gen_name.title()}",
+                            raw_text=f"{cand_brand} {gen_name.title()}",
+                            status="VALID",
+                            confidence=0.85,
+                            source='OCR_LAYOUT',
+                        )
                 break
         if matched_generic:
             break
@@ -2437,20 +2799,35 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 brand = ' '.join(word.title() for word in brand_words)
                 generic = ' '.join(product_words).title()
                 fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
-                if 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('confidence', 0) < 0.8:
-                    fields['PRODUCT_NAME'] = {'value': f'{brand} {generic}', 'confidence': 0.86, 'source': 'OCR_LAYOUT'}
+                if 'PRODUCT_NAME' not in fields or (fields['PRODUCT_NAME'].get('confidence', 0) < 0.8 and fields['PRODUCT_NAME'].get('status') != 'AMBIGUOUS'):
+                    fields['PRODUCT_NAME'] = build_product_name_candidate(
+                        value=f'{brand} {generic}',
+                        raw_text=f'{brand} {generic}',
+                        status="VALID",
+                        confidence=0.86,
+                        source='OCR_LAYOUT',
+                    )
                 break
 
     # 3. If product name is still missing or low confidence, combine available brand + generic
-    if 'PRODUCT_NAME' not in fields or fields['PRODUCT_NAME'].get('confidence', 0) < 0.7:
+    if 'PRODUCT_NAME' not in fields or (fields['PRODUCT_NAME'].get('confidence', 0) < 0.7 and fields['PRODUCT_NAME'].get('status') != 'AMBIGUOUS'):
         if 'BRAND' in fields and 'GENERIC_NAME' in fields:
-            fields['PRODUCT_NAME'] = {
-                'value': f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
-                'confidence': 0.82,
-                'source': 'OCR',
-            }
-        elif first_candidate:
-            fields['PRODUCT_NAME'] = {'value': first_candidate[:200], 'confidence': 0.65, 'source': 'OCR'}
+            fields['PRODUCT_NAME'] = build_product_name_candidate(
+                value=f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
+                raw_text=f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
+                status="VALID",
+                confidence=0.82,
+                source='OCR',
+            )
+        elif p_cand and 'PRODUCT_NAME' not in fields:
+            fields['PRODUCT_NAME'] = build_product_name_candidate(
+                value=p_cand[:200],
+                raw_text=p_cand,
+                status=p_status,
+                competing_candidates=competing_pnames,
+                confidence=0.65 if p_status == "AMBIGUOUS" else 0.85,
+                source='OCR',
+            )
 
     mrp_field = _extract_mrp_structured(normalized, raw_text, lines)
     if mrp_field:
@@ -2500,55 +2877,66 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
 
     mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS)
     if mfg_date:
-        fields['MANUFACTURE_DATE'] = {
-            'value': mfg_date,
-            'raw_value': mfg_date,
-            'raw_date': mfg_date,
-            'normalized_value': mfg_date,
-            'normalized_date': mfg_date,
-            'source_label': 'MFD',
-            'semantic_type': 'MANUFACTURE_DATE',
-            'evidence': {'raw_text': mfg_date, 'label': 'MFD'},
-            'confidence': 0.75,
-            'source': 'OCR',
-        }
-        fields['MONTH_YEAR_MANUFACTURE'] = {
-            'value': mfg_date,
-            'raw_value': mfg_date,
-            'raw_date': mfg_date,
-            'normalized_value': mfg_date,
-            'normalized_date': mfg_date,
-            'source_label': 'MFD',
-            'semantic_type': 'MONTH_YEAR_MANUFACTURE',
-            'evidence': {'raw_text': mfg_date, 'label': 'MFD'},
-            'confidence': 0.75,
-            'source': 'OCR',
-        }
+        is_valid, norm_date, date_meta = parse_date_with_precision(mfg_date)
+        if is_valid and date_meta:
+            prec = date_meta["precision"]
+            parsed_comps = date_meta["parsed_components"]
+            if prec == DatePrecision.FULL_DATE.value:
+                fields['MANUFACTURE_DATE'] = build_date_candidate(
+                    raw_date=mfg_date,
+                    norm_val=norm_date,
+                    precision=DatePrecision.FULL_DATE.value,
+                    parsed_components=parsed_comps,
+                    source_label='MFD',
+                    semantic_type='MANUFACTURE_DATE',
+                    confidence=0.75,
+                    source='OCR',
+                )
+            else:
+                fields['MONTH_YEAR_MANUFACTURE'] = build_date_candidate(
+                    raw_date=mfg_date,
+                    norm_val=norm_date,
+                    precision=DatePrecision.MONTH_YEAR.value,
+                    parsed_components=parsed_comps,
+                    source_label='MFD',
+                    semantic_type='MONTH_YEAR_MANUFACTURE',
+                    confidence=0.75,
+                    source='OCR',
+                )
+        else:
+            fields['MANUFACTURE_DATE'] = {
+                'value': mfg_date,
+                'raw_value': mfg_date,
+                'raw_date': mfg_date,
+                'source_label': 'MFD',
+                'semantic_type': 'MANUFACTURE_DATE',
+                'confidence': 0.75,
+                'source': 'OCR',
+            }
 
     packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS)
     if packing_date:
-        fields['PACKING_DATE'] = {
-            'value': packing_date,
-            'raw_value': packing_date,
-            'raw_date': packing_date,
-            'normalized_value': packing_date,
-            'normalized_date': packing_date,
-            'source_label': 'PKD',
-            'semantic_type': 'PACKING_DATE',
-            'evidence': {'raw_text': packing_date, 'label': 'PKD'},
-            'confidence': 0.75,
-            'source': 'OCR',
-        }
-        if 'MONTH_YEAR_MANUFACTURE' not in fields:
-            fields['MONTH_YEAR_MANUFACTURE'] = {
+        is_valid, norm_date, date_meta = parse_date_with_precision(packing_date)
+        if is_valid and date_meta:
+            prec = date_meta["precision"]
+            parsed_comps = date_meta["parsed_components"]
+            fields['PACKING_DATE'] = build_date_candidate(
+                raw_date=packing_date,
+                norm_val=norm_date,
+                precision=prec,
+                parsed_components=parsed_comps,
+                source_label='PKD',
+                semantic_type='PACKING_DATE',
+                confidence=0.75,
+                source='OCR',
+            )
+        else:
+            fields['PACKING_DATE'] = {
                 'value': packing_date,
                 'raw_value': packing_date,
                 'raw_date': packing_date,
-                'normalized_value': packing_date,
-                'normalized_date': packing_date,
                 'source_label': 'PKD',
-                'semantic_type': 'MONTH_YEAR_MANUFACTURE',
-                'evidence': {'raw_text': packing_date, 'label': 'PKD'},
+                'semantic_type': 'PACKING_DATE',
                 'confidence': 0.75,
                 'source': 'OCR',
             }
@@ -2666,17 +3054,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if (category is None or category.upper() == 'FOOD') and any(keyword in normalized.lower() for keyword in VEG_NONVEG_KEYWORDS):
         fields['VEG_NONVEG_SYMBOL'] = {'value': 'Text mention detected', 'confidence': 0.5, 'source': 'OCR'}
 
-    for line_index, line in enumerate(lines):
-        line_lower = line.lower()
-        if any(keyword in line_lower for keyword in ['consumer care', 'customer care', 'helpline', 'toll free', 'contact']):
-            value = line.split(':', 1)[-1].strip() if ':' in line else line
-            value = ' '.join([value, _lines_after_label(lines, line_index, 6)]).strip()
-            fields['CONSUMER_CARE'] = {'value': value[:1000], 'confidence': 0.7, 'source': 'OCR'}
-            break
-
-    cc_match = _search_patterns(normalized, CONSUMER_CARE_PATTERNS)
-    if cc_match and 'CONSUMER_CARE' not in fields:
-        fields['CONSUMER_CARE'] = {'value': cc_match[:200], 'confidence': 0.7, 'source': 'OCR'}
+    cc_field = _extract_consumer_care_structured(lines, normalized)
+    if cc_field:
+        fields['CONSUMER_CARE'] = cc_field
 
     batch_field = _extract_batch_number(lines, normalized, ocr_items)
     if batch_field:

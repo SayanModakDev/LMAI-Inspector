@@ -229,8 +229,8 @@ def test_mfd_followed_by_another_unrelated_date():
     text = "MFD: 10/2025 18/04/2027\nNet Wt: 500 g"
     fields = extract_declarations(text)
 
-    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '10/2025'
-    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '10/2025'
+    assert (fields.get('MONTH_YEAR_MANUFACTURE') or fields.get('MANUFACTURE_DATE', {})).get('value') == '10/2025'
+    assert 'MANUFACTURE_DATE' not in fields
     # Unlabelled later date must not be inferred as Best Before, Expiry, or Use By
     assert 'BEST_BEFORE_USE_BY' not in fields
     assert 'USE_BEFORE_DATE' not in fields
@@ -299,8 +299,8 @@ def test_jul_26_style_month_year():
     text = "MFD: JUL/26\nEXP: JUL/28"
     fields = extract_declarations(text)
 
-    assert fields.get('MANUFACTURE_DATE', {}).get('value') == 'JUL/26'
     assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == 'JUL/26'
+    assert 'MANUFACTURE_DATE' not in fields
     assert fields.get('EXPIRY_DATE', {}).get('value') == 'JUL/28'
 
 
@@ -346,8 +346,8 @@ def test_same_line_mfd_and_expiry_separated():
     text = "MFD: 10/2025  EXP: 18/04/2027"
     fields = extract_declarations(text)
 
-    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '10/2025'
     assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '10/2025'
+    assert 'MANUFACTURE_DATE' not in fields
     assert fields.get('EXPIRY_DATE', {}).get('value') == '18/04/2027'
 
 
@@ -516,7 +516,7 @@ def test_cosmetic_talcum_powder_comprehensive():
     assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '300 g'
     assert fields.get('MRP', {}).get('value') == '₹180.00'
     assert fields.get('BATCH_NUMBER', {}).get('value') == 'B4019'
-    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '02/2026'
+    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '02/2026'
     assert '36 months' in fields.get('BEST_BEFORE_USE_BY', {}).get('value', '')
     assert '1800-222-3333' in fields.get('CONSUMER_CARE', {}).get('value', '')
 
@@ -550,7 +550,7 @@ def test_food_packaged_commodity_comprehensive():
     assert fields.get('DECLARED_NET_QUANTITY', {}).get('value') == '250 g'
     assert fields.get('MRP', {}).get('value') == '₹95.00'
     assert fields.get('BATCH_NUMBER', {}).get('value') == 'HF-2026'
-    assert fields.get('MANUFACTURE_DATE', {}).get('value') == '11/2025'
+    assert fields.get('MONTH_YEAR_MANUFACTURE', {}).get('value') == '11/2025'
     assert fields.get('BEST_BEFORE_USE_BY', {}).get('value') == '10/2026'
     assert '1800-444-5555' in fields.get('CONSUMER_CARE', {}).get('value', '')
     assert fields.get('FSSAI_LICENSE', {}).get('value') == '10019022000456'
