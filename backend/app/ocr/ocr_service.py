@@ -8,7 +8,8 @@ from typing import List, Dict, Any, Optional
 
 # Memory optimization flags for PaddlePaddle C++ backend before library import
 os.environ.setdefault("FLAGS_allocator_strategy", "naive_best_fit")
-os.environ.setdefault("FLAGS_fraction_of_cpu_memory_to_use", "0.1")
+os.environ.setdefault("FLAGS_fraction_of_cpu_memory_to_use", "0.05")
+os.environ.setdefault("FLAGS_initial_cpu_memory_in_mb", "16")
 os.environ.setdefault("FLAGS_eager_delete_tensor_gb", "0.0")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
