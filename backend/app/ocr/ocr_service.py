@@ -18,6 +18,9 @@ from app.utils.memory import force_garbage_collection, log_memory_checkpoint
 
 logger = logging.getLogger(__name__)
 _ocr_instance = None
+MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
+DET_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_det_infer")
+REC_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_rec_infer")
 
 
 def _get_ocr():
@@ -26,20 +29,31 @@ def _get_ocr():
     if _ocr_instance is None:
         from paddleocr import PaddleOCR
         threads = int(os.getenv("PADDLE_CPU_THREADS", "1"))
-        _ocr_instance = PaddleOCR(
-            use_angle_cls=False,
-            lang="en",
-            show_log=False,
-            use_gpu=False,
-            cpu_threads=threads,
-            enable_mkldnn=False,
-            rec_batch_num=1,
-            max_batch_size=1,
-            det_limit_side_len=960,
-        )
+
+        ocr_kwargs = {
+            "use_angle_cls": False,
+            "lang": "en",
+            "show_log": False,
+            "use_gpu": False,
+            "cpu_threads": threads,
+            "enable_mkldnn": False,
+            "rec_batch_num": 1,
+            "max_batch_size": 1,
+            "det_limit_side_len": 960,
+            "ocr_version": "PP-OCRv3",
+        }
+
+        # Point directly to bundled local models if present to eliminate runtime downloads and latency
+        if os.path.isdir(DET_MODEL_DIR) and os.path.isdir(REC_MODEL_DIR):
+            ocr_kwargs["det_model_dir"] = DET_MODEL_DIR
+            ocr_kwargs["rec_model_dir"] = REC_MODEL_DIR
+            logger.info("Using bundled local OCR models from %s", MODELS_DIR)
+
+        _ocr_instance = PaddleOCR(**ocr_kwargs)
         logger.info(
-            "PaddleOCR engine initialized successfully (lang=en, angle_cls=False, cpu_threads=%d, mkldnn=False, rec_batch=1)",
+            "PaddleOCR engine initialized successfully (version=PP-OCRv3, angle_cls=False, cpu_threads=%d, bundled=%s)",
             threads,
+            "det_model_dir" in ocr_kwargs,
         )
     return _ocr_instance
 
