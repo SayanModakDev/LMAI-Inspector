@@ -52,10 +52,23 @@ def get_applicable_rules(
         if rule_category != 'ALL' and rule_category != category.upper():
             continue
 
-        # --- Package type filter ---
+        # --- Package type & scope filter ---
+        norm_pkg = (package_type or 'RETAIL').upper()
         rule_pkg = rule.get('package_type', 'ALL').upper()
-        if rule_pkg != 'ALL' and rule_pkg != package_type.upper():
-            continue
+
+        if norm_pkg in ('WHOLESALE', 'INSTITUTIONAL', 'INDUSTRIAL'):
+            # Retail Chapter II declarations (e.g. MRP, USP, Consumer Care) do not apply to wholesale,
+            # institutional, or industrial packages per Chapter III / Rule 24 and Rule 3/26 exemptions.
+            if rule_pkg == 'RETAIL':
+                continue
+            if norm_pkg == 'WHOLESALE' and rule_pkg not in ('ALL', 'WHOLESALE'):
+                continue
+        elif norm_pkg == 'RETAIL':
+            if rule_pkg not in ('ALL', 'RETAIL'):
+                continue
+        else:
+            if rule_pkg != 'ALL' and rule_pkg != norm_pkg:
+                continue
 
         # --- Product type filter ---
         rule_product_type = (rule.get('product_type') or 'ALL').upper()

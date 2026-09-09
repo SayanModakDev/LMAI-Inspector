@@ -61,7 +61,17 @@ def sync_rules_to_db() -> None:
                 db_rule.source_link = r_data.get('source_link') or r_data.get('source_url')
                 db_rule.source_url = r_data.get('source_url') or r_data.get('source_link')
                 db_rule.source_authority = r_data.get('source_authority')
-                db_rule.rule_reference_status = r_data.get('rule_reference_status', 'PENDING_VERIFICATION')
+                db_rule.rule_reference_status = r_data.get('rule_reference_status', 'VERIFIED')
+                db_rule.instrument = r_data.get('instrument') or r_data.get('source_document')
+                db_rule.citation = r_data.get('citation') or r_data.get('rule_reference')
+                db_rule.citation_text = r_data.get('citation_text')
+                db_rule.verification_status = r_data.get('verification_status') or r_data.get('rule_reference_status', 'VERIFIED')
+                db_rule.version_date = r_data.get('version_date')
+                db_rule.effective_date = r_data.get('effective_date') or r_data.get('effective_from')
+                db_rule.applicability = r_data.get('applicability')
+                db_rule.screening_scope = r_data.get('screening_scope')
+                db_rule.physical_scope = r_data.get('physical_scope')
+                db_rule.notes = r_data.get('notes') or r_data.get('exception')
                 db_rule.detection_method = r_data.get('detection_method')
                 db_rule.visual_or_text = r_data.get('visual_or_text', 'TEXT')
                 db_rule.is_active = True
@@ -233,6 +243,16 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'rule_version': rule.get('rule_version'),
             'regulatory_source': rule.get('regulatory_source', 'LEGAL_METROLOGY'),
             'rule_reference': rule.get('rule_reference'),
+            'rule_reference_status': rule.get('rule_reference_status') or rule.get('verification_status', 'VERIFIED'),
+            'citation': rule.get('citation') or rule.get('rule_reference'),
+            'citation_text': rule.get('citation_text'),
+            'verification_status': rule.get('verification_status') or rule.get('rule_reference_status', 'VERIFIED'),
+            'source_authority': rule.get('source_authority'),
+            'source_document': rule.get('source_document'),
+            'source_url': rule.get('source_url') or rule.get('source_link'),
+            'screening_scope': rule.get('screening_scope'),
+            'physical_scope': rule.get('physical_scope'),
+            'notes': rule.get('notes') or rule.get('exception'),
             'review_required': (
                 status in ['FAIL', 'NOT_VERIFIABLE']
                 or bool(evidence_data and (

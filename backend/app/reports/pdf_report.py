@@ -721,7 +721,8 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         ref = _clean_ref(getattr(r, 'rule_reference', None) or (rule_def.rule_reference if rule_def else None))
         ver = _clean_ref(getattr(r, 'rule_version', None) or (rule_def.rule_version if rule_def else None))
         source_doc = (
-            rule_def.source_link if rule_def and rule_def.source_link
+            getattr(rule_def, 'source_url', None) or getattr(rule_def, 'source_link', None)
+            if rule_def and (getattr(rule_def, 'source_url', None) or getattr(rule_def, 'source_link', None))
             else ("Pending verification" if ref == "Pending verification" else "Official Gazette")
         )
         cat_pkg = f"{getattr(rule_def, 'category', 'ALL')} / {getattr(rule_def, 'package_type', 'ALL')}" if rule_def else "ALL"
@@ -742,12 +743,13 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
 
     # Physical Verification & System Limitations callout
     limitations_text = (
-        "<b>Physical Verification Requirements (Rule 12 & Rule 24 Statutory Mandate):</b><br/>"
-        "The Legal Metrology (Packaged Commodities) Rules, 2011 explicitly require physical verification of net content "
-        "using calibrated, certified standard weights and balances at the time of inspection. Principal display panel dimensions, "
-        "font heights, and container volumes require direct measurement using certified calipers, gauges, and laboratory apparatus. "
+        "<b>Physical Verification Requirements (Legal Metrology Act, 2009 Section 18 & LMPC Rules Rule 19 / Third Schedule):</b><br/>"
+        "The Legal Metrology (Packaged Commodities) Rules, 2011 and Section 18 of the Legal Metrology Act, 2009 require physical verification of net content "
+        "using calibrated, certified standard weights and balances in accordance with Rule 19 and the Third Schedule testing procedure. Permissible tolerances are governed by the Second Schedule (Maximum Permissible Error). Principal display panel dimensions, "
+        "font heights, and container volumes require direct measurement using certified calipers, gauges, and laboratory apparatus under Rule 7. "
         "OCR and computer vision screen optical label declarations on package graphics only; automated screening does not and cannot "
-        "measure actual physical commodity weight, density, gravimetric net fill, or physical font height in millimeters.<br/><br/>"
+        "measure actual physical commodity weight, density, gravimetric net fill, or physical font height in millimeters. "
+        "Physical verification procedure referenced separately.<br/><br/>"
         "<b>System Limitations:</b> Visual screening is subject to camera sensor resolution, specular packaging reflection, "
         "cylindrical/curved surface warping, creasing, and optical character error rates. Ambiguous or conflicting declarations "
         "require direct physical inspection before any statutory enforcement action is initiated."

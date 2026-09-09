@@ -55,6 +55,7 @@ def _add_missing_columns():
         "inspections": {
             "brand": "VARCHAR(255)",
             "product_type": "VARCHAR(100)",
+            "regulatory_snapshot": "VARCHAR(255)",
         },
         "extracted_fields": {
             "source_image_id": "INTEGER",
@@ -69,10 +70,23 @@ def _add_missing_columns():
             "source_authority": "VARCHAR(255)",
             "source_url": "VARCHAR(500)",
             "rule_reference_status": "VARCHAR(50)",
+            "instrument": "VARCHAR(255)",
+            "citation": "VARCHAR(255)",
+            "citation_text": "TEXT",
+            "verification_status": "VARCHAR(50)",
+            "version_date": "VARCHAR(20)",
+            "effective_date": "VARCHAR(20)",
+            "applicability": "VARCHAR(255)",
+            "screening_scope": "TEXT",
+            "physical_scope": "TEXT",
+            "notes": "TEXT",
         },
         "rule_results": {
             "regulatory_source": "VARCHAR(100)",
             "rule_reference": "VARCHAR(255)",
+            "rule_reference_status": "VARCHAR(50)",
+            "citation": "VARCHAR(255)",
+            "verification_status": "VARCHAR(50)",
         },
     }
     with engine.begin() as connection:

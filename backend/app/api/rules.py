@@ -37,5 +37,15 @@ def get_rules(db: Session = Depends(get_db)):
             source_link=getattr(r, 'source_link', None) or getattr(r, 'source_url', None),
             rule_reference_status=getattr(r, 'rule_reference_status', 'PENDING_VERIFICATION') or 'PENDING_VERIFICATION',
             regulatory_source=r.regulatory_source,
+            instrument=getattr(r, 'instrument', None) or r.source_document,
+            citation=getattr(r, 'citation', None) or r.rule_reference,
+            citation_text=getattr(r, 'citation_text', None),
+            verification_status=getattr(r, 'verification_status', None) or getattr(r, 'rule_reference_status', None),
+            version_date=getattr(r, 'version_date', None),
+            effective_date=getattr(r, 'effective_date', None) or r.effective_from,
+            applicability=getattr(r, 'applicability', None),
+            screening_scope=getattr(r, 'screening_scope', None),
+            physical_scope=getattr(r, 'physical_scope', None),
+            notes=getattr(r, 'notes', None) or r.exception,
         ) for r in rules
     ]

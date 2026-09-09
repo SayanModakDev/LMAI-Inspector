@@ -45,37 +45,57 @@ def test_rule_matrix_loads_and_contains_standardized_metadata(rule_matrix_data):
             assert rule[field] is not None, f"Rule {rule.get('rule_id')} has null '{field}'"
 
 
-def test_unverified_rule_references_are_explicitly_pending_verification(rule_matrix_data):
-    """Verify unverified rules remain explicitly marked PENDING_VERIFICATION without invented citations."""
+def test_regulatory_traceability_citations_are_verified(rule_matrix_data):
+    """Verify statutory rules have verified citations while internal fields are marked non-statutory."""
     rules = rule_matrix_data.get('rules', [])
     for rule in rules:
-        assert rule['rule_reference_status'] == 'PENDING_VERIFICATION', (
-            f"Rule {rule['rule_id']} should have rule_reference_status='PENDING_VERIFICATION'"
-        )
-        assert rule['rule_reference'] == 'PENDING_VERIFICATION', (
-            f"Rule {rule['rule_id']} should not manufacture an unverified rule number"
-        )
+        if rule['rule_id'] == 'PC-ALL-001':
+            assert rule['rule_reference_status'] == 'NON_STATUTORY'
+            assert rule['verification_status'] == 'NON_STATUTORY'
+            assert 'INTERNAL' in rule['rule_reference']
+        else:
+            assert rule['rule_reference_status'] == 'VERIFIED', (
+                f"Rule {rule['rule_id']} should have rule_reference_status='VERIFIED', got '{rule['rule_reference_status']}'"
+            )
+            assert rule['verification_status'] == 'VERIFIED'
+            assert rule['rule_reference'] != 'PENDING_VERIFICATION', (
+                f"Rule {rule['rule_id']} should have verified rule reference, not placeholder"
+            )
+            assert rule['instrument'] is not None
+            assert rule['citation'] is not None
 
 
 def test_legal_metrology_commencement_date_is_accurate(rule_matrix_data):
-    """Verify Legal Metrology rules use official 1 April 2011 commencement date, not invented 2011-01-01."""
+    """Verify Legal Metrology rules use official commencement dates (1 April 2011, 1 January 2018 for COO, 1 January 2024 for USP)."""
     rules = rule_matrix_data.get('rules', [])
     lm_rules = [r for r in rules if r['regulatory_source'] == 'LEGAL_METROLOGY']
-    assert len(lm_rules) >= 12
+    assert len(lm_rules) >= 11
 
     for rule in lm_rules:
-        assert rule['effective_from'] == '2011-04-01', (
-            f"Rule {rule['rule_id']} should have effective_from='2011-04-01', got '{rule['effective_from']}'"
-        )
+        if rule['rule_id'] == 'PC-ALL-011':
+            assert rule['effective_from'] == '2024-01-01', (
+                f"Rule {rule['rule_id']} (Unit Sale Price) should have effective_from='2024-01-01', got '{rule['effective_from']}'"
+            )
+        elif rule['rule_id'] == 'PC-ALL-006':
+            assert rule['effective_from'] == '2018-01-01', (
+                f"Rule {rule['rule_id']} (Country of Origin) should have effective_from='2018-01-01', got '{rule['effective_from']}'"
+            )
+        else:
+            assert rule['effective_from'] == '2011-04-01', (
+                f"Rule {rule['rule_id']} should have effective_from='2011-04-01', got '{rule['effective_from']}'"
+            )
 
 
 def test_regulatory_sources_and_authorities_are_correctly_classified(rule_matrix_data):
-    """Verify proper classification between Legal Metrology, FSSAI, and Cosmetics sources."""
+    """Verify proper classification between Legal Metrology, FSSAI, Cosmetics, and Internal sources."""
     rules = rule_matrix_data.get('rules', [])
 
     for rule in rules:
         rule_id = rule['rule_id']
-        if rule_id.startswith('PC-ALL'):
+        if rule_id == 'PC-ALL-001':
+            assert rule['regulatory_source'] == 'INTERNAL_INSPECTION'
+            assert rule['rule_reference_status'] == 'NON_STATUTORY'
+        elif rule_id.startswith('PC-ALL'):
             assert rule['regulatory_source'] == 'LEGAL_METROLOGY'
             assert 'Consumer Affairs' in rule['source_authority']
             assert 'Legal Metrology' in rule['source_document']
@@ -117,11 +137,16 @@ def test_sync_rules_to_db_preserves_new_metadata():
 
         rule_001 = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-ALL-001').first()
         assert rule_001 is not None
-        assert rule_001.source_authority == "Department of Consumer Affairs, Ministry of Consumer Affairs, Food and Public Distribution"
+        assert rule_001.source_authority == "Internal Inspection Screening Specification"
         assert rule_001.effective_from == "2011-04-01"
-        assert rule_001.rule_reference_status == "PENDING_VERIFICATION"
-        assert rule_001.regulatory_source == "LEGAL_METROLOGY"
+        assert rule_001.rule_reference_status == "NON_STATUTORY"
+        assert rule_001.regulatory_source == "INTERNAL_INSPECTION"
         assert rule_001.source_url is not None
+
+        rule_002 = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-ALL-002').first()
+        assert rule_002 is not None
+        assert rule_002.rule_reference_status == "VERIFIED"
+        assert "Rule 6(1)(c)" in rule_002.rule_reference
 
         food_rule = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-FOOD-001').first()
         assert food_rule is not None
@@ -166,6 +191,10 @@ def test_rules_api_endpoint_exposes_standardized_metadata():
     first_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-001')
     assert first_rule['source_authority'] is not None
     assert first_rule['source_url'] is not None
-    assert first_rule['rule_reference_status'] == 'PENDING_VERIFICATION'
+    assert first_rule['rule_reference_status'] == 'NON_STATUTORY'
     assert first_rule['effective_from'] == '2011-04-01'
-    assert first_rule['regulatory_source'] == 'LEGAL_METROLOGY'
+    assert first_rule['regulatory_source'] == 'INTERNAL_INSPECTION'
+
+    statutory_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-002')
+    assert statutory_rule['rule_reference_status'] == 'VERIFIED'
+    assert 'Rule 6(1)(c)' in statutory_rule['rule_reference']

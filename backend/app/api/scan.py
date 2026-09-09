@@ -276,6 +276,7 @@ async def perform_scan(
             priority=priority,
             image_path=safe_filenames[0],
             processed_image_path=image_results[0]['processed_image_path'],
+            regulatory_snapshot="LMPC_2011_CURRENT_2024 | FSSAI_LD_2020_CURRENT_2024 | COSMETICS_2020_CURRENT_2024",
         )
         db.add(db_inspection)
         db.flush()
@@ -379,6 +380,9 @@ async def perform_scan(
                 rule_version=result.get('rule_version'),
                 regulatory_source=result.get('regulatory_source'),
                 rule_reference=result.get('rule_reference'),
+                rule_reference_status=result.get('rule_reference_status'),
+                citation=result.get('citation'),
+                verification_status=result.get('verification_status'),
                 review_required=result.get('review_required'),
             ))
 

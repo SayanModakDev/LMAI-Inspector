@@ -1349,7 +1349,7 @@ def validate_font_size_check(
         return ValidationResult(
             status="NOT_VERIFIABLE",
             binary=0,
-            reason="Physical verification is required before this requirement can be confirmed. Font/numeral height measurement has not been provided.",
+            reason="VISUAL SCREENING CANNOT CONFIRM PHYSICAL MILLIMETRE HEIGHT: Physical measurement using calibrated gauge or caliper under Rule 7 Table-I/II is required.",
             evidence=None,
         )
 
@@ -1420,6 +1420,32 @@ def dispatch_validator(
     Fails safely as NOT_VERIFIABLE if validation_method is unknown.
     Never declares PASS merely because a field exists.
     """
+    # Package-type applicability guard (Wholesale & Institutional/Industrial exemptions)
+    pkg_context = str(
+        (all_fields or {}).get("package_type")
+        or (all_fields.get("PACKAGE_TYPE", {}).get("value") if isinstance(all_fields.get("PACKAGE_TYPE"), dict) else None)
+        or rule.get("current_package_type")
+        or ""
+    ).upper()
+    rule_pkg = str(rule.get("package_type", "ALL")).upper()
+    param = rule.get("parameter", "")
+
+    if pkg_context in ("WHOLESALE", "INSTITUTIONAL", "INDUSTRIAL") and rule_pkg == "RETAIL":
+        if param == "UNIT_SALE_PRICE":
+            reason = f"Unit sale price is not required on {pkg_context.lower()} packages under Rule 24 and Department of Consumer Affairs guidance."
+        elif param == "MRP":
+            reason = f"Retail sale price (MRP) declaration is not applicable to {pkg_context.lower()} packages under Chapter III / Rule 24."
+        elif param == "CONSUMER_CARE":
+            reason = f"Consumer care declaration is not mandatory on outer {pkg_context.lower()} packages under Rule 24."
+        else:
+            reason = f"Retail declaration '{param}' is not applicable to {pkg_context.lower()} packages under Chapter III / Rule 24 of LMPC Rules, 2011."
+        return ValidationResult(
+            status="NOT_APPLICABLE",
+            binary=None,
+            reason=reason,
+            evidence=evidence,
+        )
+
     # Intercept conflicting or ambiguous evidence upfront across all rules
     if evidence and (
         evidence.get("status") in ("CONFLICTING_EVIDENCE", "AMBIGUOUS", "REVIEW")
