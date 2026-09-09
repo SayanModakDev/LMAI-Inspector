@@ -41,6 +41,16 @@ async def lifespan(app: FastAPI):
     # Sync rule matrix from JSON into database
     from app.rules.rule_engine import sync_rules_to_db
     sync_rules_to_db()
+
+    # Pre-warm PaddleOCR engine at boot to eliminate request cold-start latency and timeout
+    try:
+        from app.ocr.ocr_service import _get_ocr
+        _get_ocr()
+        from app.utils.memory import force_garbage_collection
+        force_garbage_collection()
+    except Exception as exc:
+        print(f"⚠️ PaddleOCR pre-warmup exception: {exc}")
+
     print(f"✅ {settings.APP_NAME} v{settings.APP_VERSION} started")
     yield
     # --- Shutdown ---
