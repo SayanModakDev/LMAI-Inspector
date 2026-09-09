@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change-this-to-a-random-secret-key"
 
+    # Memory & Concurrency Optimization (Production Render Stability)
+    MAX_OCR_IMAGE_DIMENSION: int = 1536
+    MAX_IMAGES_PER_INSPECTION: int = 8
+    OCR_CONCURRENCY: int = 1
+    PADDLE_CPU_THREADS: int = 1
+
     # Upload Hardening & Constraints
     MAX_UPLOAD_SIZE_MB: int = 15
     MAX_UPLOAD_SIZE_BYTES: int = 15 * 1024 * 1024

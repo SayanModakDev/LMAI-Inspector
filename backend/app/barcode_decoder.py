@@ -66,9 +66,15 @@ def decode_barcodes(image_path: str, raw_text: str = '') -> Optional[Dict[str, A
     try:
         from pyzbar.pyzbar import decode
         from PIL import Image
+        from app.utils.memory import force_garbage_collection
 
         try:
-            pil_img = Image.open(image_path)
+            with Image.open(image_path) as pil_img:
+                w, h = pil_img.size
+                if max(w, h) > 1536:
+                    scale = 1536 / max(w, h)
+                    pil_img = pil_img.resize((int(w * scale), int(h * scale)), Image.Resampling.BILINEAR)
+                decoded = decode(pil_img)
         except Exception as img_err:
             logger.debug("Barcode decoder could not open image %s: %s", image_path, img_err)
             ocr_value = _barcode_from_ocr(raw_text)
@@ -76,7 +82,6 @@ def decode_barcodes(image_path: str, raw_text: str = '') -> Optional[Dict[str, A
                 return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
             return {"type": "INVALID_IMAGE", "value": None, "confidence": 0.0, "status": "FAILED", "message": str(img_err)}
 
-        decoded = decode(pil_img)
         if not decoded:
             ocr_value = _barcode_from_ocr(raw_text)
             if ocr_value:
@@ -88,6 +93,8 @@ def decode_barcodes(image_path: str, raw_text: str = '') -> Optional[Dict[str, A
         first = decoded[0]
         barcode_value = first.data.decode('utf-8', errors='ignore')
         logger.info("Barcode decode succeeded: %s (%s)", barcode_value, first.type)
+        del decoded
+        force_garbage_collection()
         return {
             "type": first.type,
             "value": barcode_value,
@@ -100,6 +107,9 @@ def decode_barcodes(image_path: str, raw_text: str = '') -> Optional[Dict[str, A
         if ocr_value:
             return {"type": "EAN13", "value": ocr_value, "confidence": 0.7, "source": "OCR_BARCODE_TEXT", "status": "DETECTED"}
         return {"type": "DECODE_FAILED", "value": None, "confidence": 0.0, "status": "FAILED", "message": str(exc)}
+    finally:
+        from app.utils.memory import force_garbage_collection
+        force_garbage_collection()
 
 
 def lookup_barcode(barcode_value: Optional[str]) -> Dict[str, Any]:

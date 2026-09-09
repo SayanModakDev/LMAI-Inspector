@@ -25,6 +25,7 @@ from app.utils.helpers import (
 )
 from app.barcode_decoder import decode_barcodes, lookup_barcode
 from app.visual_detection import detect_food_symbol
+from app.utils.memory import log_memory_checkpoint, force_garbage_collection
 
 router = APIRouter()
 settings = get_settings()
@@ -40,17 +41,27 @@ async def perform_scan(
     db: Session = Depends(get_db),
 ):
     """Upload any number of label images and perform one combined inspection pipeline."""
+    log_memory_checkpoint("process RSS before inspection")
+
     uploaded_files = [item for item in (files or []) if item and item.filename]
     if file and file.filename and not uploaded_files:
         uploaded_files = [file]
     if not uploaded_files:
         raise HTTPException(status_code=400, detail="No file uploaded")
 
+    max_images = getattr(settings, "MAX_IMAGES_PER_INSPECTION", 8)
+    if len(uploaded_files) > max_images:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Exceeded maximum allowed images per inspection ({max_images}). Received {len(uploaded_files)}.",
+        )
+
     request_started = time.perf_counter()
     max_bytes = getattr(settings, "MAX_UPLOAD_SIZE_BYTES", settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024)
 
-    # Validate all files before any disk writes or OCR execution
-    validated_files = []
+    # Validate and stream-save all files to disk immediately; avoid retaining raw bytes in memory
+    original_paths = []
+    safe_filenames = []
     for uploaded_file in uploaded_files:
         raw_name = uploaded_file.filename or "upload"
         sanitized_name = sanitize_filename(raw_name)
@@ -63,7 +74,7 @@ async def perform_scan(
                 detail=f"Unsupported media type '{content_type}' for file '{sanitized_name}'. Allowed formats: JPEG, PNG, WEBP, BMP.",
             )
 
-        # 2. Read content into memory
+        # 2. Read content into memory for validation
         content = await uploaded_file.read()
         if not content or len(content) == 0:
             raise HTTPException(
@@ -93,23 +104,18 @@ async def perform_scan(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid file path for '{sanitized_name}': {str(exc)}")
 
-        validated_files.append({
-            'safe_filename': safe_filename,
-            'dest_path': dest_path,
-            'content': content,
-        })
+        # Stream directly to disk and delete content buffer immediately
+        with open(dest_path, "wb") as handle:
+            handle.write(content)
+        del content
 
-    # Save validated files to disk
-    original_paths = []
-    safe_filenames = []
-    for item in validated_files:
-        with open(item['dest_path'], "wb") as handle:
-            handle.write(item['content'])
-        safe_filenames.append(item['safe_filename'])
-        original_paths.append(item['dest_path'])
+        safe_filenames.append(safe_filename)
+        original_paths.append(dest_path)
 
+    force_garbage_collection()
     upload_ms = round((time.perf_counter() - request_started) * 1000)
-    logger.info("scan timing upload_ms=%s images=%s", upload_ms, len(validated_files))
+    logger.info("scan timing upload_ms=%s images=%s", upload_ms, len(original_paths))
+    log_memory_checkpoint("RSS after image loading", f"count={len(original_paths)}")
 
     try:
         image_results = []
@@ -129,6 +135,8 @@ async def perform_scan(
                     filename_prefix=f"processed_{image_index}",
                 )
                 preprocess_ms = round((time.perf_counter() - image_started) * 1000)
+                log_memory_checkpoint("RSS after preprocessing", f"image={image_index}")
+
                 ocr_started = time.perf_counter()
                 ocr_result_data = run_ocr(processed_path)
                 ocr_ms = round((time.perf_counter() - ocr_started) * 1000)
@@ -149,6 +157,7 @@ async def perform_scan(
                 barcode_started = time.perf_counter()
                 image_barcode = decode_barcodes(processed_path, raw_text)
                 barcode_ms = round((time.perf_counter() - barcode_started) * 1000)
+                log_memory_checkpoint("RSS after barcode", f"image={image_index}")
                 if image_barcode and image_barcode.get('value'):
                     barcode_result = image_barcode
                 image_results.append({
@@ -190,6 +199,8 @@ async def perform_scan(
                     'visual_evidence': None,
                 })
                 per_image_fields.append({})
+            finally:
+                force_garbage_collection()
 
         raw_text = '\n\n'.join(combined_text_parts)
         ocr_items = combined_ocr_items
@@ -202,6 +213,7 @@ async def perform_scan(
         extracted_fields = merge_extracted_fields(per_image_fields)
         extracted_fields = merge_product_evidence(extracted_fields, raw_text, ocr_items, barcode_result)
         timings['declaration_extraction_ms'] = round((time.perf_counter() - extraction_started) * 1000)
+        log_memory_checkpoint("RSS after semantic extraction")
 
         # Classification precedes category-specific visual checks
         classification = classify_category(raw_text, extracted_fields, settings.CATEGORY_CONFIDENCE_THRESHOLD)
@@ -404,6 +416,9 @@ async def perform_scan(
         if created_dt and created_dt.tzinfo is None:
             created_dt = created_dt.replace(tzinfo=timezone.utc)
 
+        force_garbage_collection()
+        log_memory_checkpoint("RSS before response", f"inspection_id={db_inspection.id}")
+
         return schemas.ScanResponse(
             inspection_id=db_inspection.id,
             category=category,
@@ -440,7 +455,18 @@ async def perform_scan(
             regulatory_snapshot_label=snapshot_meta.get('effective_label'),
         )
 
+    except MemoryError:
+        db.rollback()
+        force_garbage_collection()
+        logger.error("MemoryError encountered during inspection analysis.")
+        raise HTTPException(
+            status_code=503,
+            detail="System memory threshold reached during analysis. Please submit fewer or lower-resolution images.",
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
+        force_garbage_collection()
         logger.exception("Error during scan pipeline")
         raise HTTPException(status_code=500, detail=f"Pipeline error: {str(exc)}")
