@@ -190,6 +190,10 @@ const RuleMatrix = () => {
                               <span className="badge badge-warning" title="Statutory reference pending formal gazette sync">
                                 <Clock size={11} className="mr-1" /> Pending Verification
                               </span>
+                            ) : rule.rule_reference_status === 'NON_STATUTORY' ? (
+                              <span className="badge badge-gray" title="Internal inspection screening specification; non-statutory">
+                                Non-Statutory
+                              </span>
                             ) : (
                               <span className="badge badge-success">
                                 <ShieldCheck size={11} className="mr-1" /> Verified
@@ -211,20 +215,41 @@ const RuleMatrix = () => {
                                     <p className="detail-text">{rule.what_to_extract || 'Verify printed mandatory declaration on package.'}</p>
                                   </div>
                                   <div>
-                                    <span className="detail-tag">Legal Reference Clause:</span>
+                                    <span className="detail-tag">
+                                      {rule.rule_reference_status === 'NON_STATUTORY' ? 'Internal Specification:' : 'Legal Reference Clause:'}
+                                    </span>
                                     <p className="detail-text font-semibold">{rule.rule_reference || 'Rule 6 of LMPC Rules, 2011'}</p>
                                   </div>
                                   <div>
                                     <span className="detail-tag">Condition & Applicability:</span>
-                                    <p className="detail-text font-mono text-xs">{rule.condition || 'Universal Package Applicability'}</p>
+                                    <p className="detail-text font-mono text-xs">{rule.applicability || rule.condition || 'Universal Package Applicability'}</p>
                                   </div>
                                   <div>
                                     <span className="detail-tag">Rule Severity:</span>
-                                    <span className={`badge ${rule.severity === 'MANDATORY' ? 'badge-danger' : 'badge-warning'}`}>
+                                    <span className={`badge ${rule.severity === 'MANDATORY' || rule.severity === 'HIGH' ? 'badge-danger' : 'badge-warning'}`}>
                                       {rule.severity || 'MANDATORY'}
                                     </span>
                                   </div>
                                 </div>
+                                {rule.citation_text && (
+                                  <div className="mt-3 pt-2 text-xs text-secondary">
+                                    <span className="font-semibold text-muted">Statutory Text / Citation: </span>
+                                    <span className="italic">"{rule.citation_text}"</span>
+                                  </div>
+                                )}
+                                {rule.source_url && (
+                                  <div className="mt-2">
+                                    <a
+                                      href={rule.source_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-primary flex items-center gap-1 hover:underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ExternalLink size={12} /> Official Authority Reference / Gazette
+                                    </a>
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>

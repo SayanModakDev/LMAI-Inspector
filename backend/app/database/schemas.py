@@ -142,6 +142,16 @@ class RuleSchema(BaseModel):
     source_link: Optional[str] = None
     rule_reference_status: str = "PENDING_VERIFICATION"
     regulatory_source: Optional[str] = "LEGAL_METROLOGY"
+    instrument: Optional[str] = None
+    citation: Optional[str] = None
+    citation_text: Optional[str] = None
+    verification_status: Optional[str] = None
+    version_date: Optional[str] = None
+    effective_date: Optional[str] = None
+    applicability: Optional[str] = None
+    screening_scope: Optional[str] = None
+    physical_scope: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

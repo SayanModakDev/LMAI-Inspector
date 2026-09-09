@@ -402,10 +402,16 @@ const Result = () => {
                           <div className="rule-expanded-dossier">
                             <div className="expanded-grid">
                               <div>
-                                <span className="dossier-label">Statutory Legal Reference:</span>
+                                <span className="dossier-label">
+                                  {rule.rule_reference_status === 'NON_STATUTORY'
+                                    ? 'Internal Inspection Specification:'
+                                    : 'Statutory Legal Reference:'}
+                                </span>
                                 <div className="dossier-val font-semibold text-xs">
                                   {rule.rule_reference ||
-                                    'Rule 6, Legal Metrology (Packaged Commodities) Rules, 2011'}
+                                    (rule.rule_reference_status === 'NON_STATUTORY'
+                                      ? 'INTERNAL / NON-STATUTORY'
+                                      : 'Legal Metrology (Packaged Commodities) Rules, 2011')}
                                 </div>
                               </div>
                               <div>
@@ -418,8 +424,14 @@ const Result = () => {
                               </div>
                               <div>
                                 <span className="dossier-label">Reference Status:</span>
-                                <div className="dossier-val font-mono text-xs text-muted">
-                                  {rule.rule_reference_status || rule.rule_version || 'Pending verification'}
+                                <div className="dossier-val font-mono text-xs">
+                                  {rule.rule_reference_status === 'VERIFIED' ? (
+                                    <span className="badge badge-success" style={{ fontSize: '10px', padding: '2px 6px' }}>Verified</span>
+                                  ) : rule.rule_reference_status === 'NON_STATUTORY' ? (
+                                    <span className="badge badge-gray" style={{ fontSize: '10px', padding: '2px 6px' }}>Non-Statutory</span>
+                                  ) : (
+                                    <span className="badge badge-warning" style={{ fontSize: '10px', padding: '2px 6px' }}>Pending verification</span>
+                                  )}
                                 </div>
                               </div>
                               <div>
