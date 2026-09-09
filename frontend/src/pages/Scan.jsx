@@ -15,6 +15,12 @@ import {
 import ProgressStepper from '../components/ProgressStepper';
 import './Scan.css';
 
+const PACKAGE_TYPE_GUIDANCE = {
+  RETAIL: 'Retail-package declaration set applies.',
+  WHOLESALE: 'Wholesale-package declaration set applies; retail-only declarations may be not applicable.',
+  INSTITUTIONAL: 'Retail packaged-commodity screening requirements are excluded where applicable.',
+};
+
 const Scan = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -318,7 +324,7 @@ const Scan = () => {
                       <option value="INSTITUTIONAL">Institutional / Industrial Consumption</option>
                     </select>
                     <span className="form-help">
-                      Defines mandatory declaration applicability (e.g. MRP and Consumer Care mandatory for Retail).
+                      {PACKAGE_TYPE_GUIDANCE[packageType] || PACKAGE_TYPE_GUIDANCE.RETAIL}
                     </span>
                   </div>
 
@@ -332,11 +338,11 @@ const Scan = () => {
                       value={importStatus}
                       onChange={(e) => setImportStatus(e.target.value)}
                     >
-                      <option value="DOMESTIC">Domestic (Manufactured in India)</option>
+                      <option value="DOMESTIC">Domestic Commodity</option>
                       <option value="IMPORTED">Imported Commodity (Overseas Manufacturing)</option>
                     </select>
                     <span className="form-help">
-                      Imported commodities mandate Country of Origin and authorized importer address.
+                      For inspection scoping only; origin/manufacturing declarations are evaluated from package evidence.
                     </span>
                   </div>
                 </div>
