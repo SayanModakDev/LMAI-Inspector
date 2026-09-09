@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Legal Metrology Compliance Checker"
-    APP_VERSION: str = "1.1.0-prod"
+    APP_VERSION: str = "1.1.1-prod"
     DEBUG: bool = True
 
     # Database
