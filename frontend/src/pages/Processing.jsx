@@ -170,7 +170,9 @@ const Processing = () => {
         )}
 
         <div className="processing-footer text-xs text-muted">
-          All analysis steps execute deterministically on your local inspection server.
+          {typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'Analysis processed by the local inspection server.'
+            : 'Analysis is processed by the configured LMAI Inspector inspection service.'}
         </div>
       </div>
     </div>

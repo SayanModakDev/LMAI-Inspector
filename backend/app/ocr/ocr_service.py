@@ -1,23 +1,42 @@
-"""PaddleOCR wrapper service with multi-variant fallback, structured states, and robust error handling."""
+"""PaddleOCR wrapper service with multi-variant fallback, structured states, and robust memory bounds."""
 
 import os
+import sys
 import time
 import logging
 from typing import List, Dict, Any, Optional
 
-from app.ocr.preprocessing import build_ocr_variants, validate_image_file
+# Memory optimization flags for PaddlePaddle C++ backend before library import
+os.environ.setdefault("FLAGS_allocator_strategy", "naive_best_fit")
+os.environ.setdefault("FLAGS_eager_delete_tensor_gb", "0.0")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+from app.ocr.preprocessing import generate_single_variant, validate_image_file
+from app.utils.memory import force_garbage_collection, log_memory_checkpoint
 
 logger = logging.getLogger(__name__)
 _ocr_instance = None
 
 
 def _get_ocr():
-    """Lazy-initialize PaddleOCR (downloads models on first run)."""
+    """Lazy-initialize a single process-level PaddleOCR instance with bounded thread pools."""
     global _ocr_instance
     if _ocr_instance is None:
         from paddleocr import PaddleOCR
-        _ocr_instance = PaddleOCR(use_angle_cls=True, lang="en", show_log=False, use_gpu=False)
-        logger.info("PaddleOCR engine initialized successfully (lang=en, angle_cls=True)")
+        threads = int(os.getenv("PADDLE_CPU_THREADS", "1"))
+        _ocr_instance = PaddleOCR(
+            use_angle_cls=True,
+            lang="en",
+            show_log=False,
+            use_gpu=False,
+            cpu_threads=threads,
+            enable_mkldnn=False,
+        )
+        logger.info(
+            "PaddleOCR engine initialized successfully (lang=en, angle_cls=True, cpu_threads=%d, mkldnn=False)",
+            threads,
+        )
     return _ocr_instance
 
 
@@ -103,6 +122,7 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
       - 'INVALID_IMAGE': Missing, empty, or unreadable image file.
     """
     start_time = time.time()
+    base_img_name = os.path.basename(image_path)
 
     # 1. Validate input image
     if not validate_image_file(image_path):
@@ -126,10 +146,12 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     attempt_count = 0
     successful_attempt_count = 0
     last_engine_error: Optional[Exception] = None
-
     candidates: List[Dict[str, Any]] = []
 
-    # Attempt 1: Primary Natural Image
+    # Diagnostic RSS log before OCR
+    log_memory_checkpoint("RSS before OCR", f"file={base_img_name}")
+
+    # Attempt 1: Primary Normalized Image
     attempt_count += 1
     logger.info("OCR attempt started for %s (variant=original)", image_path)
     try:
@@ -153,43 +175,53 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     except Exception as exc:
         last_engine_error = exc
         logger.error("OCR engine exception on %s (variant=original): %s", image_path, exc)
+    finally:
+        force_garbage_collection()
 
-    # Targeted retry: Only generate variants if the primary pass yielded low evidence
+    # Targeted retry: Only generate variants sequentially if primary pass yielded low evidence
     primary_count = candidates[0]["count"] if candidates else 0
     primary_text_len = len(candidates[0]["text"]) if candidates else 0
 
     if primary_count < 6 or primary_text_len < 50:
         variant_dir = os.path.join(os.path.dirname(image_path), "ocr_variants")
-        try:
-            variant_paths = build_ocr_variants(image_path, variant_dir, include_all=False)
-            # Filter out original which was already run
-            retry_variants = [p for p in variant_paths if "ocr_original_" not in p]
-            for v_path in retry_variants:
-                v_name = "contrast" if "contrast" in v_path else "grayscale" if "gray" in v_path else "variant"
-                attempt_count += 1
-                logger.info("OCR attempt started for %s (variant=%s)", image_path, v_name)
-                try:
-                    ocr = _get_ocr()
-                    v_results = ocr.ocr(v_path, cls=True)
-                    v_items = _collect_ocr_items(v_results)
-                    successful_attempt_count += 1
-                    if v_items:
-                        logger.info("OCR attempt succeeded for %s (variant=%s, detections=%d)", image_path, v_name, len(v_items))
-                    else:
-                        logger.info("OCR returned zero detections for %s (variant=%s)", image_path, v_name)
+        for v_name in ["contrast", "grayscale"]:
+            attempt_count += 1
+            logger.info("OCR retry attempt started for %s (variant=%s)", image_path, v_name)
+            v_path = None
+            try:
+                # Generate single variant on demand; releases NumPy arrays immediately
+                v_path = generate_single_variant(image_path, v_name, variant_dir)
+                ocr = _get_ocr()
+                v_results = ocr.ocr(v_path, cls=True)
+                v_items = _collect_ocr_items(v_results)
+                successful_attempt_count += 1
+                if v_items:
+                    logger.info("OCR retry succeeded for %s (variant=%s, detections=%d)", image_path, v_name, len(v_items))
+                else:
+                    logger.info("OCR retry returned zero detections for %s (variant=%s)", image_path, v_name)
 
-                    v_text = _normalize_ocr_text([it["text"] for it in v_items if it.get("text")])
-                    candidates.append({
-                        "variant": v_name,
-                        "items": v_items,
-                        "text": v_text,
-                        "count": len(v_items),
-                    })
-                except Exception as v_exc:
-                    last_engine_error = v_exc
-                    logger.error("OCR engine exception on %s (variant=%s): %s", image_path, v_name, v_exc)
-        except Exception as prep_exc:
-            logger.debug("Failed to build OCR variants for %s: %s", image_path, prep_exc)
+                v_text = _normalize_ocr_text([it["text"] for it in v_items if it.get("text")])
+                candidates.append({
+                    "variant": v_name,
+                    "items": v_items,
+                    "text": v_text,
+                    "count": len(v_items),
+                })
+            except Exception as v_exc:
+                last_engine_error = v_exc
+                logger.error("OCR engine exception on %s (variant=%s): %s", image_path, v_name, v_exc)
+            finally:
+                # Clean up temporary variant file from disk immediately to conserve resources
+                if v_path and os.path.exists(v_path):
+                    try:
+                        os.remove(v_path)
+                    except Exception:
+                        pass
+                force_garbage_collection()
+
+            # Early exit if the contrast pass yielded sufficient detections
+            if candidates and candidates[-1]["count"] >= 10:
+                break
 
     # Select the best performing variant or aggregate unique detections
     best_candidate = max(candidates, key=lambda c: (c["count"], len(c["text"]))) if candidates else None
@@ -225,6 +257,10 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
         ocr_status = "OCR_ENGINE_ERROR"
         error_msg = str(last_engine_error) if last_engine_error else "OCR engine failed"
         logger.error("OCR engine error across all attempts on %s: %s", image_path, error_msg)
+
+    # Diagnostic RSS log after OCR
+    log_memory_checkpoint("RSS after OCR", f"file={base_img_name}, detections={detection_count}")
+    force_garbage_collection()
 
     return {
         "ocr_status": ocr_status,
