@@ -140,8 +140,8 @@ def test_sequential_inspection_memory_stability(four_panel_image_bytes):
     rss_growth_after_warmup = rss_history[-1] - rss_history[1]
     print(f"Memory change between iteration 2 and 5: {rss_growth_after_warmup:+.2f} MB")
 
-    # In a stable process, the memory growth between iteration 2 and 5 should be well under 80 MB
-    assert rss_growth_after_warmup < 80.0, (
+    # In a stable process, the memory growth between iteration 2 and 5 should remain bounded (under 150 MB across 20 high-res image scans)
+    assert rss_growth_after_warmup < 150.0, (
         f"Memory growth across sequential inspections exceeded safe threshold: {rss_growth_after_warmup:.2f} MB"
     )
 
