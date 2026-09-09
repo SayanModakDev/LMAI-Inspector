@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -250,6 +250,7 @@ async def perform_scan(
 
         db_rules = db.query(models.Rule).filter(models.Rule.is_active == True).all()
         all_rules_dict = [{c.name: getattr(rule, c.name) for c in rule.__table__.columns} for rule in db_rules]
+        current_date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         applicable_rules = get_applicable_rules(
             all_rules=all_rules_dict,
             category=category,
@@ -257,7 +258,11 @@ async def perform_scan(
             package_type=package_type,
             import_status=import_status,
             has_physical_data=False,
+            inspection_date=current_date_str,
         )
+
+        from app.rules.status_safety import derive_dynamic_regulatory_snapshot
+        snapshot_meta = derive_dynamic_regulatory_snapshot(applicable_rules=applicable_rules, inspection_date=current_date_str)
 
         rule_started = time.perf_counter()
         rule_results, overall_result = evaluate_rules(applicable_rules, extracted_fields)
@@ -276,7 +281,7 @@ async def perform_scan(
             priority=priority,
             image_path=safe_filenames[0],
             processed_image_path=image_results[0]['processed_image_path'],
-            regulatory_snapshot="LMPC_2011_CURRENT_2024 | FSSAI_LD_2020_CURRENT_2024 | COSMETICS_2020_CURRENT_2024",
+            regulatory_snapshot=snapshot_meta['snapshot_id'],
         )
         db.add(db_inspection)
         db.flush()
@@ -431,6 +436,8 @@ async def perform_scan(
             barcode_result=barcode_result,
             created_at=created_dt,
             inspection_date=created_dt,
+            regulatory_snapshot=snapshot_meta.get('snapshot_id'),
+            regulatory_snapshot_label=snapshot_meta.get('effective_label'),
         )
 
     except Exception as exc:

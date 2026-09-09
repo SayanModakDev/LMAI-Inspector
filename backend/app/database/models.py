@@ -204,6 +204,7 @@ class Rule(Base):
     verification_status = Column(String(50), nullable=True)
     version_date = Column(String(20), nullable=True)
     effective_date = Column(String(20), nullable=True)
+    publication_date = Column(String(20), nullable=True)
     applicability = Column(String(255), nullable=True)
     screening_scope = Column(Text, nullable=True)
     physical_scope = Column(Text, nullable=True)

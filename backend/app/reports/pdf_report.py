@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Mandatory statutory disclaimer
 STATUTORY_DISCLAIMER = (
-    "This is an inspection-support tool and final legal verification must be made by an authorized inspector."
+    "This software is an automated screening aid and not itself a government authority. Final statutory verification must be performed by an authorized inspector."
 )
 
 
@@ -317,7 +317,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             [
                 _safe_html_p(
                     "Legal Metrology AI Inspector — Packaging Compliance Screening System<br/>"
-                    "<font color='#64748B'>Legal Metrology (Packaged Commodities) Rules, 2011</font>",
+                    "<font color='#64748B'>Regulatory screening baseline reviewed against authoritative sources</font>",
                     subtitle_style,
                 ),
                 _safe_html_p(
@@ -337,6 +337,15 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(header_table)
     story.append(Spacer(1, 3 * mm))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#173F5F"), spaceBefore=1, spaceAfter=4))
+
+    # Derive dynamic regulatory snapshot
+    inspect_dt_str = inspection.created_at.strftime('%Y-%m-%d') if inspection.created_at else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    reg_snapshot = getattr(inspection, 'regulatory_snapshot', None)
+    if not reg_snapshot:
+        from app.rules.status_safety import derive_dynamic_regulatory_snapshot
+        snapshot_meta = derive_dynamic_regulatory_snapshot(None, inspect_dt_str)
+        reg_snapshot = snapshot_meta['snapshot_id']
+    reg_snapshot_label = f"Effective for inspection date: {inspect_dt_str}"
 
     # 2. Inspection Metadata Grid
     story.append(Paragraph("Inspection Overview & Product Profile", heading_style))
@@ -364,6 +373,12 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             _paragraph(pkg_display, body_style),
             _paragraph("Import Status", body_bold),
             _paragraph(import_display, body_style),
+        ],
+        [
+            _paragraph("Regulatory Snapshot", body_bold),
+            _paragraph(reg_snapshot, small_style),
+            _paragraph("Traceability Baseline", body_bold),
+            _paragraph(reg_snapshot_label, small_style),
         ],
     ]
     meta_table = _table(meta_rows, [35 * mm, 101 * mm, 35 * mm, 102 * mm], header=False, custom_style=[
@@ -468,7 +483,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(PageBreak())
     story.append(Paragraph("COMPLIANCE RULE MATRIX", heading_style))
     story.append(Paragraph(
-        "Deterministic rule-based screening against the configured compliance matrix under Legal Metrology (Packaged Commodities) Rules, 2011.",
+        "Deterministic rule-based screening against the versioned regulatory traceability baseline under Legal Metrology (Packaged Commodities) Rules, 2011 and applicable statutory instruments.",
         subtitle_style,
     ))
     story.append(Spacer(1, 2 * mm))

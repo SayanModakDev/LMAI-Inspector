@@ -34,6 +34,8 @@ class ScanResponse(BaseModel):
     barcode_result: Optional[dict] = None
     created_at: Optional[datetime] = None
     inspection_date: Optional[datetime] = None
+    regulatory_snapshot: Optional[str] = None
+    regulatory_snapshot_label: Optional[str] = None
 
 
 class InspectionDetail(BaseModel):
@@ -51,6 +53,8 @@ class InspectionDetail(BaseModel):
     image_path: Optional[str] = None
     inspector_name: Optional[str] = None
     notes: Optional[str] = None
+    regulatory_snapshot: Optional[str] = None
+    regulatory_snapshot_label: Optional[str] = None
     created_at: Optional[datetime] = None
     product: Optional[dict] = None
     images: List[dict] = []
@@ -148,6 +152,7 @@ class RuleSchema(BaseModel):
     verification_status: Optional[str] = None
     version_date: Optional[str] = None
     effective_date: Optional[str] = None
+    publication_date: Optional[str] = None
     applicability: Optional[str] = None
     screening_scope: Optional[str] = None
     physical_scope: Optional[str] = None

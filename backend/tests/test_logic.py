@@ -598,7 +598,7 @@ def test_food_package_can_evaluate_food_specific_rule():
     # Food-specific rules must be present
     assert 'PC-FOOD-001' in app_rule_ids  # BEST_BEFORE_USE_BY
     assert 'PC-FOOD-002' in app_rule_ids  # INGREDIENTS_LIST
-    assert 'PC-FOOD-003' in app_rule_ids  # NUTRITIONAL_INFO
+    assert any(r.startswith('PC-FOOD-003') for r in app_rule_ids)  # NUTRITIONAL_INFO
     assert 'PC-FOOD-004' in app_rule_ids  # FSSAI_LICENSE
     assert 'PC-FOOD-005' in app_rule_ids  # VEG_NONVEG_SYMBOL
 

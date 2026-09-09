@@ -54,15 +54,32 @@ def test_regulatory_traceability_citations_are_verified(rule_matrix_data):
             assert rule['verification_status'] == 'NON_STATUTORY'
             assert 'INTERNAL' in rule['rule_reference']
         else:
-            assert rule['rule_reference_status'] == 'VERIFIED', (
-                f"Rule {rule['rule_id']} should have rule_reference_status='VERIFIED', got '{rule['rule_reference_status']}'"
+            assert rule['rule_reference_status'] in ('VERIFIED', 'APPLICABILITY_DEPENDENT'), (
+                f"Rule {rule['rule_id']} should have verified or applicability_dependent status, got '{rule['rule_reference_status']}'"
             )
-            assert rule['verification_status'] == 'VERIFIED'
+            assert rule['verification_status'] in ('VERIFIED', 'APPLICABILITY_DEPENDENT')
             assert rule['rule_reference'] != 'PENDING_VERIFICATION', (
                 f"Rule {rule['rule_id']} should have verified rule reference, not placeholder"
             )
             assert rule['instrument'] is not None
             assert rule['citation'] is not None
+
+
+def test_exact_verification_status_counts(rule_matrix_data):
+    """Verify exact counts of verified, applicability dependent, non-statutory, and pending review rules."""
+    rules = rule_matrix_data.get('rules', [])
+    baseline_rules = [r for r in rules if not r['rule_id'].endswith('-AMEND2026')]
+    assert len(baseline_rules) == 21
+
+    verified_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'VERIFIED')
+    app_dep_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'APPLICABILITY_DEPENDENT')
+    non_stat_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'NON_STATUTORY')
+    pending_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'PENDING_REVIEW')
+
+    assert verified_count == 16, f"Expected 16 VERIFIED rules, got {verified_count}"
+    assert app_dep_count == 4, f"Expected 4 APPLICABILITY_DEPENDENT rules, got {app_dep_count}"
+    assert non_stat_count == 1, f"Expected 1 NON_STATUTORY rule, got {non_stat_count}"
+    assert pending_count == 0, f"Expected 0 PENDING_REVIEW rules, got {pending_count}"
 
 
 def test_legal_metrology_commencement_date_is_accurate(rule_matrix_data):

@@ -60,14 +60,18 @@ def sync_rules_to_db() -> None:
                 db_rule.evidence_required = r_data.get('evidence_required', True)
                 db_rule.source_link = r_data.get('source_link') or r_data.get('source_url')
                 db_rule.source_url = r_data.get('source_url') or r_data.get('source_link')
+                from app.rules.status_safety import validate_and_enforce_verification_status
+                controlled_status = validate_and_enforce_verification_status(r_data)
+
                 db_rule.source_authority = r_data.get('source_authority')
-                db_rule.rule_reference_status = r_data.get('rule_reference_status', 'VERIFIED')
+                db_rule.rule_reference_status = controlled_status
                 db_rule.instrument = r_data.get('instrument') or r_data.get('source_document')
                 db_rule.citation = r_data.get('citation') or r_data.get('rule_reference')
                 db_rule.citation_text = r_data.get('citation_text')
-                db_rule.verification_status = r_data.get('verification_status') or r_data.get('rule_reference_status', 'VERIFIED')
+                db_rule.verification_status = controlled_status
                 db_rule.version_date = r_data.get('version_date')
                 db_rule.effective_date = r_data.get('effective_date') or r_data.get('effective_from')
+                db_rule.publication_date = r_data.get('publication_date')
                 db_rule.applicability = r_data.get('applicability')
                 db_rule.screening_scope = r_data.get('screening_scope')
                 db_rule.physical_scope = r_data.get('physical_scope')
