@@ -178,13 +178,11 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     finally:
         force_garbage_collection()
 
-    # Targeted retry: Only generate variants sequentially if primary pass yielded low evidence
+    # Targeted retry: Only generate fallback variant if primary pass yielded zero text
     primary_count = candidates[0]["count"] if candidates else 0
-    primary_text_len = len(candidates[0]["text"]) if candidates else 0
-
-    if primary_count < 6 or primary_text_len < 50:
+    if primary_count == 0:
         variant_dir = os.path.join(os.path.dirname(image_path), "ocr_variants")
-        for v_name in ["contrast", "grayscale"]:
+        for v_name in ["contrast"]:
             attempt_count += 1
             logger.info("OCR retry attempt started for %s (variant=%s)", image_path, v_name)
             v_path = None
