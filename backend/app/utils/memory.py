@@ -12,21 +12,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Windows ctypes structures cached at module level
+# Platform detection
 _IS_WINDOWS = sys.platform == "win32"
 _IS_LINUX = sys.platform.startswith("linux")
-_LIBC_TRIM = None
-
-if _IS_LINUX:
-    try:
-        import ctypes
-        _libc = ctypes.CDLL("libc.so.6")
-        if hasattr(_libc, "malloc_trim"):
-            _LIBC_TRIM = _libc.malloc_trim
-            _LIBC_TRIM.argtypes = [ctypes.c_size_t]
-            _LIBC_TRIM.restype = ctypes.c_int
-    except Exception:
-        _LIBC_TRIM = None
 
 
 def get_process_rss_mb() -> float:
@@ -94,18 +82,13 @@ def get_process_rss_mb() -> float:
 
 
 def force_garbage_collection() -> float:
-    """Trigger cyclic garbage collection and return heap arenas to the operating system.
+    """Trigger cyclic garbage collection and return current process RSS in MB.
 
-    On Linux/glibc, calling malloc_trim(0) forces glibc to release cached heap pages
-    back to the OS kernel, directly reducing cgroup RSS visible to Render.
-    Returns process RSS in MB after collection.
+    Uses Python's built-in cyclic garbage collector. Avoids glibc malloc_trim(0)
+    which can deadlock on arena mutexes when C++ background threads (OpenMP/Paddle)
+    are active.
     """
     gc.collect()
-    if _LIBC_TRIM is not None:
-        try:
-            _LIBC_TRIM(0)
-        except Exception:
-            pass
     return get_process_rss_mb()
 
 

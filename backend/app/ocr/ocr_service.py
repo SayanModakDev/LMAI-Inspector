@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 
 # Memory optimization flags for PaddlePaddle C++ backend before library import
 os.environ.setdefault("FLAGS_allocator_strategy", "naive_best_fit")
+os.environ.setdefault("FLAGS_fraction_of_cpu_memory_to_use", "0.1")
 os.environ.setdefault("FLAGS_eager_delete_tensor_gb", "0.0")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
@@ -26,15 +27,18 @@ def _get_ocr():
         from paddleocr import PaddleOCR
         threads = int(os.getenv("PADDLE_CPU_THREADS", "1"))
         _ocr_instance = PaddleOCR(
-            use_angle_cls=True,
+            use_angle_cls=False,
             lang="en",
             show_log=False,
             use_gpu=False,
             cpu_threads=threads,
             enable_mkldnn=False,
+            rec_batch_num=1,
+            max_batch_size=1,
+            det_limit_side_len=960,
         )
         logger.info(
-            "PaddleOCR engine initialized successfully (lang=en, angle_cls=True, cpu_threads=%d, mkldnn=False)",
+            "PaddleOCR engine initialized successfully (lang=en, angle_cls=False, cpu_threads=%d, mkldnn=False, rec_batch=1)",
             threads,
         )
     return _ocr_instance
@@ -156,7 +160,7 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     logger.info("OCR attempt started for %s (variant=original)", image_path)
     try:
         ocr = _get_ocr()
-        results = ocr.ocr(image_path, cls=True)
+        results = ocr.ocr(image_path, cls=False)
         items = _collect_ocr_items(results)
         successful_attempt_count += 1
         if items:
@@ -190,7 +194,7 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
                 # Generate single variant on demand; releases NumPy arrays immediately
                 v_path = generate_single_variant(image_path, v_name, variant_dir)
                 ocr = _get_ocr()
-                v_results = ocr.ocr(v_path, cls=True)
+                v_results = ocr.ocr(v_path, cls=False)
                 v_items = _collect_ocr_items(v_results)
                 successful_attempt_count += 1
                 if v_items:

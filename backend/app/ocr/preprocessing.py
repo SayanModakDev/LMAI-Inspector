@@ -19,9 +19,9 @@ from app.utils.memory import force_garbage_collection
 
 def get_max_dimension() -> int:
     try:
-        return int(os.getenv("MAX_OCR_IMAGE_DIMENSION", "1536"))
+        return int(os.getenv("MAX_OCR_IMAGE_DIMENSION", "1024"))
     except (ValueError, TypeError):
-        return 1536
+        return 1024
 
 MAX_DIMENSION = get_max_dimension()
 MIN_DIMENSION = 300
