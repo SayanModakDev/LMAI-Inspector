@@ -429,6 +429,8 @@ const Result = () => {
                                     <span className="badge badge-success" style={{ fontSize: '10px', padding: '2px 6px' }}>Verified</span>
                                   ) : rule.rule_reference_status === 'NON_STATUTORY' ? (
                                     <span className="badge badge-gray" style={{ fontSize: '10px', padding: '2px 6px' }}>Non-Statutory</span>
+                                  ) : rule.rule_reference_status === 'APPLICABILITY_DEPENDENT' ? (
+                                    <span className="badge badge-info" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', fontSize: '10px', padding: '2px 6px' }}>Applicability Dependent</span>
                                   ) : (
                                     <span className="badge badge-warning" style={{ fontSize: '10px', padding: '2px 6px' }}>Pending verification</span>
                                   )}

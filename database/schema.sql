@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS rules (
     verification_status VARCHAR(50) NULL,
     version_date VARCHAR(20) NULL,
     effective_date VARCHAR(20) NULL,
+    publication_date VARCHAR(20) NULL,
     applicability VARCHAR(255) NULL,
     screening_scope TEXT NULL,
     physical_scope TEXT NULL,

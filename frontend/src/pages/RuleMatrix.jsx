@@ -72,7 +72,7 @@ const RuleMatrix = () => {
         <div>
           <h2 className="rule-matrix-title">Legal Metrology Rule Matrix</h2>
           <p className="rule-matrix-subtitle">
-            Configured compliance rule parameters used for deterministic inspection screening under the Legal Metrology (Packaged Commodities) Rules, 2011.
+            Versioned regulatory traceability baseline reviewed against authoritative sources under Legal Metrology (Packaged Commodities) Rules, 2011 and applicable statutory instruments.
           </p>
         </div>
         <div className="badge badge-primary font-mono font-semibold">
@@ -194,6 +194,10 @@ const RuleMatrix = () => {
                               <span className="badge badge-gray" title="Internal inspection screening specification; non-statutory">
                                 Non-Statutory
                               </span>
+                            ) : rule.rule_reference_status === 'APPLICABILITY_DEPENDENT' ? (
+                              <span className="badge badge-info" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', display: 'inline-flex', alignItems: 'center' }} title="Statutory requirement contingent on packaging exemptions or conditional applicability">
+                                <Layers size={11} className="mr-1" /> Applicability Dependent
+                              </span>
                             ) : (
                               <span className="badge badge-success">
                                 <ShieldCheck size={11} className="mr-1" /> Verified
@@ -223,6 +227,12 @@ const RuleMatrix = () => {
                                   <div>
                                     <span className="detail-tag">Condition & Applicability:</span>
                                     <p className="detail-text font-mono text-xs">{rule.applicability || rule.condition || 'Universal Package Applicability'}</p>
+                                  </div>
+                                  <div>
+                                    <span className="detail-tag">Dates & Version:</span>
+                                    <p className="detail-text text-xs">
+                                      Pub: {rule.publication_date || '—'} | Eff: {rule.effective_date || rule.effective_from || '—'} ({rule.rule_version || '—'})
+                                    </p>
                                   </div>
                                   <div>
                                     <span className="detail-tag">Rule Severity:</span>

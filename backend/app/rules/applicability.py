@@ -14,7 +14,8 @@ are available (manual input).
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +27,27 @@ def get_applicable_rules(
     import_status: str = "DOMESTIC",
     product_type: str = "UNKNOWN",
     has_physical_data: bool = False,
+    inspection_date: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Filter the full rule set to only rules applicable to the given context.
+    Filter the full rule set to only rules applicable to the given context and inspection date.
 
     Args:
         all_rules: Complete list of rule dicts (from DB or JSON).
         category: Product category — FOOD, COSMETIC, or UNKNOWN.
-        package_type: RETAIL or WHOLESALE.
+        package_type: RETAIL, WHOLESALE, INSTITUTIONAL, or INDUSTRIAL.
         import_status: DOMESTIC or IMPORTED.
         has_physical_data: Whether manual measurement data was provided.
+        inspection_date: ISO date string (YYYY-MM-DD) controlling rule version applicability.
 
     Returns:
         List of applicable rule dicts.
     """
+    if inspection_date is not None:
+        norm_inspect_date = str(inspection_date)[:10]
+    else:
+        norm_inspect_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
     applicable = []
 
     for rule in all_rules:
@@ -86,15 +94,43 @@ def get_applicable_rules(
             if import_status.upper() != 'IMPORTED':
                 continue
 
-        # Physical verification rules (condition == 'PHYSICAL_ONLY') remain visible
-        # in applicability and inspection results rather than being omitted from image-only scans,
-        # ensuring inspectors clearly see statutory physical verification requirements.
+        # --- Effective date filter (Published law != Effective law) ---
+        eff_from = rule.get('effective_from') or rule.get('effective_date')
+        if eff_from and norm_inspect_date < str(eff_from)[:10]:
+            # A published amendment must NOT become active before its effective date
+            continue
+
+        eff_until = rule.get('effective_until')
+        if eff_until and norm_inspect_date > str(eff_until)[:10]:
+            # Rule version has expired or been superseded as of this inspection date
+            continue
+
         applicable.append(rule)
+
+    # Deduplicate multiple versions of the same rule_id / parameter
+    # by selecting the active version with the latest effective date <= norm_inspect_date
+    version_candidates: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for r in applicable:
+        key = (str(r.get('rule_id', '')), str(r.get('parameter', '')))
+        version_candidates.setdefault(key, []).append(r)
+
+    final_applicable = []
+    for key, cand_list in version_candidates.items():
+        if len(cand_list) == 1:
+            final_applicable.append(cand_list[0])
+        else:
+            cand_list.sort(
+                key=lambda x: str(x.get('effective_from') or x.get('effective_date') or ''),
+                reverse=True,
+            )
+            final_applicable.append(cand_list[0])
+
+    applicable = final_applicable
 
     logger.info(
         f"Rule applicability: {len(applicable)}/{len(all_rules)} rules applicable "
         f"(category={category}, product_type={product_type}, pkg={package_type}, import={import_status}, "
-        f"physical={has_physical_data})"
+        f"physical={has_physical_data}, date={norm_inspect_date})"
     )
 
     return applicable

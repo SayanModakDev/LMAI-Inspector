@@ -3,7 +3,7 @@
     "source": "Legal Metrology (Packaged Commodities) Rules, 2011; FSSAI Labelling and Display Regulations, 2020; Cosmetics Rules, 2020",
     "last_updated": "2026-09-09",
     "regulatory_snapshot": "LMPC_2011_CURRENT_2024 | FSSAI_LD_2020_CURRENT_2024 | COSMETICS_2020_CURRENT_2024",
-    "disclaimer": "This matrix defines statutory and internal packaging compliance screening rules for AI-assisted inspection. Automated screening does not constitute final legal enforcement.",
+    "disclaimer": "This matrix defines statutory and internal packaging compliance screening rules for AI-assisted inspection. Versioned regulatory screening baseline reviewed against authoritative sources. The software is not itself a government authority. Automated screening does not constitute final legal enforcement.",
     "rules": [
         {
             "rule_id": "PC-ALL-001",
@@ -39,7 +39,8 @@
             "applicability": "Universal internal inspection tracking across retail and wholesale packages",
             "screening_scope": "Optical detection and OCR extraction of commercial brand name and product title text.",
             "physical_scope": "Trademark registry verification, brand portfolio classification.",
-            "notes": "Commercial or brand product name identification. Note: Statutory declaration under Rule 6(1)(b) mandates the common or generic name (GENERIC_NAME); brand/product name is screened as packaging identification convention."
+            "notes": "Commercial or brand product name identification. Note: Statutory declaration under Rule 6(1)(b) mandates the common or generic name (GENERIC_NAME); brand/product name is screened as packaging identification convention.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-002",
@@ -75,7 +76,8 @@
             "applicability": "Mandatory for all retail packages under Rule 6(1)(c) and wholesale packages under Rule 24(c)",
             "screening_scope": "Optical detection of printed numerical quantity and statutory metric unit (g, kg, ml, l, m, cm, mm, N, U) or multipack statement (e.g. 3 x 100 g).",
             "physical_scope": "Physical gravimetric/volumetric net fill determination using calibrated balances under Rule 19 and Third Schedule; compliance with Second Schedule Maximum Permissible Error (MPE).",
-            "notes": "Governs printed net quantity expression on label. Physical net weight verification is governed separately under ACTUAL_NET_CONTENT (PC-ALL-012)."
+            "notes": "Governs printed net quantity expression on label. Physical net weight verification is governed separately under ACTUAL_NET_CONTENT (PC-ALL-012).",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-003",
@@ -109,9 +111,10 @@
             "version_date": "2024-01-01",
             "effective_date": "2011-04-01",
             "applicability": "Mandatory for retail packages; NOT_APPLICABLE for wholesale packages under Rule 24 or institutional/industrial supply",
-            "screening_scope": "Detection of 'MRP', 'Maximum Retail Price', currency indicator ('₹', 'Rs.'), numerical price, and inclusive of all taxes statement.",
+            "screening_scope": "Detection of 'MRP', 'Maximum Retail Price', currency indicator ('\u20b9', 'Rs.'), numerical price, and inclusive of all taxes statement.",
             "physical_scope": "Distributor invoice reconciliation, overcharging investigations, anti-profiteering audits.",
-            "notes": "Applicability is strictly restricted to retail packages. Absence on wholesale outer packaging does not constitute a non-compliance."
+            "notes": "Applicability is strictly restricted to retail packages. Absence on wholesale outer packaging does not constitute a non-compliance.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-004",
@@ -147,7 +150,8 @@
             "applicability": "Mandatory across all retail (Rule 6(1)(a)) and wholesale (Rule 24(a)) packages",
             "screening_scope": "Optical detection of manufacturer/packer/marketer corporate identity text and associated designation.",
             "physical_scope": "Ministry of Corporate Affairs (MCA) registration check, factory operating licence, contract manufacturing agreements.",
-            "notes": "Separate semantic roles (Manufacturer, Packer, Marketer, Importer) are preserved as distinct fields."
+            "notes": "Separate semantic roles (Manufacturer, Packer, Marketer, Importer) are preserved as distinct fields.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-005",
@@ -183,7 +187,8 @@
             "applicability": "Mandatory across all retail and wholesale packages",
             "screening_scope": "Text presence of address components (street, industrial area, city, state, postal code).",
             "physical_scope": "Physical site verification of registered manufacturing or packing facility.",
-            "notes": "Must indicate complete physical/postal location of manufacturing or packing unit."
+            "notes": "Must indicate complete physical/postal location of manufacturing or packing unit.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-006",
@@ -219,7 +224,8 @@
             "applicability": "Mandatory for imported commodities (Retail & Wholesale); NOT_APPLICABLE to domestic goods",
             "screening_scope": "Optical detection of 'Country of Origin', 'Made in [Country]', or foreign country declaration.",
             "physical_scope": "Customs Bill of Entry, Certificate of Origin, import documentation audit.",
-            "notes": "Inserted via G.S.R. 629(E) dated 23 June 2017 with commencement from 1 January 2018."
+            "notes": "Inserted via G.S.R. 629(E) dated 23 June 2017 with commencement from 1 January 2018.",
+            "publication_date": "2017-06-23"
         },
         {
             "rule_id": "PC-ALL-007",
@@ -234,7 +240,7 @@
             "source_url": "https://consumeraffairs.nic.in/acts-and-rules/legal-metrology/the-legal-metrology-packaged-commodities-rules-2011",
             "source_link": "https://consumeraffairs.nic.in/acts-and-rules/legal-metrology/the-legal-metrology-packaged-commodities-rules-2011",
             "rule_reference": "Rule 6(1)(a) [Retail]; Rule 24(a) [Wholesale]",
-            "rule_reference_status": "VERIFIED",
+            "rule_reference_status": "APPLICABILITY_DEPENDENT",
             "rule_version": "LMPC_2011_CURRENT_2024",
             "effective_from": "2011-04-01",
             "effective_until": null,
@@ -249,13 +255,14 @@
             "instrument": "Legal Metrology (Packaged Commodities) Rules, 2011",
             "citation": "Rule 6(1)(a) & Rule 24(a)",
             "citation_text": "for any imported package the name and address of the importer shall be mentioned.",
-            "verification_status": "VERIFIED",
+            "verification_status": "APPLICABILITY_DEPENDENT",
             "version_date": "2024-01-01",
             "effective_date": "2011-04-01",
             "applicability": "Mandatory for imported commodities; NOT_APPLICABLE to domestic goods",
             "screening_scope": "Optical detection of 'Imported by', 'Importer', company name and Indian address.",
             "physical_scope": "Directorate General of Foreign Trade (DGFT) Importer-Exporter Code (IEC), customs declarations.",
-            "notes": "Required on both retail and wholesale imported packages."
+            "notes": "Required on both retail and wholesale imported packages.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-008",
@@ -291,7 +298,8 @@
             "applicability": "Mandatory for retail packages; NOT_APPLICABLE for wholesale packages under Rule 24",
             "screening_scope": "Optical presence of telephone/toll-free helpline, email address, or designated consumer contact postal address.",
             "physical_scope": "Operational test call or email to verify responsiveness of complaint cell.",
-            "notes": "Preserves statutory cross-reference relationship with FSSR (Labelling and Display) Regulation 5(11)."
+            "notes": "Preserves statutory cross-reference relationship with FSSR (Labelling and Display) Regulation 5(11).",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-009",
@@ -327,7 +335,8 @@
             "applicability": "Mandatory for non-food retail commodities under Rule 6(1)(d); food date marking routed conditionally to FSSAI (PC-FOOD-001); NOT_APPLICABLE for wholesale outer packaging",
             "screening_scope": "Optical detection of manufacturing or packing month and year in valid numeric or text format.",
             "physical_scope": "Plant batch production logs, QA release certificates.",
-            "notes": "Preserves statutory proviso routing food package date-marking through food law."
+            "notes": "Preserves statutory proviso routing food package date-marking through food law.",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-010",
@@ -363,7 +372,8 @@
             "applicability": "Mandatory across all retail and wholesale pre-packaged commodities",
             "screening_scope": "Optical presence of common or generic descriptor (e.g., 'Iodized Salt', 'Talcum Powder', 'Refined Sugar') on the packaging.",
             "physical_scope": "Commodity standard validation against applicable Bureau of Indian Standards (BIS) or FSSAI product standards.",
-            "notes": "Distinguished from commercial product/brand name. Receives the official Legal Metrology citation under Rule 6(1)(b)."
+            "notes": "Distinguished from commercial product/brand name. Receives the official Legal Metrology citation under Rule 6(1)(b).",
+            "publication_date": "2011-01-06"
         },
         {
             "rule_id": "PC-ALL-011",
@@ -377,8 +387,8 @@
             "source_document": "Legal Metrology (Packaged Commodities) Rules, 2011",
             "source_url": "https://consumeraffairs.nic.in/acts-and-rules/legal-metrology/the-legal-metrology-packaged-commodities-rules-2011",
             "source_link": "https://consumeraffairs.nic.in/acts-and-rules/legal-metrology/the-legal-metrology-packaged-commodities-rules-2011",
-            "rule_reference": "Rule 6(11) (G.S.R. 779(E) & G.S.R. 724(E))",
-            "rule_reference_status": "VERIFIED",
+            "rule_reference": "Rule 6(11) (G.S.R. 779(E) dated 06-Oct-2023)",
+            "rule_reference_status": "APPLICABILITY_DEPENDENT",
             "rule_version": "LMPC_2011_CURRENT_2024",
             "effective_from": "2024-01-01",
             "effective_until": null,
@@ -393,13 +403,14 @@
             "instrument": "Legal Metrology (Packaged Commodities) Rules, 2011",
             "citation": "Rule 6(11)",
             "citation_text": "The unit sale price shall be declared on every pre-packaged commodity in rupees, rounded off to the nearest two decimal places, per g, kg, ml, l, or number. Provided that declaration of unit sale price is not required where retail sale price and unit sale price are identical, or for combination/multi-piece packages.",
-            "verification_status": "VERIFIED",
+            "verification_status": "APPLICABILITY_DEPENDENT",
             "version_date": "2024-01-01",
             "effective_date": "2024-01-01",
             "applicability": "Retail packages (subject to unit price parity exemptions); strictly NOT_APPLICABLE on wholesale packages under Rule 24",
             "screening_scope": "Optical detection of '₹... / g', '₹... / kg', '₹... / ml', '₹... / piece' or 'USP' statement on display panel.",
             "physical_scope": "Mathematical verification of unit rate against declared net quantity and retail sale price.",
-            "notes": "Enforced from 1 January 2024 following deferrals. Absence on a genuine wholesale package is not non-compliance."
+            "notes": "Amended by G.S.R. 779(E) dated 06-Oct-2023; enforced from 1 January 2024 following deferrals. Absence on a genuine wholesale package is not non-compliance.",
+            "publication_date": "2023-10-06"
         },
         {
             "rule_id": "PC-FOOD-001",
@@ -435,7 +446,8 @@
             "applicability": "Mandatory for retail food products; NOT_APPLICABLE for non-food",
             "screening_scope": "Detection of 'Best Before', 'Use By', 'Expiry Date', 'Exp' and valid date string.",
             "physical_scope": "Accelerated and real-time shelf-life testing dossiers, microbiological stability reports.",
-            "notes": "Currently effective baseline is Regulation 5(10) of the 2020 Regulations. Enforced from 1 July 2022."
+            "notes": "Currently effective baseline is Regulation 5(10) of the 2020 Regulations. Enforced from 1 July 2022.",
+            "publication_date": "2020-11-18"
         },
         {
             "rule_id": "PC-FOOD-002",
@@ -450,7 +462,7 @@
             "source_url": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
             "source_link": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
             "rule_reference": "Regulation 5(2)",
-            "rule_reference_status": "VERIFIED",
+            "rule_reference_status": "APPLICABILITY_DEPENDENT",
             "rule_version": "FSSAI_LD_2020_CURRENT_2024",
             "effective_from": "2020-11-18",
             "effective_until": null,
@@ -465,13 +477,14 @@
             "instrument": "Food Safety and Standards (Labelling and Display) Regulations, 2020",
             "citation": "Regulation 5(2)",
             "citation_text": "A complete list of ingredients shall be declared on the label in descending order of in-going weight (m/m) or volume (v/v) at the time of their manufacture. Single ingredient commodities are exempt under Regulation 5(2)(a).",
-            "verification_status": "VERIFIED",
+            "verification_status": "APPLICABILITY_DEPENDENT",
             "version_date": "2024-01-01",
             "effective_date": "2020-11-18",
             "applicability": "Mandatory for multi-ingredient retail food; exempt for single-ingredient foods",
             "screening_scope": "Optical presence of 'Ingredients:' header and comma-separated ingredient names.",
             "physical_scope": "Factory batch formulation sheets, quantitative ingredient declarations, allergen cross-contamination logs.",
-            "notes": "Enforced from 1 July 2022 under FSSR (Labelling and Display) Regulations, 2020."
+            "notes": "Enforced from 1 July 2022 under FSSR (Labelling and Display) Regulations, 2020.",
+            "publication_date": "2020-11-18"
         },
         {
             "rule_id": "PC-FOOD-003",
@@ -486,10 +499,10 @@
             "source_url": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
             "source_link": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
             "rule_reference": "Regulation 5(3)",
-            "rule_reference_status": "VERIFIED",
+            "rule_reference_status": "APPLICABILITY_DEPENDENT",
             "rule_version": "FSSAI_LD_2020_CURRENT_2024",
             "effective_from": "2020-11-18",
-            "effective_until": null,
+            "effective_until": "2027-06-30",
             "required": false,
             "what_to_extract": "text_presence",
             "validation_method": "TEXT_PRESENT",
@@ -501,13 +514,51 @@
             "instrument": "Food Safety and Standards (Labelling and Display) Regulations, 2020",
             "citation": "Regulation 5(3)",
             "citation_text": "Nutritional information shall be declared on the label per 100g or 100ml or per single consumption pack: energy, protein, carbohydrate, total sugars, added sugars, total fat, saturated fat, trans fat, and sodium.",
-            "verification_status": "VERIFIED",
+            "verification_status": "APPLICABILITY_DEPENDENT",
             "version_date": "2024-01-01",
             "effective_date": "2020-11-18",
             "applicability": "Mandatory for processed multi-ingredient food; exempt for raw commodities, salt, sugar",
             "screening_scope": "Optical presence of nutrition table / panel and values for Energy, Protein, Carbohydrate, Fat, Sodium.",
             "physical_scope": "Laboratory nutritional analysis from NABL-accredited / FSSAI-recognized laboratory.",
-            "notes": "Statutory provisions set out in Regulation 5(3) of FSSR (Labelling and Display) Regulations, 2020."
+            "notes": "Statutory provisions set out in Regulation 5(3) of FSSR (Labelling and Display) Regulations, 2020.",
+            "publication_date": "2020-11-18"
+        },
+        {
+            "rule_id": "PC-FOOD-003-AMEND2026",
+            "parameter": "NUTRITIONAL_INFO",
+            "category": "FOOD",
+            "package_type": "RETAIL",
+            "product_type": "OTHER_FOOD",
+            "condition": "APPLICABLE",
+            "regulatory_source": "FSSAI_FOOD_LABELING",
+            "source_authority": "Food Safety and Standards Authority of India (FSSAI)",
+            "source_document": "Food Safety and Standards (Labelling and Display) First Amendment Regulations, 2026",
+            "source_url": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
+            "source_link": "https://www.fssai.gov.in/upload/uploadfiles/files/Gazette_Notification_Labelling_Display_18_11_2020.pdf",
+            "rule_reference": "Regulation 5(3) [as amended by First Amendment Regulations, 2026]",
+            "rule_reference_status": "APPLICABILITY_DEPENDENT",
+            "rule_version": "FSSAI_LD_AMEND_2026",
+            "publication_date": "2026-03-24",
+            "effective_from": "2027-07-01",
+            "effective_until": null,
+            "required": false,
+            "what_to_extract": "text_presence",
+            "validation_method": "TEXT_PRESENT",
+            "verification_type": "IMAGE_VERIFIABLE",
+            "result_type": "PASS_FAIL",
+            "severity": "MEDIUM",
+            "exception": "Regulation 5(3) as amended mandates per-serve percentage contribution to RDA in bold letters for added sugars, saturated fat, and sodium. Notified 24-Mar-2026; effective 01-Jul-2027. Cannot be applied prior to stated commencement date.",
+            "evidence_required": true,
+            "instrument": "Food Safety and Standards (Labelling and Display) First Amendment Regulations, 2026",
+            "citation": "Regulation 5(3) (First Amendment Regulations, 2026)",
+            "citation_text": "Nutritional information shall declare per serve contribution to RDA with total sugars, saturated fat, and sodium in bold letters. Exemptions under Regulation 5(3) proviso remain applicable.",
+            "verification_status": "APPLICABILITY_DEPENDENT",
+            "version_date": "2026-03-24",
+            "effective_date": "2027-07-01",
+            "applicability": "Mandatory for processed multi-ingredient food; exempt for raw commodities, salt, sugar. Effective from 01-Jul-2027.",
+            "screening_scope": "Optical detection of nutrition panel with bold per-serve RDA declarations.",
+            "physical_scope": "Laboratory nutritional analysis from NABL-accredited / FSSAI-recognized laboratory.",
+            "notes": "Notified on 24-Mar-2026; statutory commencement date is 01-Jul-2027. Prior to 01-Jul-2027, baseline Regulation 5(3) (version FSSAI_LD_2020_CURRENT_2024) is the active statutory requirement."
         },
         {
             "rule_id": "PC-FOOD-004",
@@ -543,7 +594,8 @@
             "applicability": "Mandatory for all food packages (Retail & Wholesale)",
             "screening_scope": "Optical detection of FSSAI logo graphic and valid 14-digit numeric license identifier.",
             "physical_scope": "FSSAI Food Safety Compliance System (FoSCoS) portal verification of license status, validity period, and authorized product categories.",
-            "notes": "Visual detection cannot independently prove licence authenticity; verification against official FoSCoS portal is required for enforcement."
+            "notes": "Visual detection cannot independently prove licence authenticity; verification against official FoSCoS portal is required for enforcement.",
+            "publication_date": "2011-08-05"
         },
         {
             "rule_id": "PC-FOOD-005",
@@ -579,7 +631,8 @@
             "applicability": "Mandatory for all food retail packages; NOT_APPLICABLE to cosmetics or household goods",
             "screening_scope": "Computer vision color segmentation and geometry detection of green/brown dot in square.",
             "physical_scope": "Raw material origin verification, animal derivative analysis, halal/kosher certification inspection.",
-            "notes": "Visual detection must distinguish detected symbol candidate from legal compliance. Low confidence remains REVIEW."
+            "notes": "Visual detection must distinguish detected symbol candidate from legal compliance. Low confidence remains REVIEW.",
+            "publication_date": "2020-11-18"
         },
         {
             "rule_id": "PC-COSM-001",
@@ -615,7 +668,8 @@
             "applicability": "Mandatory for cosmetic packages under Cosmetics Rules, 2020",
             "screening_scope": "Optical detection of batch prefix ('Batch No.', 'B.No.', 'Lot') and valid alphanumeric code.",
             "physical_scope": "Manufacturer batch manufacturing record (BMR), quality release certificate.",
-            "notes": "Governed by Cosmetics Rules, 2020 under Drugs and Cosmetics Act, 1940."
+            "notes": "Governed by Cosmetics Rules, 2020 under Drugs and Cosmetics Act, 1940.",
+            "publication_date": "2020-12-15"
         },
         {
             "rule_id": "PC-COSM-002",
@@ -651,7 +705,8 @@
             "applicability": "Mandatory for retail cosmetic products",
             "screening_scope": "Optical detection of 'INGREDIENTS' heading and INCI cosmetic chemical nomenclature.",
             "physical_scope": "Formula disclosure, toxicological safety assessment, BIS standard conformity.",
-            "notes": "Replaces outdated Drugs and Cosmetics Rules, 1945 provisions."
+            "notes": "Replaces outdated Drugs and Cosmetics Rules, 1945 provisions.",
+            "publication_date": "2020-12-15"
         },
         {
             "rule_id": "PC-COSM-003",
@@ -687,7 +742,8 @@
             "applicability": "Mandatory for retail cosmetic products",
             "screening_scope": "Detection of 'Use Before', 'Expiry', 'Best Before', or 'Exp Date' with valid date format.",
             "physical_scope": "Preservative efficacy testing dossiers and stability data.",
-            "notes": "Statutory requirement under Rule 34(1)(f) of Cosmetics Rules, 2020."
+            "notes": "Statutory requirement under Rule 34(1)(f) of Cosmetics Rules, 2020.",
+            "publication_date": "2020-12-15"
         },
         {
             "rule_id": "PC-ALL-012",
@@ -723,7 +779,8 @@
             "applicability": "Universal physical verification requirement across all packages",
             "screening_scope": "NONE: Visual screening cannot determine actual physical net contents, tare weight, or gravimetric net fill.",
             "physical_scope": "Direct gravimetric measurement using calibrated standard scale apparatus following Third Schedule sampling protocol.",
-            "notes": "Corrected from previous erroneous attribution to Rule 24. Rule 24 is wholesale package labelling, NOT physical weighing."
+            "notes": "Corrected from previous erroneous attribution to Rule 24. Rule 24 is wholesale package labelling, NOT physical weighing.",
+            "publication_date": "2009-12-23"
         },
         {
             "rule_id": "PC-ALL-013",
@@ -759,7 +816,8 @@
             "applicability": "All pre-packaged commodities (physical verification required)",
             "screening_scope": "NONE: VISUAL SCREENING CANNOT CONFIRM PHYSICAL MILLIMETRE HEIGHT without calibrated optics and physical scale reference.",
             "physical_scope": "Physical measurement of numeral/letter height in millimeters using calibrated optical graticule, millimeter gauge, or Vernier caliper against Rule 7 Table-I/II thresholds.",
-            "notes": "Automated screening system explicitly reports that visual screening cannot confirm physical millimetre height when physical measurement is unavailable."
+            "notes": "Automated screening system explicitly reports that visual screening cannot confirm physical millimetre height when physical measurement is unavailable.",
+            "publication_date": "2011-01-06"
         }
     ]
 }

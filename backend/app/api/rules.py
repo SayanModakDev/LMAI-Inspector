@@ -43,6 +43,7 @@ def get_rules(db: Session = Depends(get_db)):
             verification_status=getattr(r, 'verification_status', None) or getattr(r, 'rule_reference_status', None),
             version_date=getattr(r, 'version_date', None),
             effective_date=getattr(r, 'effective_date', None) or r.effective_from,
+            publication_date=getattr(r, 'publication_date', None),
             applicability=getattr(r, 'applicability', None),
             screening_scope=getattr(r, 'screening_scope', None),
             physical_scope=getattr(r, 'physical_scope', None),

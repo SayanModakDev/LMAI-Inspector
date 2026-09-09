@@ -122,7 +122,7 @@ def test_04_unit_sale_price_retail_applicability(rules_list):
     assert 'Rule 6(11)' in usp_rule['rule_reference']
     assert usp_rule['effective_from'] == '2024-01-01'
     assert usp_rule['package_type'] == 'RETAIL'
-    assert usp_rule['verification_status'] == 'VERIFIED'
+    assert usp_rule['verification_status'] in ('VERIFIED', 'APPLICABILITY_DEPENDENT')
     assert 'consumeraffairs.nic.in' in usp_rule['source_url']
 
 
@@ -308,9 +308,9 @@ def test_15_internal_non_statutory_field_handling(rules_list):
 # 16. Verification-status handling across rule matrix
 # ==============================================================================
 def test_16_verification_status_handling_across_all_rules(rules_list):
-    """Verify every rule has an audited, controlled verification_status (VERIFIED or NON_STATUTORY)."""
+    """Verify every rule has an audited, controlled verification_status (VERIFIED, APPLICABILITY_DEPENDENT, or NON_STATUTORY)."""
     assert len(rules_list) >= 21
-    allowed_statuses = {'VERIFIED', 'NON_STATUTORY'}
+    allowed_statuses = {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY'}
 
     for r in rules_list:
         status = r.get('verification_status')
@@ -339,7 +339,7 @@ def test_17_effective_date_handling(rules_list):
         elif r['rule_id'] == 'PC-ALL-006':
             assert eff == '2018-01-01'
         elif r['rule_id'].startswith('PC-FOOD'):
-            assert eff in ['2020-11-18', '2011-08-05']
+            assert eff in ['2020-11-18', '2011-08-05', '2027-07-01']
         elif r['rule_id'].startswith('PC-COSM'):
             assert eff == '2020-12-15'
         elif r['regulatory_source'] == 'LEGAL_METROLOGY':
@@ -381,5 +381,205 @@ def test_18_historical_regulatory_version_preservation(rule_matrix_data, rules_l
         assert 'regulatory_source' in res
         assert 'verification_status' in res
         assert 'citation' in res
-        assert res['verification_status'] in {'VERIFIED', 'NON_STATUTORY'}
+        assert res['verification_status'] in {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY'}
+
+
+# ==============================================================================
+# 19. FSSAI 2026 amendment effective date control (Notification != Commencement)
+# ==============================================================================
+def test_19_fssai_2026_amendment_effective_date_control(rules_list):
+    """
+    Explicitly test that the Food Safety and Standards (Labelling and Display)
+    First Amendment Regulations, 2026 (PC-FOOD-003-AMEND2026 / FSSAI_LD_AMEND_2026):
+    - Notification date: 24 March 2026 (2026-03-24)
+    - Stated commencement date: 1 July 2027 (2027-07-01)
+    - Must NOT be active on notification date (2026-03-24)
+    - Must NOT be active day before commencement (2027-06-30)
+    - Must BE active on commencement date (2027-07-01)
+    - Must BE active after commencement date (2027-08-01)
+    """
+    # Scenario A: Notification date (2026-03-24) -> 2026 amendment NOT active
+    app_notif = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date='2026-03-24',
+    )
+    ids_notif = {r['rule_id'] for r in app_notif}
+    vers_notif = {r.get('rule_version') for r in app_notif}
+    assert 'PC-FOOD-003-AMEND2026' not in ids_notif, "Must not apply on publication/notification date (2026-03-24)"
+    assert 'FSSAI_LD_AMEND_2026' not in vers_notif
+    assert 'PC-FOOD-003' in ids_notif, "Baseline Regulation 5(3) must remain active"
+
+    # Scenario B: Day before commencement (2027-06-30) -> 2026 amendment NOT active
+    app_eve = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date='2027-06-30',
+    )
+    ids_eve = {r['rule_id'] for r in app_eve}
+    vers_eve = {r.get('rule_version') for r in app_eve}
+    assert 'PC-FOOD-003-AMEND2026' not in ids_eve, "Must not apply before commencement date (2027-06-30)"
+    assert 'FSSAI_LD_AMEND_2026' not in vers_eve
+    assert 'PC-FOOD-003' in ids_eve, "Baseline Regulation 5(3) must remain active up to 2027-06-30"
+
+    # Scenario C: Commencement date (2027-07-01) -> 2026 amendment active
+    app_commence = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date='2027-07-01',
+    )
+    ids_commence = {r['rule_id'] for r in app_commence}
+    vers_commence = {r.get('rule_version') for r in app_commence}
+    assert 'PC-FOOD-003-AMEND2026' in ids_commence, "Must become active on commencement date (2027-07-01)"
+    assert 'FSSAI_LD_AMEND_2026' in vers_commence
+    assert 'PC-FOOD-003' not in ids_commence, "Baseline version must be excluded once amendment commences"
+
+    # Scenario D: After commencement (2027-08-01) -> 2026 amendment active
+    app_after = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date='2027-08-01',
+    )
+    ids_after = {r['rule_id'] for r in app_after}
+    vers_after = {r.get('rule_version') for r in app_after}
+    assert 'PC-FOOD-003-AMEND2026' in ids_after, "Must remain active after commencement date (2027-08-01)"
+    assert 'FSSAI_LD_AMEND_2026' in vers_after
+    assert 'PC-FOOD-003' not in ids_after
+
+
+# ==============================================================================
+# 20. Historical snapshot enforcement (Inspection A vs Inspection B)
+# ==============================================================================
+def test_20_historical_snapshot_enforcement(rules_list):
+    """
+    Demonstrate:
+    - Inspection A conducted before 2027-07-01 (e.g. 2026-09-09) -> pre-amendment snapshot
+    - Inspection B conducted on/after 2027-07-01 (e.g. 2027-07-01) -> post-amendment snapshot
+    - Reopening Inspection A must NEVER silently switch it to the later amendment.
+    """
+    from app.rules.status_safety import derive_dynamic_regulatory_snapshot
+
+    # Inspection A before 2027-07-01 (e.g. 2026-09-09)
+    date_A = '2026-09-09'
+    rules_A = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date=date_A,
+    )
+    snapshot_A = derive_dynamic_regulatory_snapshot(rules_A, date_A)
+    assert 'FSSAI_LD_AMEND_2026' not in snapshot_A['snapshot_id']
+    assert any(r['rule_id'] == 'PC-FOOD-003' for r in rules_A)
+    assert not any(r['rule_id'] == 'PC-FOOD-003-AMEND2026' for r in rules_A)
+
+    # Inspection B on/after 2027-07-01 (e.g. 2027-07-01)
+    date_B = '2027-07-01'
+    rules_B = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date=date_B,
+    )
+    snapshot_B = derive_dynamic_regulatory_snapshot(rules_B, date_B)
+    assert 'FSSAI_LD_AMEND_2026' in snapshot_B['snapshot_id']
+    assert any(r['rule_id'] == 'PC-FOOD-003-AMEND2026' for r in rules_B)
+    assert not any(r['rule_id'] == 'PC-FOOD-003' for r in rules_B)
+
+    # Re-evaluating historical Inspection A against date_A:
+    rules_A_reopened = get_applicable_rules(
+        all_rules=rules_list,
+        category='FOOD',
+        package_type='RETAIL',
+        product_type='OTHER_FOOD',
+        inspection_date=date_A,
+    )
+    snapshot_A_reopened = derive_dynamic_regulatory_snapshot(rules_A_reopened, date_A)
+    assert snapshot_A_reopened['snapshot_id'] == snapshot_A['snapshot_id']
+    assert not any(r['rule_id'] == 'PC-FOOD-003-AMEND2026' for r in rules_A_reopened)
+    assert any(r['rule_id'] == 'PC-FOOD-003' for r in rules_A_reopened)
+
+
+# ==============================================================================
+# 21. Status Safety Guard (Mandatory metadata required for VERIFIED)
+# ==============================================================================
+def test_21_status_safety_metadata_enforcement():
+    """
+    Test that the status safety guard prevents VERIFIED status if required metadata is missing,
+    and properly downgrades to PENDING_REVIEW or SOURCE_IDENTIFIED.
+    """
+    from app.rules.status_safety import validate_and_enforce_verification_status
+
+    # Rule missing citation and source_url
+    incomplete_rule = {
+        'rule_id': 'TEST-001',
+        'parameter': 'CUSTOM_PARAM',
+        'verification_status': 'VERIFIED',
+        'authority': 'Testing Authority',
+    }
+    status = validate_and_enforce_verification_status(incomplete_rule)
+    assert status == 'PENDING_REVIEW', f"Expected PENDING_REVIEW for incomplete rule, got {status}"
+
+    # Internal inspection rule must enforce NON_STATUTORY
+    internal_rule = {
+        'rule_id': 'PC-ALL-001',
+        'parameter': 'PRODUCT_NAME',
+        'verification_status': 'VERIFIED',  # Operator incorrectly attempted to set VERIFIED
+        'source_authority': 'Department of Consumer Affairs',
+        'citation': 'Section 18',
+        'source_url': 'https://consumeraffairs.nic.in',
+        'effective_from': '2011-04-01',
+        'applicability': 'ALL',
+        'rule_version': 'V1',
+    }
+    status_internal = validate_and_enforce_verification_status(internal_rule)
+    assert status_internal == 'NON_STATUTORY', f"Internal field must be NON_STATUTORY, got {status_internal}"
+
+    # Conditional exemption rule must enforce APPLICABILITY_DEPENDENT
+    conditional_rule = {
+        'rule_id': 'PC-ALL-011',
+        'parameter': 'UNIT_SALE_PRICE',
+        'verification_status': 'VERIFIED',
+        'source_authority': 'Department of Consumer Affairs',
+        'citation': 'Rule 6(11)',
+        'source_url': 'https://consumeraffairs.nic.in',
+        'effective_from': '2024-01-01',
+        'applicability': 'RETAIL',
+        'rule_version': 'LMPC_2011_CURRENT_2024',
+        'condition': 'APPLICABLE',
+    }
+    status_cond = validate_and_enforce_verification_status(conditional_rule)
+    assert status_cond == 'APPLICABILITY_DEPENDENT', f"Conditional exemption rule must be APPLICABILITY_DEPENDENT, got {status_cond}"
+
+
+# ==============================================================================
+# 22. Physical measurement source differentiation (Act Sec 18 vs Rule 24)
+# ==============================================================================
+def test_22_physical_measurement_source_differentiation(rules_list):
+    """
+    Verify DECLARED_NET_QUANTITY (visual label screening) and ACTUAL_NET_CONTENT (physical weighing)
+    have separate, accurate statutory citations, and Rule 24 is never cited for physical weighing.
+    """
+    decl_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-002')
+    actual_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-012')
+
+    # Visual declared quantity
+    assert 'Rule 6(1)(c)' in decl_rule['rule_reference']
+    assert decl_rule['screening_scope'] is not None and ('Optical' in decl_rule['screening_scope'] or 'VISUAL' in decl_rule['screening_scope'])
+
+    # Physical weighing
+    assert 'Sec 18' in actual_rule['citation'] or 'Section 18' in actual_rule['citation']
+    assert any(s in actual_rule['citation'] for s in ('Sched III', 'Third Schedule', 'Sched II', 'Second Schedule'))
+    assert actual_rule['physical_scope'] is not None and any(w in actual_rule['physical_scope'].lower() for w in ('gravimetric', 'calibrated', 'scale', 'physical'))
+    assert 'Rule 24' not in actual_rule['citation']
+    assert 'Rule 24' not in actual_rule['rule_reference']
 

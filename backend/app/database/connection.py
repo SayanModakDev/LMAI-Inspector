@@ -76,6 +76,7 @@ def _add_missing_columns():
             "verification_status": "VARCHAR(50)",
             "version_date": "VARCHAR(20)",
             "effective_date": "VARCHAR(20)",
+            "publication_date": "VARCHAR(20)",
             "applicability": "VARCHAR(255)",
             "screening_scope": "TEXT",
             "physical_scope": "TEXT",

@@ -508,6 +508,19 @@ const ResultHero = ({
           </div>
         )}
 
+        {/* Regulatory Snapshot */}
+        {inspection.regulatory_snapshot && (
+          <div className="summary-item" title={inspection.regulatory_snapshot_label || inspection.regulatory_snapshot}>
+            <Layers size={14} className="summary-icon text-indigo-600" />
+            <div className="summary-content">
+              <span className="summary-label">Regulatory Snapshot</span>
+              <span className="summary-val font-mono text-2xs truncate max-w-[180px]">
+                {inspection.regulatory_snapshot}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Package Images / Views */}
         {imageCount !== null && (
           <div className="summary-item">
