@@ -38,6 +38,16 @@ class ValidationState(str, Enum):
     REJECTED = "REJECTED"
 
 
+class EvidenceAvailabilityState(str, Enum):
+    """Specific evidence presence, association, and verification states."""
+    EVIDENCE_NOT_DETECTED = "EVIDENCE_NOT_DETECTED"
+    EVIDENCE_DETECTED_UNASSOCIATED = "EVIDENCE_DETECTED_UNASSOCIATED"
+    EVIDENCE_CONFLICTING = "EVIDENCE_CONFLICTING"
+    EVIDENCE_LOW_CONFIDENCE = "EVIDENCE_LOW_CONFIDENCE"
+    PHYSICAL_VERIFICATION_REQUIRED = "PHYSICAL_VERIFICATION_REQUIRED"
+    EVIDENCE_VERIFIED = "EVIDENCE_VERIFIED"
+
+
 class EvidenceMergeClassification(str, Enum):
     """Multi-image evidence merge classification types."""
     CONFIRMED_SAME = "CONFIRMED_SAME"
@@ -69,6 +79,7 @@ class EvidenceCandidate:
     candidate_field: Optional[str] = None
     relevance_score: float = 0.0
     validation_state: str = ValidationState.UNASSESSED.value
+    evidence_state: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -80,6 +91,8 @@ class EvidenceCandidate:
             d["anchor_relation"] = d["anchor_relation"].value
         if isinstance(d.get("validation_state"), Enum):
             d["validation_state"] = d["validation_state"].value
+        if isinstance(d.get("evidence_state"), Enum):
+            d["evidence_state"] = d["evidence_state"].value
         return d
 
     @classmethod
@@ -90,7 +103,7 @@ class EvidenceCandidate:
             "ocr_confidence", "bounding_box", "line_id", "region_id",
             "semantic_section", "anchor_label", "anchor_relation",
             "candidate_field", "relevance_score", "validation_state",
-            "metadata"
+            "evidence_state", "metadata"
         }
         filtered = {k: v for k, v in data.items() if k in known_fields}
         if "metadata" not in filtered:
