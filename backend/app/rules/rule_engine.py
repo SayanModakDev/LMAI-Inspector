@@ -265,6 +265,7 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
                 ))
             ),
             'severity': severity,
+            'evidence_state': val_result.evidence_state,
             'validation_result': val_result.to_dict(),
             'candidate_classification': (
                 evidence_data.get('candidate_classification') if evidence_data else None
@@ -274,6 +275,9 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
                 if evidence_data else None
             ),
         }
+
+        if val_result.evidence_state is not None and isinstance(evidence_data, dict):
+            evidence_data.setdefault('evidence_state', val_result.evidence_state)
 
         # Expose structured quantity/unit attributes directly on result if available
         if val_result.raw_value is not None:

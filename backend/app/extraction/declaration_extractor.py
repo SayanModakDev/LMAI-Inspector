@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.ontology import (
     CanonicalDeclarationField,
     QuantityType,
+    QuantityCandidateType,
     LEGAL_MASS_UNITS,
     LEGAL_VOLUME_UNITS,
     LEGAL_COUNT_UNITS,
@@ -23,6 +24,7 @@ from app.core.ontology import (
 from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token
 from app.extraction.evidence_model import (
     AnchorRelation,
+    EvidenceAvailabilityState,
     EvidenceCandidate,
     EvidenceMergeClassification,
     FIELD_SCOPING_REGISTRY,
@@ -132,8 +134,20 @@ COUNTRY_OF_ORIGIN_KEYWORDS = ['country of origin', 'made in', 'product of', 'man
 BEST_BEFORE_KEYWORDS = ['best before date', 'best before', 'best by date', 'best by']
 USE_BY_KEYWORDS = ['use before date', 'use by date', 'use-before', 'use before', 'use by', 'consume before', 'consume within', 'valid until', 'valid till']
 EXPIRY_KEYWORDS = ['expiry date', 'expiration date', 'exp date', 'exp. date', 'expiry', 'exp:', 'exp.', 'exp']
-MFG_DATE_KEYWORDS = ['date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date', 'mfg date', 'mfd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd']
-PACKING_DATE_KEYWORDS = ['date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date', 'pkg date', 'pkd date', 'packed on', 'pkd:', 'pkd.', 'pkd']
+MFG_DATE_KEYWORDS = [
+    'date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date',
+    'date of mfg', 'date of mfd', 'mfg date', 'mfd date', 'mfg dt', 'mfd dt', 'mfg dt.', 'mfd dt.',
+    'mfg. dt.', 'mfg. date', 'mfd. date', 'month/year of mfg', 'month & year of mfg',
+    'month & year of manufacture', 'month and year of manufacture', 'mfg month & year',
+    'month of mfg', 'mfg/pkd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd',
+]
+PACKING_DATE_KEYWORDS = [
+    'date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date',
+    'date of pkd', 'date of pkg', 'pkg date', 'pkd date', 'pkd dt', 'pkg dt', 'pkd dt.', 'pkg dt.',
+    'pkd. date', 'pkg. date', 'month/year of pkd', 'month & year of pkd', 'month & year of packing',
+    'month and year of packing', 'pkd month & year', 'month of pkd', 'month of packing',
+    'packed on', 'pkd:', 'pkd.', 'pkd', 'pkg',
+]
 MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
 
 # Semantic section classifications
@@ -238,12 +252,16 @@ SECTION_BOUNDARY_RE = re.compile(
     r')',
     re.IGNORECASE,
 )
+COMPANY_LEGAL_ENTITY_TYPES = (
+    r'Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b|LLP\b|Inc\b\.?|Corp\b\.?|Corporation\b|Co\b\.?'
+    r'|(?:Enterprises|Industries|Foods|Products|Agro|Mills|Laboratories)\b(?![^,\n]*(?:Pvt|Private|Ltd|Limited|LLP|Inc|Corp|Corporation|Co\b))'
+)
 VENDOR_LINE_RE = re.compile(
-    r'([A-Za-z][A-Za-z0-9&.\'\s-]{2,80}?(?:Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b))',
+    rf'([A-Za-z][A-Za-z0-9&.\'\s-]{{2,80}}?(?:{COMPANY_LEGAL_ENTITY_TYPES}))',
     re.IGNORECASE,
 )
 COMPANY_SUFFIX_RE = re.compile(
-    r'\b([A-Za-z][A-Za-z0-9&.\'\s-]{1,70}?\s+(?:Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b))(?:\s*[,;:]|\s*$|\s+(?=[A-Za-z0-9]))',
+    rf'\b([A-Za-z][A-Za-z0-9&.\'\s-]{{1,70}}?\s+(?:{COMPANY_LEGAL_ENTITY_TYPES}))(?:\s*[,;:]|\s*$|\s+(?=[A-Za-z0-9]))',
     re.IGNORECASE,
 )
 NON_COMPANY_LIMITED_WORDS = {'edition', 'offer', 'period', 'time', 'stock', 'validity', 'warranty', 'qty', 'quantity'}
@@ -299,6 +317,88 @@ VENDOR_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 ALL_DATE_LABELS = MFG_DATE_KEYWORDS + PACKING_DATE_KEYWORDS + BEST_BEFORE_KEYWORDS + USE_BY_KEYWORDS + EXPIRY_KEYWORDS
+
+
+def group_ocr_items_into_lines(ocr_items: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Group OCR items that share similar vertical baselines into coherent horizontal lines.
+    Sorts lines top-to-bottom, and tokens within lines left-to-right.
+    Preserves dense package panel layouts (e.g. back panel declarations).
+    """
+    if not ocr_items:
+        return []
+
+    parsed_items = []
+    unboxed_items = []
+
+    for item in ocr_items:
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        box = item.get("bbox")
+        coords = None
+        if box:
+            if isinstance(box, dict):
+                x = float(box.get("x", box.get("left", 0)))
+                y = float(box.get("y", box.get("top", 0)))
+                w = float(box.get("w", box.get("width", 0)))
+                h = float(box.get("h", box.get("height", 0)))
+                coords = (x, y, x + w, y + h, x + w / 2.0, y + h / 2.0, h)
+            elif isinstance(box, (list, tuple)) and len(box) >= 4:
+                x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+                h = abs(y2 - y1)
+                coords = (x1, y1, x2, y2, (x1 + x2) / 2.0, (y1 + y2) / 2.0, h)
+
+        if coords:
+            parsed_items.append((coords, text, item))
+        else:
+            unboxed_items.append(text)
+
+    if not parsed_items:
+        return unboxed_items
+
+    # Sort top-to-bottom by y_min
+    parsed_items.sort(key=lambda it: (it[0][1], it[0][0]))
+
+    # Cluster into lines based on vertical overlap
+    line_clusters: List[List[Tuple[Tuple, str, Dict[str, Any]]]] = []
+    for it in parsed_items:
+        it_ymin, it_ymax = it[0][1], it[0][3]
+        it_cy = it[0][5]
+        it_h = max(it[0][6], 5.0)
+
+        placed = False
+        for cluster in line_clusters:
+            clust_ymin = min(c[0][1] for c in cluster)
+            clust_ymax = max(c[0][3] for c in cluster)
+            clust_cy = sum(c[0][5] for c in cluster) / len(cluster)
+            clust_h = max(clust_ymax - clust_ymin, 5.0)
+
+            overlap = min(it_ymax, clust_ymax) - max(it_ymin, clust_ymin)
+            overlap_ratio = overlap / min(it_h, clust_h) if min(it_h, clust_h) > 0 else 0
+            center_dist = abs(it_cy - clust_cy)
+
+            if overlap_ratio >= 0.4 or center_dist <= 0.5 * min(it_h, clust_h):
+                cluster.append(it)
+                placed = True
+                break
+
+        if not placed:
+            line_clusters.append([it])
+
+    # Within each line cluster, sort left-to-right (by x1) and join text
+    result_lines = []
+    for cluster in line_clusters:
+        cluster.sort(key=lambda it: it[0][0])  # x1
+        line_str = " ".join(it[1] for it in cluster).strip()
+        if line_str:
+            result_lines.append(line_str)
+
+    # Append any unboxed items
+    for ub in unboxed_items:
+        if ub and ub not in result_lines:
+            result_lines.append(ub)
+
+    return result_lines
 
 
 def classify_line_section(line: str, current_section: Optional[str] = None) -> str:
@@ -486,12 +586,24 @@ def _line_has_other_date_label(line: str, keywords: List[str]) -> bool:
     return False
 
 
-def _extract_date_near_keyword(text: str, keywords: List[str]) -> Optional[str]:
+def _extract_date_near_keyword(
+    text: str,
+    keywords: List[str],
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
     """Bind a date only to its label line (or an immediately adjacent date-only line).
 
     Do not pick the nearest date in a large window. Ambiguous leftover dates stay unassigned.
     """
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    if lines is None:
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = grouped if grouped else raw_lines
+        else:
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+
     bound = []
     own_keywords_lower = [kw.lower().strip() for kw in keywords]
 
@@ -561,8 +673,31 @@ def _extract_date_near_keyword(text: str, keywords: List[str]) -> Optional[str]:
     for value in bound:
         if value not in unique:
             unique.append(value)
+
     if len(unique) == 1:
         return unique[0]
+    elif len(unique) > 1:
+        # Check if all unique date strings normalize to the same date components
+        parsed_dates = []
+        for val in unique:
+            is_val, norm_val, meta = parse_date_with_precision(val)
+            if is_val and meta:
+                parsed_dates.append((val, norm_val, meta.get("parsed_components", {})))
+
+        if parsed_dates and len(parsed_dates) == len(unique):
+            first_comps = parsed_dates[0][2]
+            all_agree = True
+            for _, _, comps in parsed_dates[1:]:
+                m1, y1 = first_comps.get("month"), first_comps.get("year")
+                m2, y2 = comps.get("month"), comps.get("year")
+                if (m1, y1) != (m2, y2):
+                    all_agree = False
+                    break
+            if all_agree:
+                # Prefer full date or longest valid date representation
+                best = max(parsed_dates, key=lambda x: (len(x[1] or ""), len(x[0])))
+                return best[0]
+
     return None
 
 
@@ -1044,6 +1179,13 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
 
     # 1. Price / MRP comparison
     if field_name == 'MRP':
+        num1 = cand1.get('numeric_value')
+        num2 = cand2.get('numeric_value')
+        if num1 is not None and num2 is not None:
+            try:
+                return abs(float(num1) - float(num2)) > 0.01
+            except (ValueError, TypeError):
+                pass
         p1 = _extract_price_number(s1)
         p2 = _extract_price_number(s2)
         if p1 is not None and p2 is not None:
@@ -1052,6 +1194,10 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
 
     # 2. Declared Net Quantity comparison
     if field_name == 'DECLARED_NET_QUANTITY':
+        # Ignore price or non-quantity candidate types from triggering net quantity conflicts
+        if cand1.get('candidate_type') in ('MRP_AMOUNT', 'UNKNOWN_NUMERIC') or cand2.get('candidate_type') in ('MRP_AMOUNT', 'UNKNOWN_NUMERIC'):
+            return False
+
         is_multi1 = bool(cand1.get('is_multipack'))
         is_multi2 = bool(cand2.get('is_multipack'))
 
@@ -1118,17 +1264,41 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
                 return False
             except (ValueError, TypeError):
                 pass
-        p1 = _extract_price_number(s1)
-        p2 = _extract_price_number(s2)
-        if p1 is not None and p2 is not None and abs(p1 - p2) > 0.001:
-            return True
-        return s1.lower() != s2.lower()
+
+        # Parse string expressions for structured units
+        q_exp1 = parse_quantity_expression(s1)
+        q_exp2 = parse_quantity_expression(s2)
+        if q_exp1 and q_exp2:
+            v_val1 = q_exp1.get('quantity') or q_exp1.get('unit_net_quantity')
+            v_val2 = q_exp2.get('quantity') or q_exp2.get('unit_net_quantity')
+            v_u1 = str(q_exp1.get('unit') or '').lower().strip()
+            v_u2 = str(q_exp2.get('unit') or '').lower().strip()
+            if v_val1 is not None and v_val2 is not None:
+                if abs(float(v_val1) - float(v_val2)) > 0.001:
+                    return True
+                if v_u1 and v_u2 and v_u1 != v_u2:
+                    return True
+                return False
+
+        c1 = re.sub(r'[^\w\s]', '', s1.lower()).strip()
+        c2 = re.sub(r'[^\w\s]', '', s2.lower()).strip()
+        return c1 != c2
 
     # 3. Dates comparison (month/year)
     if field_name in (
         'MONTH_YEAR_MANUFACTURE', 'MANUFACTURE_DATE', 'PACKING_DATE',
         'BEST_BEFORE_USE_BY', 'USE_BEFORE_DATE', 'EXPIRY_DATE'
     ):
+        norm1 = cand1.get('normalized_value') or cand1.get('normalized_date')
+        norm2 = cand2.get('normalized_value') or cand2.get('normalized_date')
+        if norm1 and norm2:
+            return norm1 != norm2
+
+        p1_valid, p1_norm, _ = parse_date_with_precision(s1)
+        p2_valid, p2_norm, _ = parse_date_with_precision(s2)
+        if p1_valid and p2_valid and p1_norm and p2_norm:
+            return p1_norm != p2_norm
+
         m1 = cand1.get('month') or cand1.get('extracted_month')
         y1 = cand1.get('year') or cand1.get('extracted_year')
         m2 = cand2.get('month') or cand2.get('extracted_month')
@@ -1395,7 +1565,29 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
         return True
 
     if field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
-        if sec in (SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS):
+        # Check explicit semantic candidate_type tag
+        cand_type = candidate.get('candidate_type')
+        if cand_type in ('MRP_AMOUNT', 'NUTRITIONAL_QUANTITY', 'SERVING_QUANTITY', 'DATE_NUMERIC', 'IDENTIFIER_NUMERIC', 'UNKNOWN_NUMERIC'):
+            return True
+
+        # Reject MRP / price context
+        if re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', context, re.IGNORECASE) or re.search(r'\b(?:rs\.?|inr|₹|mrp)\b', val, re.IGNORECASE):
+            return True
+
+        # Reject zero or negative quantities (e.g. '0 g', '0.0 g', '0')
+        z_match = re.search(r'([+-]?\d+(?:\.\d+)?)', val)
+        if z_match:
+            try:
+                if float(z_match.group(1)) <= 0:
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # Reject unanchored bare numbers lacking any statutory measurement unit
+        if re.fullmatch(r'[+-]?\d+(?:\.\d+)?', val) and not candidate.get('unit'):
+            return True
+
+        if sec in (SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_MRP):
             return True
         # Reject nutrition/serving-size quantities
         if NUTRITION_CONTEXT_RE.search(context) or SERVING_SIZE_RE.search(context) or NUTRITION_LINE_RE.search(context):
@@ -1473,6 +1665,24 @@ def _classify_multi_image_evidence(
     """
     distinct_values = [str(g[0].get('value')) for g in groups]
     highest_conf = max((float(c.get('confidence') or 0) for c in all_candidates), default=0.8)
+
+    # Check if all MRP candidate groups agree on the exact numeric price
+    if field_name == 'MRP':
+        prices = [_extract_price_number(str(g[0].get('value', ''))) for g in groups]
+        if all(p is not None for p in prices) and len(prices) >= 1:
+            if max(prices) - min(prices) <= 0.01:
+                all_in_groups = [c for g in groups for c in g]
+                best = max(all_in_groups, key=lambda c: float(c.get('confidence') or 0))
+                res = dict(best)
+                res['candidates'] = all_candidates
+                res['candidate_classification'] = 'CONFIRMED_SAME'
+                res['multi_image_agreement'] = 'CONFIRMED_SAME'
+                res['evidence_merge_type'] = 'CONFIRMED_SAME'
+                res['has_conflict'] = False
+                res['is_ambiguous'] = False
+                res['status'] = 'VALID'
+                res['evidence_state'] = 'EVIDENCE_VERIFIED'
+                return res
 
     # Check if all groups are OCR variations of the same value (fuzzy match)
     # Works for 2+ groups by checking all pairs
@@ -1614,12 +1824,18 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
         if len(relevant) == 1:
             result = dict(relevant[0])
             result['candidates'] = candidates
+            result['has_conflict'] = False
+            result['is_ambiguous'] = False
             if len(candidates) > 1 and len(noise) == 0:
                 result['candidate_classification'] = 'CONFIRMED_SAME'
                 result['evidence_merge_type'] = 'CONFIRMED_SAME'
             else:
                 result.setdefault('candidate_classification', 'SINGLE_PANEL')
                 result.setdefault('evidence_merge_type', 'SINGLE_PANEL')
+            if name == 'MRP' and result.get('currency_status') == 'VERIFIED':
+                result['status'] = 'PASS'
+                result['reason'] = f"Detected valid MRP declaration: {result.get('value')}"
+                result['evidence_state'] = 'EVIDENCE_VERIFIED'
             if noise:
                 result['filtered_noise'] = noise
             merged[name] = result
@@ -1643,7 +1859,16 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
             agreed = dict(best)
             agreed['candidates'] = candidates
             agreed['candidate_classification'] = 'CONFIRMED_SAME'
+            agreed['multi_image_agreement'] = 'CONFIRMED_SAME'
             agreed['evidence_merge_type'] = 'CONFIRMED_SAME'
+            agreed['has_conflict'] = False
+            agreed['is_ambiguous'] = False
+            agreed.setdefault('status', 'VALID')
+            agreed.setdefault('evidence_state', 'EVIDENCE_VERIFIED')
+            if name == 'MRP' and agreed.get('currency_status') == 'VERIFIED':
+                agreed['status'] = 'PASS'
+                agreed['reason'] = f"Detected valid MRP declaration: {agreed.get('value')}"
+                agreed['evidence_state'] = 'EVIDENCE_VERIFIED'
             if noise:
                 agreed['filtered_noise'] = noise
             merged[name] = agreed
@@ -1715,6 +1940,8 @@ def _clean_address_text(raw_addr: str) -> str:
             break
         if re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', part_clean, re.I):
             break
+        if re.search(r'\b(?:mfg(?:\s*date|\s*dt|\.)?|mfd(?:\s*date|\s*dt|\.)?|pkd(?:\s*date|\s*dt|\.)?|pkg(?:\s*date|\s*dt|\.)?|best\s*before|use\s*by|exp(?:\.|\s*date)?)\b', part_clean, re.I):
+            break
 
         # Check for inline section cut inside the part
         cut_part = _cut_before_next_section(part_clean, 'manufacturer')
@@ -1782,6 +2009,10 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
                 break
             if NET_QTY_POSITIVE_CONTEXT_RE.search(line_clean) or re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', line_clean, re.I):
                 break
+            if re.search(r'\b(?:mfg(?:\s*date|\s*dt|\.)?|mfd(?:\s*date|\s*dt|\.)?|pkd(?:\s*date|\s*dt|\.)?|pkg(?:\s*date|\s*dt|\.)?|best\s*before|use\s*by|exp(?:\.|\s*date)?)\b', line_clean, re.I):
+                break
+            if re.search(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?)\b', line_clean, re.I):
+                break
         earliest_other_pos = len(line_clean)
         for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
             if sec_name == current_section:
@@ -1801,8 +2032,16 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
     return collected
 
 
-def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+def _extract_manufacturer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """Extract manufacturer name and address cleanly without section contamination."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
     # Step 1: Look for explicit manufacturer keyword lines
     for idx, line in enumerate(lines):
         line_lower = line.lower()
@@ -1876,8 +2115,16 @@ def _extract_manufacturer_and_address(lines: List[str]) -> Tuple[Optional[str], 
     return None, None
 
 
-def _extract_marketer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+def _extract_marketer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """Extract marketer name and address cleanly when marketed by / distributed by is declared."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
     for idx, line in enumerate(lines):
         line_lower = line.lower()
         matched_kw = None
@@ -1965,31 +2212,41 @@ def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
 
 
 MRP_EXPLICIT_RUPEE_RE = re.compile(
-    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*(?:₹)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*(?:₹)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
     re.IGNORECASE,
 )
 MRP_RS_INR_RE = re.compile(
-    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*(?:rs\.?|inr)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*(?:rs\.?|inr)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
     re.IGNORECASE,
 )
 MRP_CORRUPTED_RE = re.compile(
-    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?\s*[:.\s-]*\s*([■\?*#§¤])\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*([■\?*#§¤])\s*([+-]?\d+(?:[.,]\d{1,2})?)',
     re.IGNORECASE,
 )
 MRP_PREFIX_ONLY_RE = re.compile(
-    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)(?:\s*\([^)]*\))?\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
     re.IGNORECASE,
 )
 
 
-def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+def _extract_mrp_structured(
+    normalized: str,
+    raw_text: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
     """Extract structured Maximum Retail Price declaration, identifying currency symbols,
     corrupted symbols, and inference status without fabricating currency."""
     if not normalized and not raw_text:
         return None
 
     if lines is None:
-        lines = [l.strip() for l in normalized.split('\n') if l.strip()]
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in normalized.split('\n') if l.strip()]
+            lines = grouped + [l for l in raw_lines if l not in grouped]
+        else:
+            lines = [l.strip() for l in normalized.split('\n') if l.strip()]
 
     # First pass: line-by-line inspection
     for line in lines:
@@ -2019,6 +2276,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
                 'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
                 'confidence': 0.6,
                 'source': 'OCR',
+                'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
             }
 
         # 2. Explicit Indian Rupee symbol (e.g. MRP ₹120, ₹120)
@@ -2044,6 +2302,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
                     'reason': f"Detected valid MRP declaration: {display_val}",
                     'confidence': 0.9,
                     'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
                 }
 
         # 3. Explicit Rs. or INR (e.g. MRP Rs. 120, Rs 120, INR 120)
@@ -2069,6 +2328,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
                     'reason': f"Detected valid MRP declaration: {display_val}",
                     'confidence': 0.88,
                     'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
                 }
 
         # 4. MRP prefix only, missing currency symbol (e.g. MRP 120, Maximum Retail Price: 120)
@@ -2094,6 +2354,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
                     'reason': f"Currency symbol missing; inferred from MRP prefix but requires review: '{raw_span}'.",
                     'confidence': 0.7,
                     'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
                 }
 
     # Second pass: check normalized text as a whole
@@ -2118,6 +2379,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
             'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
             'confidence': 0.6,
             'source': 'OCR',
+            'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
         }
 
     legacy_mrp = _search_patterns(normalized, MRP_PATTERNS)
@@ -2140,6 +2402,7 @@ def _extract_mrp_structured(normalized: str, raw_text: str, lines: Optional[List
                 'reason': f"Detected valid MRP declaration: ₹{clean_num}",
                 'confidence': 0.85,
                 'source': 'OCR',
+                'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
             }
 
     return None
@@ -2306,7 +2569,11 @@ def parse_quantity_expression(expr: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+def _extract_net_quantity_field(
+    text: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
     """Extract structured declared net quantity with semantic section scoping.
     Distinguishes declared package quantity from nutritional table values, serving sizes,
     and unrelated section numbers across mass, volume, and count units.
@@ -2315,7 +2582,12 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         return None
 
     if lines is None:
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = grouped + [l for l in raw_lines if l not in grouped]
+        else:
+            lines = [l.strip() for l in text.split('\n') if l.strip()]
 
     current_sec = SECTION_OTHER
     annotated_lines = []
@@ -2337,8 +2609,49 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
         if label_match:
             raw_span = label_match.group(0).strip()
             after_label = label_match.group(1).strip()
+
+            # Reject price tokens immediately if after_label contains price/MRP markers
+            if re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', after_label, re.IGNORECASE):
+                ignored_cand = build_quantity_candidate(
+                    qty_val=_extract_price_number(after_label),
+                    raw_unit=None,
+                    raw_span=after_label,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+                continue
+
             parsed_q = parse_quantity_expression(after_label)
             if parsed_q:
+                # Check for zero or negative quantity
+                chk_qty = parsed_q.get("unit_net_quantity") if parsed_q["is_multipack"] else parsed_q.get("quantity")
+                try:
+                    if chk_qty is not None and float(chk_qty) <= 0:
+                        ignored_cand = build_quantity_candidate(
+                            qty_val=chk_qty,
+                            raw_unit=parsed_q["raw_unit"],
+                            raw_span=raw_span,
+                            confidence=0.5,
+                            semantic_section=SECTION_DECLARED_QUANTITY,
+                            relevance="rejected_as_irrelevant",
+                            relevance_score=0.0,
+                            source_context=line_clean,
+                            source="OCR",
+                            candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                            rejection_reason="Package net quantity cannot be zero; belongs to nutritional/analytical content",
+                        )
+                        ignored_candidates.append(ignored_cand)
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
                 if parsed_q["is_multipack"]:
                     cand = build_quantity_candidate(
                         qty_val=parsed_q["unit_net_quantity"],
@@ -2355,6 +2668,7 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                         unit_net_quantity=parsed_q["unit_net_quantity"],
                         declared_expression=parsed_q["declared_expression"],
                         derived_total_quantity=parsed_q["derived_total_quantity"],
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                     )
                 else:
                     cand = build_quantity_candidate(
@@ -2368,7 +2682,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                         source_context=line_clean,
                         source="OCR",
                         is_multipack=False,
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                     )
+                cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
                 valid_candidates.append(cand)
                 continue
             else:
@@ -2382,13 +2698,15 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                         qty_val=qty_val,
                         raw_unit=raw_unit,
                         raw_span=raw_span,
-                        confidence=0.85 if (qty_val and raw_unit) else 0.8,
+                        confidence=0.88 if raw_unit else 0.70,
                         semantic_section=SECTION_DECLARED_QUANTITY,
                         relevance="high",
-                        relevance_score=0.90 if (qty_val and raw_unit) else 0.85,
+                        relevance_score=0.92 if raw_unit else 0.80,
                         source_context=line_clean,
                         source="OCR",
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                     )
+                    cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
                     valid_candidates.append(cand)
                     continue
 
@@ -2403,11 +2721,16 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
             sec == SECTION_SERVING_SIZE
             or bool(SERVING_SIZE_RE.search(line_clean))
         )
+        is_mrp = (
+            sec == SECTION_MRP
+            or bool(re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|rs\.?|₹|inr|price)\b', line_clean, re.I))
+        )
         is_other_section = (
             sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS, SECTION_FSSAI, SECTION_BATCH)
             or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
             or bool(STORAGE_STOP_RE.search(line_clean))
             or bool(MARKETING_STOP_RE.search(line_clean))
+            or is_mrp
         )
 
         # 3. Check for standalone multipack expression on this line
@@ -2431,8 +2754,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     unit_net_quantity=multi_match["unit_net_quantity"],
                     declared_expression=multi_match["declared_expression"],
                     derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                    rejection_reason="Value belongs to nutritional table, not declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = "Value belongs to nutritional table, not declared net quantity"
                 ignored_candidates.append(ignored_cand)
             elif is_serving:
                 ignored_cand = build_quantity_candidate(
@@ -2450,8 +2774,29 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     unit_net_quantity=multi_match["unit_net_quantity"],
                     declared_expression=multi_match["declared_expression"],
                     derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.SERVING_QUANTITY.value,
+                    rejection_reason="Value is serving size, not package declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = "Value is serving size, not package declared net quantity"
+                ignored_candidates.append(ignored_cand)
+            elif is_mrp:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
                 ignored_candidates.append(ignored_cand)
             elif is_other_section:
                 ignored_cand = build_quantity_candidate(
@@ -2469,8 +2814,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     unit_net_quantity=multi_match["unit_net_quantity"],
                     declared_expression=multi_match["declared_expression"],
                     derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.UNKNOWN_NUMERIC.value,
+                    rejection_reason=f"Value belongs to {sec} section, not declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = f"Value belongs to {sec} section, not declared net quantity"
                 ignored_candidates.append(ignored_cand)
             else:
                 cand = build_quantity_candidate(
@@ -2488,7 +2834,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     unit_net_quantity=multi_match["unit_net_quantity"],
                     declared_expression=multi_match["declared_expression"],
                     derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                 )
+                cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
                 valid_candidates.append(cand)
             continue
 
@@ -2498,7 +2846,43 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
             raw_unit = sm.group(2)
             raw_span = sm.group(0).strip()
 
-            if is_nutrition:
+            # Net quantity cannot be zero or negative
+            try:
+                if float(qty_val) <= 0:
+                    ignored_cand = build_quantity_candidate(
+                        qty_val=qty_val,
+                        raw_unit=raw_unit,
+                        raw_span=raw_span,
+                        confidence=0.5,
+                        semantic_section=sec,
+                        relevance="rejected_as_irrelevant",
+                        relevance_score=0.0,
+                        source_context=line_clean,
+                        source="OCR",
+                        candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                        rejection_reason="Package net quantity cannot be zero; belongs to nutritional/analytical content",
+                    )
+                    ignored_candidates.append(ignored_cand)
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+            if is_mrp:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_nutrition:
                 ignored_cand = build_quantity_candidate(
                     qty_val=qty_val,
                     raw_unit=raw_unit,
@@ -2509,8 +2893,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     relevance_score=0.0,
                     source_context=line_clean,
                     source="OCR",
+                    candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                    rejection_reason="Value belongs to nutritional table, not declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = "Value belongs to nutritional table, not declared net quantity"
                 ignored_candidates.append(ignored_cand)
             elif is_serving:
                 ignored_cand = build_quantity_candidate(
@@ -2523,8 +2908,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     relevance_score=0.0,
                     source_context=line_clean,
                     source="OCR",
+                    candidate_type=QuantityCandidateType.SERVING_QUANTITY.value,
+                    rejection_reason="Value is serving size, not package declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = "Value is serving size, not package declared net quantity"
                 ignored_candidates.append(ignored_cand)
             elif is_other_section:
                 ignored_cand = build_quantity_candidate(
@@ -2537,8 +2923,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     relevance_score=0.0,
                     source_context=line_clean,
                     source="OCR",
+                    candidate_type=QuantityCandidateType.UNKNOWN_NUMERIC.value,
+                    rejection_reason=f"Value belongs to {sec} section, not declared net quantity",
                 )
-                ignored_cand['rejection_reason'] = f"Value belongs to {sec} section, not declared net quantity"
                 ignored_candidates.append(ignored_cand)
             else:
                 fallback_cand = build_quantity_candidate(
@@ -2551,7 +2938,9 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
                     relevance_score=0.6,
                     source_context=line_clean,
                     source="OCR",
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                 )
+                fallback_cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
                 fallback_candidates.append(fallback_cand)
 
     # If valid positive-context candidates exist, pick the best one
@@ -2561,6 +2950,8 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
             reverse=True,
         )
         winner = dict(valid_candidates[0])
+        winner['candidate_type'] = QuantityCandidateType.PACKAGE_QUANTITY.value
+        winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
         all_ignored = [c for c in valid_candidates[1:]] + ignored_candidates + fallback_candidates
         if all_ignored:
             winner['ignored_candidates'] = all_ignored
@@ -2571,73 +2962,106 @@ def _extract_net_quantity_field(text: str, lines: Optional[List[str]] = None) ->
     if label_match_norm:
         raw_span = label_match_norm.group(0).strip()
         after_label = label_match_norm.group(1).strip()
-        parsed_q = parse_quantity_expression(after_label)
-        if parsed_q:
-            if parsed_q["is_multipack"]:
+
+        if not re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', after_label, re.IGNORECASE):
+            parsed_q = parse_quantity_expression(after_label)
+            if parsed_q:
+                chk_qty = parsed_q.get("unit_net_quantity") if parsed_q["is_multipack"] else parsed_q.get("quantity")
+                try:
+                    if chk_qty is not None and float(chk_qty) <= 0:
+                        parsed_q = None
+                except (ValueError, TypeError):
+                    pass
+
+            if parsed_q:
+                if parsed_q["is_multipack"]:
+                    winner = build_quantity_candidate(
+                        qty_val=parsed_q["unit_net_quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.90,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.95,
+                        source_context=raw_span,
+                        source="OCR",
+                        is_multipack=True,
+                        pack_count=parsed_q["pack_count"],
+                        unit_net_quantity=parsed_q["unit_net_quantity"],
+                        declared_expression=parsed_q["declared_expression"],
+                        derived_total_quantity=parsed_q["derived_total_quantity"],
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                else:
+                    winner = build_quantity_candidate(
+                        qty_val=parsed_q["quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.85,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.90,
+                        source_context=raw_span,
+                        source="OCR",
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                if ignored_candidates:
+                    winner['ignored_candidates'] = ignored_candidates
+                return winner
+
+            num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+            unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
+            qty_val = num_match.group(1) if num_match else None
+            raw_unit = unit_match.group(1) if unit_match else None
+
+            if qty_val is not None or raw_unit is not None:
                 winner = build_quantity_candidate(
-                    qty_val=parsed_q["unit_net_quantity"],
-                    raw_unit=parsed_q["raw_unit"],
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
                     raw_span=raw_span,
-                    confidence=0.90,
+                    confidence=0.85 if raw_unit else 0.70,
                     semantic_section=SECTION_DECLARED_QUANTITY,
                     relevance="high",
-                    relevance_score=0.95,
+                    relevance_score=0.9 if raw_unit else 0.80,
                     source_context=raw_span,
                     source="OCR",
-                    is_multipack=True,
-                    pack_count=parsed_q["pack_count"],
-                    unit_net_quantity=parsed_q["unit_net_quantity"],
-                    declared_expression=parsed_q["declared_expression"],
-                    derived_total_quantity=parsed_q["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
                 )
-            else:
-                winner = build_quantity_candidate(
-                    qty_val=parsed_q["quantity"],
-                    raw_unit=parsed_q["raw_unit"],
-                    raw_span=raw_span,
-                    confidence=0.85,
-                    semantic_section=SECTION_DECLARED_QUANTITY,
-                    relevance="high",
-                    relevance_score=0.90,
-                    source_context=raw_span,
-                    source="OCR",
-                )
+                winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                if ignored_candidates:
+                    winner['ignored_candidates'] = ignored_candidates
+                return winner
+
+    # If standalone fallback candidates exist and NO nutrition context was found on package
+    if fallback_candidates and not any(c.get('semantic_section') == SECTION_NUTRITION for c in ignored_candidates):
+        clean_fallbacks = [
+            c for c in fallback_candidates
+            if c.get('quantity_value') is not None
+            and float(c.get('quantity_value') or 0) > 0
+            and c.get('candidate_type') == QuantityCandidateType.PACKAGE_QUANTITY.value
+        ]
+        if clean_fallbacks:
+            winner = dict(clean_fallbacks[0])
+            winner['candidate_type'] = QuantityCandidateType.PACKAGE_QUANTITY.value
+            winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
             if ignored_candidates:
                 winner['ignored_candidates'] = ignored_candidates
             return winner
 
-        num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
-        unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
-        qty_val = num_match.group(1) if num_match else None
-        raw_unit = unit_match.group(1) if unit_match else None
-
-        winner = build_quantity_candidate(
-            qty_val=qty_val,
-            raw_unit=raw_unit,
-            raw_span=raw_span,
-            confidence=0.85,
-            semantic_section=SECTION_DECLARED_QUANTITY,
-            relevance="high",
-            relevance_score=0.9,
-            source_context=raw_span,
-            source="OCR",
-        )
-        if ignored_candidates:
-            winner['ignored_candidates'] = ignored_candidates
-        return winner
-
-    # If standalone fallback candidates exist and NO nutrition context was found on package
-    if fallback_candidates and not any(c.get('semantic_section') == SECTION_NUTRITION for c in ignored_candidates):
-        winner = dict(fallback_candidates[0])
-        if ignored_candidates:
-            winner['ignored_candidates'] = ignored_candidates
-        return winner
-
     return None
 
 
-def _extract_packer_and_address(lines: List[str]) -> Tuple[Optional[str], Optional[str]]:
+def _extract_packer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """Extract packer name and address when packed by/pkd by is declared."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
     for idx, line in enumerate(lines):
         line_lower = line.lower()
         matched_kw = None
@@ -2778,8 +3202,11 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
 
 
 def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None, category: Optional[str] = None) -> Dict[str, Any]:
-    if not raw_text:
+    if not raw_text and not ocr_items:
         return {}
+    if not raw_text and ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        raw_text = "\n".join(grouped)
 
     # Stage 2: OCR Cleaning layer
     cleaned_text, cleaned_ocr_items, removed_artifacts = clean_ocr_evidence(raw_text, ocr_items)
@@ -2788,9 +3215,15 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
 
     normalized = _normalize_text(effective_text)
     lines = [line.strip() for line in normalized.split('\n') if line.strip()]
+    if effective_items:
+        grouped_lines = group_ocr_items_into_lines(effective_items)
+        if grouped_lines:
+            existing_set = {l.strip().lower() for l in grouped_lines}
+            extra_lines = [l for l in lines if l.strip().lower() not in existing_set]
+            lines = grouped_lines + extra_lines
     fields: Dict[str, Any] = {}
 
-    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, ocr_items)
+    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, effective_items)
     if p_cand:
         fields['PRODUCT_NAME'] = build_product_name_candidate(
             value=p_cand[:200],
@@ -2926,9 +3359,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if qty_field:
         fields['DECLARED_NET_QUANTITY'] = qty_field
 
-    mfg_name, mfg_addr = _extract_manufacturer_and_address(lines)
-    mkt_name, mkt_addr = _extract_marketer_and_address(lines)
-    packer_name, packer_addr = _extract_packer_and_address(lines)
+    mfg_name, mfg_addr = _extract_manufacturer_and_address(lines, ocr_items=effective_items)
+    mkt_name, mkt_addr = _extract_marketer_and_address(lines, ocr_items=effective_items)
+    packer_name, packer_addr = _extract_packer_and_address(lines, ocr_items=effective_items)
 
     if mfg_name:
         fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MANUFACTURER'}
@@ -3022,7 +3455,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 fields['COUNTRY_OF_ORIGIN'] = {'value': candidate[:100], 'confidence': 0.7, 'source': 'OCR'}
             break
 
-    mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS)
+    mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS, lines=lines, ocr_items=effective_items)
     if mfg_date:
         is_valid, norm_date, date_meta = parse_date_with_precision(mfg_date)
         if is_valid and date_meta:
@@ -3061,7 +3494,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 'source': 'OCR',
             }
 
-    packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS)
+    packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS, lines=lines, ocr_items=effective_items)
     if packing_date:
         is_valid, norm_date, date_meta = parse_date_with_precision(packing_date)
         if is_valid and date_meta:
@@ -3088,7 +3521,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 'source': 'OCR',
             }
 
-    best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS)
+    best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS, lines=lines, ocr_items=effective_items)
     if best_before:
         fields['BEST_BEFORE_USE_BY'] = {
             'value': best_before,
@@ -3123,7 +3556,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                     }
                     break
 
-    use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS)
+    use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS, lines=lines, ocr_items=effective_items)
     if use_by:
         fields['USE_BEFORE_DATE'] = {
             'value': use_by,
@@ -3158,7 +3591,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                     }
                     break
 
-    expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS)
+    expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS, lines=lines, ocr_items=effective_items)
     if expiry_date:
         fields['EXPIRY_DATE'] = {
             'value': expiry_date,
@@ -3205,7 +3638,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if cc_field:
         fields['CONSUMER_CARE'] = cc_field
 
-    batch_field = _extract_batch_number(lines, normalized, ocr_items)
+    batch_field = _extract_batch_number(lines, normalized, effective_items)
     if batch_field:
         fields['BATCH_NUMBER'] = batch_field
 
@@ -3221,6 +3654,16 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 field_data.setdefault('source_image_index', matching_item.get('image_index'))
                 field_data.setdefault('bbox', matching_item.get('bbox'))
                 field_data['confidence'] = min(float(field_data.get('confidence') or 0), float(matching_item.get('confidence') or 0))
+
+        if not field_data.get('evidence_state'):
+            if field_data.get('status') == 'AMBIGUOUS' or field_data.get('is_ambiguous'):
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value
+            elif float(field_data.get('confidence') or 0.8) < 0.5:
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value
+            elif field_data.get('value'):
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+            else:
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value
 
         # Attach canonical EvidenceCandidate schema
         if 'evidence_candidate' not in field_data:
@@ -3238,6 +3681,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 candidate_field=f_name,
                 relevance_score=float(field_data.get('relevance_score') or 0.85),
                 validation_state=ValidationState.UNASSESSED.value,
+                evidence_state=field_data.get('evidence_state'),
             )
             field_data['evidence_candidate'] = ev_candidate.to_dict()
 
@@ -3254,6 +3698,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 relevance_score=float(field_data.get('relevance_score') or 0.85),
                 confidence=float(field_data.get('confidence') or 0.8),
                 validation_state=field_data.get('status', ValidationState.UNASSESSED.value),
+                evidence_state=field_data.get('evidence_state'),
                 rejection_reason=field_data.get('rejection_reason'),
                 provenance={
                     'what': field_data.get('value'),

@@ -104,6 +104,19 @@ class QuantityType(str, Enum):
     LENGTH_AREA = "LENGTH_AREA"
 
 
+class QuantityCandidateType(str, Enum):
+    """Semantic classification types for numeric and quantity tokens."""
+    PACKAGE_QUANTITY = "PACKAGE_QUANTITY"
+    PACK_COUNT = "PACK_COUNT"
+    UNIT_QUANTITY = "UNIT_QUANTITY"
+    NUTRITIONAL_QUANTITY = "NUTRITIONAL_QUANTITY"
+    SERVING_QUANTITY = "SERVING_QUANTITY"
+    MRP_AMOUNT = "MRP_AMOUNT"
+    DATE_NUMERIC = "DATE_NUMERIC"
+    IDENTIFIER_NUMERIC = "IDENTIFIER_NUMERIC"
+    UNKNOWN_NUMERIC = "UNKNOWN_NUMERIC"
+
+
 # Standard Legal Metrology units mapping and normalizations
 LEGAL_MASS_UNITS: Dict[str, str] = {
     'g': 'g', 'gm': 'g', 'gms': 'g', 'gram': 'g', 'grams': 'g',
@@ -129,29 +142,33 @@ LEGAL_COUNT_UNITS: Dict[str, str] = {
 }
 
 LEGAL_LENGTH_AREA_UNITS: Dict[str, str] = {
-    'm': 'm', 'metre': 'm', 'metres': 'm', 'meter': 'm', 'meters': 'm',
-    'cm': 'cm', 'centimetre': 'cm', 'centimetres': 'cm', 'centimeter': 'cm', 'centimeters': 'cm',
-    'mm': 'mm', 'millimetre': 'mm', 'millimetres': 'mm', 'millimeter': 'mm', 'millimeters': 'mm',
-    'sq m': 'sq m', 'sq. m': 'sq m', 'sq cm': 'sq cm', 'sq. cm': 'sq cm',
+    'm': 'm', 'meter': 'm', 'meters': 'm', 'metre': 'm', 'metres': 'm',
+    'cm': 'cm', 'centimeter': 'cm', 'centimeters': 'cm',
+    'mm': 'mm', 'millimeter': 'mm', 'millimeters': 'mm',
+    'sq m': 'sq m', 'sq cm': 'sq cm', 'sq mm': 'sq mm',
 }
 
-UNIT_TO_QUANTITY_TYPE: Dict[str, QuantityType] = {}
-for u in LEGAL_MASS_UNITS:
-    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.MASS
-for u in LEGAL_VOLUME_UNITS:
-    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.VOLUME
-for u in LEGAL_COUNT_UNITS:
-    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.COUNT
-for u in LEGAL_LENGTH_AREA_UNITS:
-    UNIT_TO_QUANTITY_TYPE[u.lower()] = QuantityType.LENGTH_AREA
+ALL_LEGAL_UNITS: Dict[str, str] = {
+    **LEGAL_MASS_UNITS,
+    **LEGAL_VOLUME_UNITS,
+    **LEGAL_COUNT_UNITS,
+    **LEGAL_LENGTH_AREA_UNITS,
+}
 
 
-def infer_quantity_type(unit_str: Optional[str]) -> QuantityType:
-    """Infer physical QuantityType from unit string, defaulting to MASS if unrecognized."""
+def infer_quantity_type(unit_str: str) -> Optional[QuantityType]:
     if not unit_str:
+        return None
+    raw_clean = unit_str.strip().lower()
+    if raw_clean in LEGAL_MASS_UNITS:
         return QuantityType.MASS
-    norm_u = unit_str.strip().lower()
-    return UNIT_TO_QUANTITY_TYPE.get(norm_u, QuantityType.MASS)
+    if raw_clean in LEGAL_VOLUME_UNITS:
+        return QuantityType.VOLUME
+    if raw_clean in LEGAL_COUNT_UNITS:
+        return QuantityType.COUNT
+    if raw_clean in LEGAL_LENGTH_AREA_UNITS:
+        return QuantityType.LENGTH_AREA
+    return None
 
 
 def normalize_unit(unit_str: Optional[str]) -> Tuple[Optional[str], Optional[QuantityType]]:
@@ -187,6 +204,14 @@ def build_quantity_candidate(
     derived_total_quantity: Optional[Union[int, float]] = None,
     packaging_level: Optional[str] = None,
     candidates: Optional[List[Dict[str, Any]]] = None,
+    candidate_type: Optional[str] = None,
+    source_panel: Optional[str] = None,
+    bbox: Optional[Any] = None,
+    ocr_confidence: Optional[float] = None,
+    semantic_anchor: Optional[str] = None,
+    association_score: Optional[float] = None,
+    rejection_reason: Optional[str] = None,
+    normalized_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Construct a canonical quantity candidate dictionary preserving full backwards compatibility
@@ -270,11 +295,24 @@ def build_quantity_candidate(
     else:
         display_val = raw_span
 
+    # Determine default candidate_type if not explicitly passed
+    resolved_candidate_type = candidate_type
+    if not resolved_candidate_type:
+        if is_multipack and packaging_level == "PACK_COUNT":
+            resolved_candidate_type = QuantityCandidateType.PACK_COUNT.value
+        elif is_multipack and not derived_total_quantity:
+            resolved_candidate_type = QuantityCandidateType.UNIT_QUANTITY.value
+        elif quantity_present and (norm_unit or is_multipack):
+            resolved_candidate_type = QuantityCandidateType.PACKAGE_QUANTITY.value
+        else:
+            resolved_candidate_type = QuantityCandidateType.UNKNOWN_NUMERIC.value
+
     result: Dict[str, Any] = {
         # Canonical & display values (preserves declared expression for multipacks and display values for single units)
         "value": display_val,
         "raw_value": raw_span,
         "raw_text": raw_span,
+        "normalized_text": normalized_text if normalized_text is not None else (str(display_val) if display_val else None),
 
         # Typed quantity model
         "numeric_value": num_val,
@@ -283,6 +321,16 @@ def build_quantity_candidate(
         "normalized_unit": norm_unit,
         "raw_unit": raw_unit,
         "quantity_type": qty_type.value if qty_type else None,
+
+        # Specification Candidate Model Attributes
+        "source_panel": source_panel or source,
+        "bbox": bbox,
+        "ocr_confidence": ocr_confidence if ocr_confidence is not None else confidence,
+        "semantic_anchor": semantic_anchor,
+        "semantic_section": semantic_section,
+        "candidate_type": resolved_candidate_type,
+        "association_score": association_score if association_score is not None else relevance_score,
+        "rejection_reason": rejection_reason,
 
         # Legacy decomposition fields for rule engine / tests (CRITICAL: COUNT IS NEVER MAPPED TO QUANTITY_VALUE)
         "quantity_value": str_val,
@@ -305,7 +353,6 @@ def build_quantity_candidate(
         # Scoring & provenance
         "confidence": confidence,
         "source": source,
-        "semantic_section": semantic_section,
         "relevance": relevance,
         "relevance_score": relevance_score,
         "source_context": source_context,

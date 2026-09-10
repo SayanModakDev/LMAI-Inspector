@@ -11,6 +11,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from app.extraction.cleaner import is_artifact_token
+from app.extraction.evidence_model import EvidenceAvailabilityState
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class ValidationResult:
     unit_net_quantity: Optional[Union[int, float]] = None
     declared_expression: Optional[str] = None
     derived_total_quantity: Optional[Union[int, float]] = None
+    evidence_state: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert validation result to dictionary representation."""
@@ -93,6 +95,8 @@ class ValidationResult:
             "binary": self.binary,
             "reason": self.reason,
         }
+        if self.evidence_state is not None:
+            data["evidence_state"] = self.evidence_state
         if self.normalized_value is not None:
             data["normalized_value"] = self.normalized_value
         if self.evidence is not None:
@@ -173,6 +177,7 @@ def _check_preconditions(
             ),
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value),
         )
 
     # 0b. Ambiguous / OCR variation evidence also requires review
@@ -187,6 +192,7 @@ def _check_preconditions(
             reason=review_reason,
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value),
         )
 
     # 1. Missing evidence or empty value
@@ -197,12 +203,14 @@ def _check_preconditions(
                 binary=0,
                 reason=f"Required declaration '{parameter}' was not detected in the available OCR evidence.",
                 evidence=None,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
             )
         return ValidationResult(
             status="NOT_APPLICABLE",
             binary=None,
             reason=f"Optional declaration '{parameter}' not identified and not required for this context.",
             evidence=None,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     # 2. Clearly invalid flag explicitly set on evidence
@@ -216,6 +224,7 @@ def _check_preconditions(
             reason=failure_reason,
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_VERIFIED.value),
         )
 
     # 3. Weak OCR confidence
@@ -230,6 +239,7 @@ def _check_preconditions(
             ),
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
         )
 
     return None
@@ -1444,6 +1454,7 @@ def dispatch_validator(
             binary=None,
             reason=reason,
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     # Intercept conflicting or ambiguous evidence upfront across all rules
@@ -1452,23 +1463,53 @@ def dispatch_validator(
         or evidence.get("has_conflict") is True
         or evidence.get("is_ambiguous") is True
     ):
-        candidates = evidence.get("competing_candidates") or evidence.get("values") or [evidence.get("value")]
-        cand_str = ", ".join(str(c.get("value") if isinstance(c, dict) else c) for c in candidates if c)
-        parameter = rule.get("parameter", "UNKNOWN")
-        is_amb = evidence.get("status") in ("AMBIGUOUS", "REVIEW") or evidence.get("is_ambiguous")
-        msg = (
-            f"Ambiguous or competing candidate declarations detected for '{parameter}': "
-            f"[{cand_str}]. Manual inspector review required."
-            if is_amb
-            else f"Conflicting evidence detected across package views for '{parameter}': [{cand_str}]. Manual inspection and review required."
-        )
-        return ValidationResult(
-            status="NOT_VERIFIABLE",
-            binary=0,
-            reason=msg,
-            normalized_value=str(evidence.get("value", "")),
-            evidence=evidence,
-        )
+        raw_candidates = evidence.get("competing_candidates") or evidence.get("values") or [evidence.get("value")]
+        cand_vals = []
+        for c in raw_candidates:
+            if isinstance(c, dict):
+                v = c.get("value") or c.get("normalized_value")
+            else:
+                v = c
+            if v is not None and str(v).strip():
+                cand_vals.append(str(v).strip())
+
+        unique_cand_vals = list(dict.fromkeys(cand_vals))
+
+        # Only treat as ambiguous/competing if > 1 unique candidate value exists OR explicit cross-view conflict exists
+        if len(unique_cand_vals) <= 1 and not evidence.get("has_conflict"):
+            # Check if there is an explicit non-competing review reason
+            if evidence.get("status") in ("AMBIGUOUS", "REVIEW") and evidence.get("reason"):
+                msg = evidence.get("reason")
+                return ValidationResult(
+                    status="NOT_VERIFIABLE",
+                    binary=0,
+                    reason=msg,
+                    normalized_value=str(evidence.get("value", "")),
+                    evidence=evidence,
+                    evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value),
+                )
+            # Otherwise, clear false ambiguity flag and let validator evaluate the single candidate!
+            if evidence.get("status") in ("AMBIGUOUS", "REVIEW"):
+                evidence["status"] = "VALID"
+            evidence["is_ambiguous"] = False
+        else:
+            cand_str = ", ".join(unique_cand_vals) if unique_cand_vals else str(evidence.get("value", ""))
+            parameter = rule.get("parameter", "UNKNOWN")
+            is_amb = evidence.get("status") in ("AMBIGUOUS", "REVIEW") or evidence.get("is_ambiguous")
+            msg = (
+                f"Ambiguous or competing candidate declarations detected for '{parameter}': "
+                f"[{cand_str}]. Manual inspector review required."
+                if is_amb
+                else f"Conflicting evidence detected across package views for '{parameter}': [{cand_str}]. Manual inspection and review required."
+            )
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=msg,
+                normalized_value=str(evidence.get("value", "")),
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value,
+            )
 
     method = validation_method
 
@@ -1483,6 +1524,7 @@ def dispatch_validator(
             binary=0,
             reason=f"Rule '{rule.get('rule_id')}' has no validation method specified and cannot be evaluated deterministically.",
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     validator_func = VALIDATOR_REGISTRY.get(method)
@@ -1497,7 +1539,24 @@ def dispatch_validator(
             binary=0,
             reason=f"Unknown validation method '{method}'. Cannot determine compliance deterministically.",
             evidence=evidence,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     # Execute the deterministic validator
-    return validator_func(evidence, rule, all_fields)
+    res = validator_func(evidence, rule, all_fields)
+    if res.evidence_state is None:
+        if evidence:
+            ev_st = evidence.get("evidence_state")
+            if not ev_st:
+                if evidence.get("status") in ("CONFLICTING_EVIDENCE", "AMBIGUOUS", "REVIEW") or evidence.get("has_conflict") or evidence.get("is_ambiguous"):
+                    ev_st = EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value
+                elif float(evidence.get("confidence") or 0.8) < MIN_OCR_CONFIDENCE:
+                    ev_st = EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value
+                elif evidence.get("semantic_section") == "UNKNOWN" and evidence.get("source_label") is None:
+                    ev_st = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+                else:
+                    ev_st = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+            res.evidence_state = ev_st
+        else:
+            res.evidence_state = EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value
+    return res

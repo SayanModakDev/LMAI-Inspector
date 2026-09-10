@@ -180,6 +180,7 @@ class CanonicalFieldCandidate:
     rejection_reason: Optional[str] = None
     provenance: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    evidence_state: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -196,6 +197,7 @@ class CanonicalFieldCandidate:
             "rejection_reason": self.rejection_reason,
             "provenance": self.provenance,
             "metadata": self.metadata,
+            "evidence_state": self.evidence_state,
         }
 
     def to_evidence_candidate(self) -> EvidenceCandidate:
@@ -214,6 +216,7 @@ class CanonicalFieldCandidate:
             candidate_field=self.field,
             relevance_score=self.relevance_score,
             validation_state=self.validation_state,
+            evidence_state=self.evidence_state,
             metadata=self.metadata,
         )
 
