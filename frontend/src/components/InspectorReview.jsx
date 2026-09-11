@@ -41,9 +41,9 @@ const REVIEW_STATUSES = new Set([
 // Plain inspector language; technical details available in the expanded dossier.
 // ---------------------------------------------------------------------------
 const EVIDENCE_STATE_MESSAGES = {
-  EVIDENCE_CONFLICTING:           'Conflicting information — review required.',
-  EVIDENCE_NOT_DETECTED:          'Not detected.',
-  EVIDENCE_LOW_CONFIDENCE:        'Low confidence — review required.',
+  EVIDENCE_CONFLICTING: 'Conflicting information — review required.',
+  EVIDENCE_NOT_DETECTED: 'Not detected.',
+  EVIDENCE_LOW_CONFIDENCE: 'Low confidence — review required.',
   EVIDENCE_DETECTED_UNASSOCIATED: 'Detected, not linked.',
   PHYSICAL_VERIFICATION_REQUIRED: 'Physical verification required.',
 };
@@ -178,8 +178,8 @@ function ProductReferenceCard({ registryMatch, onUseAsReference, onIgnore, isRef
 // ---------------------------------------------------------------------------
 function CandidateOption({ candidate, paramKey, isSelected, onSelect }) {
   const value = candidate.value ?? candidate.raw_text ?? candidate.normalized_text ?? String(candidate);
-  const conf  = candidate.ocr_confidence ?? candidate.confidence ?? null;
-  const src   = candidate.source_image ?? candidate.source_type ?? candidate.source ?? '';
+  const conf = candidate.ocr_confidence ?? candidate.confidence ?? null;
+  const src = candidate.source_image ?? candidate.source_type ?? candidate.source ?? '';
   const imgIdx = candidate.source_image_index ?? candidate.source_image_id ?? null;
   const isRefMatch = Boolean(candidate.is_reference_match);
   const candId = `cand_${paramKey}__${value}__${src}`;
@@ -226,21 +226,23 @@ function ReviewItemCard({ item, verifiedValues, onVerify, onClear, isReferenceAc
   const reviewMsg = getReviewMessage(item);
   const refHint = isReferenceActive && referenceProduct ? getReferenceHint(param, referenceProduct) : null;
 
-  const [manualValue, setManualValue]         = useState('');
+  const [manualValue, setManualValue] = useState('');
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [detailOpen, setDetailOpen]           = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
-  const isManualMode     = selectedCandidate === '__MANUAL__';
-  const verifiedEntry    = verifiedValues[param];
-  const isConflict       = item.has_conflict || item.candidate_classification === 'TRUE_CONFLICT';
-  const isNotDetected    = !hasExtracted && candidates.length === 0;
+  const isManualMode = selectedCandidate === '__MANUAL__';
+  const verifiedEntry = verifiedValues[param];
+  const isConflict = item.has_conflict || item.candidate_classification === 'TRUE_CONFLICT';
+  const isNotDetected = !hasExtracted && candidates.length === 0;
 
   // The value that will be submitted
   const effectiveValue = isManualMode
     ? manualValue
     : selectedCandidate !== null && selectedCandidate !== '__MANUAL__'
-    ? selectedCandidate
-    : '';
+      ? selectedCandidate
+      : candidates.length === 0
+        ? manualValue
+        : '';
 
   const canSubmit = effectiveValue.trim().length > 0;
 
@@ -269,8 +271,8 @@ function ReviewItemCard({ item, verifiedValues, onVerify, onClear, isReferenceAc
     <div
       className={[
         'review-item-card',
-        isConflict  ? 'review-item-card--conflict'  : '',
-        verifiedEntry ? 'review-item-card--verified'  : '',
+        isConflict ? 'review-item-card--conflict' : '',
+        verifiedEntry ? 'review-item-card--verified' : '',
       ].filter(Boolean).join(' ')}
     >
       {/* ── Header ─────────────────────────────────────── */}
@@ -382,9 +384,8 @@ function ReviewItemCard({ item, verifiedValues, onVerify, onClear, isReferenceAc
                 {/* Manual entry radio */}
                 <label
                   htmlFor={`manual_radio_${param}`}
-                  className={`candidate-option candidate-option--manual ${
-                    isManualMode ? 'candidate-option--selected' : ''
-                  }`}
+                  className={`candidate-option candidate-option--manual ${isManualMode ? 'candidate-option--selected' : ''
+                    }`}
                 >
                   <input
                     id={`manual_radio_${param}`}
@@ -500,9 +501,9 @@ export default function InspectorReview({
 }) {
   const [verifiedValues, setVerifiedValues] = useState({});
   const [inspectorNotes, setInspectorNotes] = useState('');
-  const [submitting, setSubmitting]         = useState(false);
-  const [successMsg, setSuccessMsg]         = useState(null);
-  const [submitError, setSubmitError]       = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [successMsg, setSuccessMsg] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
   const [isReferenceActive, setIsReferenceActive] = useState(false);
   const [isReferenceIgnored, setIsReferenceIgnored] = useState(false);
 
@@ -530,20 +531,20 @@ export default function InspectorReview({
         const ef = efByName[r.parameter] || {};
         const ed = r.evidence_data || {};
         return {
-          parameter:              r.parameter,
-          rule_id:                r.rule_id,
-          status:                 r.status,
-          evidence_state:         r.evidence_state || ed.evidence_state || '',
-          reason:                 r.reason || r.message || '',
-          extracted_value:        ef.field_value || ed.value || r.raw_value,
-          confidence:             ef.confidence ?? ed.confidence,
-          source:                 ef.source || ed.source,
-          source_image_index:     ef.source_image_id,
-          candidates:             r.competing_evidence || ed.candidates || [],
+          parameter: r.parameter,
+          rule_id: r.rule_id,
+          status: r.status,
+          evidence_state: r.evidence_state || ed.evidence_state || '',
+          reason: r.reason || r.message || '',
+          extracted_value: ef.field_value || ed.value || r.raw_value,
+          confidence: ef.confidence ?? ed.confidence,
+          source: ef.source || ed.source,
+          source_image_index: ef.source_image_id,
+          candidates: r.competing_evidence || ed.candidates || [],
           candidate_classification: r.candidate_classification || ed.candidate_classification,
-          has_conflict:           ed.has_conflict || false,
-          regulatory_source:      r.regulatory_source,
-          rule_reference:         r.rule_reference,
+          has_conflict: ed.has_conflict || false,
+          regulatory_source: r.regulatory_source,
+          rule_reference: r.rule_reference,
         };
       });
   }, [reviewItems, ruleResults, extractedFields]);
@@ -563,7 +564,7 @@ export default function InspectorReview({
   }, []);
 
   const verifiedCount = Object.keys(verifiedValues).length;
-  const totalReview   = effectiveItems.length;
+  const totalReview = effectiveItems.length;
 
   const handleSubmit = async () => {
     if (verifiedCount === 0) return;
