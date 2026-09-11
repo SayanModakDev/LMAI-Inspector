@@ -10,9 +10,9 @@ Each inspection can include any number of product images. OCR, visual candidates
 It acts as an **inspection-support tool** to highlight potential non-compliances for further review by human inspectors.
 
 ## Architecture
-- **Backend:** FastAPI, Python, SQLAlchemy, PaddleOCR, OpenCV
+- **Frontend:** React + Vite (deployed on Vercel or any static host)
+- **Backend:** FastAPI, Python 3.11, SQLAlchemy, PaddleOCR, OpenCV (deployed on external Linux VM/Server)
 - **Database:** MySQL (with SQLite development fallback)
-- **Frontend:** React, Vite
 - **Reporting:** ReportLab (PDF Generation)
 
 ## Project Structure
@@ -27,7 +27,7 @@ It acts as an **inspection-support tool** to highlight potential non-compliances
 
 ## Setup Instructions
 
-### Quick Windows Start
+### Quick Windows Start (Local Development)
 From the project root, run:
 ```
 start_app.bat
@@ -46,32 +46,76 @@ If you prefer to start the services manually:
 
 ### Prerequisites
 - Python 3.11+
-- Node.js & npm (for Frontend)
-- MySQL 8.0+
+- Node.js 18+ & npm (for Frontend)
+- MySQL 8.0+ (optional; SQLite fallback enabled by default)
 
 ### Database Setup
-Create a MySQL database and update the `.env` file in the `backend/` directory:
+To use MySQL, create a database and update the `.env` file in the `backend/` directory:
 ```
-DB_USER=root
-DB_PASSWORD=password
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=legal_metrology
+DATABASE_ENABLED=true
+DATABASE_URL=mysql+pymysql://root:password@localhost:3306/legal_metrology_db
 ```
+For local testing and development, leave `DATABASE_ENABLED=false` to use the bundled SQLite database.
 
-### Backend Setup
+### Backend Setup (Local Development)
 1. Navigate to `backend/`: `cd backend`
 2. Create virtual environment: `python -m venv venv`
-3. Activate virtual environment: `venv\Scripts\activate` (Windows)
+3. Activate virtual environment: `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Linux)
 4. Install dependencies: `pip install -r requirements.txt`
-5. Run the server: `uvicorn app.main:app --reload`
-The backend will run at `http://localhost:8000`. Swagger docs available at `http://localhost:8000/docs`.
+5. Run the server: `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`
+The backend will run at `http://localhost:8000`. Swagger docs are available at `http://localhost:8000/docs`.
 
-### Frontend Setup
+### Frontend Setup (Local Development)
 1. Navigate to `frontend/`: `cd frontend`
 2. Install dependencies: `npm install`
-3. Start the dev server: `npm run dev`
+3. Configure environment: Copy `.env.example` to `.env` or leave unset to use the local dev proxy.
+4. Start the dev server: `npm run dev`
 The frontend will run at `http://localhost:5173`.
+
+---
+
+## Production Deployment
+
+### 1. External Backend Deployment (Linux Server / VM)
+The FastAPI backend can be hosted on any generic Linux server or cloud VM (e.g. Ubuntu 22.04 LTS / Debian):
+
+1. Provision the Linux instance and install system dependencies:
+   ```bash
+   sudo apt update && sudo apt install -y python3-pip python3-venv git libgl1 libglib2.0-0
+   ```
+2. Clone the repository and configure virtual environment:
+   ```bash
+   git clone <repo-url>
+   cd SIH-Project/backend
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+3. Create `.env` from `.env.example`:
+   ```bash
+   cp .env.example .env
+   ```
+   Configure the production settings:
+   - `DEBUG=false`
+   - `PORT=8000` (or your chosen service port)
+   - `CORS_ORIGINS=https://your-frontend-app.vercel.app`
+   - `PUBLIC_BASE_URL=https://api.yourdomain.com`
+4. Run the backend service:
+   ```bash
+   python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+   ```
+   *(Running under systemd or a process manager like PM2 / supervisor behind an Nginx reverse proxy with HTTPS/SSL is recommended).*
+
+### 2. Frontend Deployment (Vercel)
+The React frontend is optimized for deployment on Vercel:
+
+1. Connect your repository to Vercel and set the Root Directory to `frontend`.
+2. In the Vercel Project Settings > Environment Variables, set:
+   ```
+   VITE_API_BASE_URL=https://api.yourdomain.com
+   ```
+3. Deploy. The frontend SPA will route all API calls, image assets, and report requests directly to your configured external FastAPI backend.
 
 ## Features
 1. **Automated Scanning:** Upload product labels and automatically extract text using PaddleOCR.

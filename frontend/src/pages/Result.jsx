@@ -22,7 +22,7 @@ import {
   Barcode,
   Info,
 } from 'lucide-react';
-import { apiService } from '../services/api';
+import { apiService, resolveBackendUrl } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
 import StatusBadge from '../components/StatusBadge';
 import EvidenceViewer from '../components/EvidenceViewer';
@@ -91,7 +91,8 @@ const Result = () => {
       }
 
       if (data.report?.file_name) {
-        setReportUrl(`/reports/${data.report.file_name}`);
+        const initialReportUrl = data.report.file_url || `/reports/${data.report.file_name}`;
+        setReportUrl(resolveBackendUrl(initialReportUrl));
       }
 
       setError(null);
@@ -135,7 +136,8 @@ const Result = () => {
     try {
       setGeneratingReport(true);
       const res = await apiService.generateReport(id);
-      const url = res.data?.file_url || `/reports/${res.data?.file_name}`;
+      const rawUrl = res.data?.file_url || `/reports/${res.data?.file_name}`;
+      const url = resolveBackendUrl(rawUrl);
       setReportUrl(url);
       window.open(url, '_blank');
       await fetchInspection();

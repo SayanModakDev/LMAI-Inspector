@@ -170,7 +170,9 @@ const Processing = () => {
         )}
 
         <div className="processing-footer text-xs text-muted">
-          {typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+          {typeof window !== 'undefined' &&
+           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+           (!import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL.includes('localhost') || import.meta.env.VITE_API_BASE_URL.includes('127.0.0.1'))
             ? 'Analysis processed by the local inspection server.'
             : 'Analysis is processed by the configured LMAI Inspector inspection service.'}
         </div>

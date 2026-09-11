@@ -1,8 +1,26 @@
 import axios from 'axios';
 
+// Base URL for the backend API, configurable via VITE_API_BASE_URL
+const rawBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+export const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '');
+
+/**
+ * Resolves a path or relative URL against the configured backend base URL.
+ * If path is already absolute (http:// or https://), returns it unchanged.
+ */
+export const resolveBackendUrl = (path = '') => {
+  if (!path) return '';
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('blob:') || path.startsWith('data:')) {
+    return path;
+  }
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${cleanPath}` : cleanPath;
+};
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL ? `${API_BASE_URL}/api` : '/api',
 });
+
 
 export const apiService = {
   // Scan

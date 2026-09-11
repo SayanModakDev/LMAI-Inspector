@@ -3,7 +3,7 @@ Image preprocessing pipeline using OpenCV and Pillow with strict memory bounds.
 
 Applies corrections to improve OCR accuracy while preserving original image detail.
 Natural image fidelity is preserved for deep-learning OCR detection (PaddleOCR).
-To prevent memory spikes in memory-constrained environments (e.g. Render 512MB),
+To prevent memory spikes in memory-constrained environments (e.g. low-RAM containers or VMs),
 images are stream-resized in Pillow BEFORE converting to NumPy arrays, and
 variants are generated on-demand one at a time.
 """

@@ -18,13 +18,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "Legal Metrology Compliance Checker"
     APP_VERSION: str = "1.1.3-prod"
     DEBUG: bool = True
+    PORT: int = 8000
 
     # Database
     DATABASE_ENABLED: bool = False
     DATABASE_URL: str = "mysql+pymysql://root:password@localhost:3306/legal_metrology_db"
 
-    # CORS
+    # CORS & Networking
     FRONTEND_URL: str = "http://localhost:5173"
+    CORS_ORIGINS: str = ""
+    PUBLIC_BASE_URL: str = ""
 
     # File paths
     UPLOAD_DIR: str = os.path.join(PROJECT_ROOT, "backend", "uploads")
@@ -40,7 +43,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change-this-to-a-random-secret-key"
 
-    # Memory & Concurrency Optimization (Production Render Stability)
+    # Memory & Concurrency Optimization (Production Stability)
     MAX_OCR_IMAGE_DIMENSION: int = 1536
     MAX_IMAGES_PER_INSPECTION: int = 8
     OCR_CONCURRENCY: int = 1

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileText, Download, Eye, ExternalLink, Printer, Search, CheckCircle2, AlertTriangle, XCircle, ShieldCheck } from 'lucide-react';
-import { apiService } from '../services/api';
+import { apiService, resolveBackendUrl } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
 import { formatISTDateTime } from '../utils/dateUtils';
@@ -81,7 +81,8 @@ const Reports = () => {
         ) : (
           filtered.map((item) => {
             const hasReport = Boolean(item.report?.file_name);
-            const reportUrl = hasReport ? `/reports/${item.report.file_name}` : null;
+            const rawReportUrl = item.report?.file_url || (hasReport ? `/reports/${item.report.file_name}` : null);
+            const reportUrl = rawReportUrl ? resolveBackendUrl(rawReportUrl) : null;
 
             return (
               <div key={item.id} className="report-card card">
