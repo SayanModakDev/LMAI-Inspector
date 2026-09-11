@@ -178,8 +178,8 @@ ALL_SEMANTIC_SECTIONS = {
 FIELD_SCOPING_REGISTRY: Dict[str, FieldScopingRule] = {
     "PRODUCT_NAME": FieldScopingRule(
         field_name="PRODUCT_NAME",
-        positive_indicators=["product", "name", "brand"],
-        negative_indicators=["manufactured by", "packed by", "ingredients", "nutrition", "carbohydrate", "mrp"],
+        positive_indicators=["product", "product name", "item", "article", "commodity name"],
+        negative_indicators=["brand", "trademark", "tm", "®", "manufactured by", "packed by", "ingredients", "nutrition", "carbohydrate", "mrp"],
         expected_value_type="TEXT",
         allowed_sections={SECTION_FRONT_PRODUCT, SECTION_IDENTITY, SECTION_OTHER, SECTION_UNKNOWN},
         disallowed_sections={SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_CONSUMER_CARE},
@@ -187,8 +187,8 @@ FIELD_SCOPING_REGISTRY: Dict[str, FieldScopingRule] = {
     ),
     "BRAND": FieldScopingRule(
         field_name="BRAND",
-        positive_indicators=["brand", "trademark", "tm", "®"],
-        negative_indicators=["manufactured by", "pvt ltd", "ingredients", "nutrition", "store in"],
+        positive_indicators=["brand", "brand name", "trademark", "trade mark", "tm", "®", "™"],
+        negative_indicators=["manufactured by", "pvt ltd", "ingredients", "nutrition", "store in", "net wt", "net qty"],
         expected_value_type="TEXT",
         allowed_sections={SECTION_FRONT_PRODUCT, SECTION_IDENTITY, SECTION_OTHER, SECTION_UNKNOWN},
         disallowed_sections={SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_CONSUMER_CARE},
