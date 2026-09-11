@@ -1,7 +1,7 @@
 {
-  "name": "LMAI Inspector - Legal Metrology Compliance",
+  "name": "LMAI Inspector - Legal Metrology Screening",
   "short_name": "LMAI Inspector",
-  "description": "AI-Assisted Legal Metrology Packaging Compliance Screening System",
+  "description": "Automated Legal Metrology Packaging Inspection Screening System",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0B2545",

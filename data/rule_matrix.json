@@ -3,7 +3,7 @@
     "source": "Legal Metrology (Packaged Commodities) Rules, 2011; FSSAI Labelling and Display Regulations, 2020; Cosmetics Rules, 2020",
     "last_updated": "2026-09-09",
     "regulatory_snapshot": "LMPC_2011_CURRENT_2024 | FSSAI_LD_2020_CURRENT_2024 | COSMETICS_2020_CURRENT_2024",
-    "disclaimer": "This matrix defines statutory and internal packaging compliance screening rules for AI-assisted inspection. Versioned regulatory screening baseline reviewed against authoritative sources. The software is not itself a government authority. Automated screening does not constitute final legal enforcement.",
+    "disclaimer": "This matrix defines statutory and internal packaging compliance screening rules for automated inspection screening. Versioned regulatory screening baseline reviewed against authoritative sources. The software is not itself a government authority. Automated screening does not constitute final legal enforcement.",
     "rules": [
         {
             "rule_id": "PC-ALL-001",

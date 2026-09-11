@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     """Application settings — loaded from .env file or environment variables."""
 
     # Application
-    APP_NAME: str = "Legal Metrology Compliance Checker"
-    APP_VERSION: str = "1.1.3-prod"
+    APP_NAME: str = "LMAI Inspector"
+    APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     PORT: int = 8000
 

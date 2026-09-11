@@ -1,6 +1,6 @@
 # Audit Report — SIH 2026 PS 26034
 
-**Project:** AI-assisted packaged-commodity compliance screening  
+**Project:** LMAI Inspector — Automated packaged-commodity compliance screening (v1.0.0)  
 **Date of audit:** 2026-09-06  
 **Scope:** Existing repository only (no rebuild)
 

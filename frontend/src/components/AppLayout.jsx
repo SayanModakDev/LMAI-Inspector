@@ -12,7 +12,9 @@ const AppLayout = ({ children }) => {
     try {
       const saved = localStorage.getItem('lmai_inspector_profile');
       if (saved) return JSON.parse(saved);
-    } catch (_) {}
+    } catch (_) {
+      // fallback to default profile
+    }
     return { name: 'Workspace User', badge: 'Not configured' };
   });
   const location = useLocation();
@@ -22,7 +24,9 @@ const AppLayout = ({ children }) => {
       try {
         const saved = localStorage.getItem('lmai_inspector_profile');
         if (saved) setProfile(JSON.parse(saved));
-      } catch (_) {}
+      } catch (_) {
+        // ignore storage parse errors
+      }
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);

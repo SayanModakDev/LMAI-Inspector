@@ -467,3 +467,19 @@ def test_acceptance_test_j_pdf_report(db_session):
     assert "pending verification" in full_text.lower()
     assert "500" in full_text
     assert "NON-COMPLIANT" in full_text
+
+
+def test_acceptance_test_k_health_endpoint_and_branding():
+    """Verify health endpoint branding, version, and non-AI disclaimer."""
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["status"] == "running"
+    assert data["app"] == "LMAI Inspector"
+    assert data["version"] == "1.0.0"
+    assert "LMAI Inspector is an automated Legal Metrology inspection-support system" in data["disclaimer"]
+    assert "deterministic rule evaluation" in data["disclaimer"]
+    assert "AI-assisted" not in data["disclaimer"]
+    assert "Legal Metrology Compliance Checker" not in str(data)
