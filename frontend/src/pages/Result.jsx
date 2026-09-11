@@ -26,6 +26,7 @@ import { apiService, resolveBackendUrl } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
 import StatusBadge from '../components/StatusBadge';
 import EvidenceViewer from '../components/EvidenceViewer';
+import InspectorReview from '../components/InspectorReview';
 import ResultHero from '../components/ResultHero';
 import ErrorState from '../components/ErrorState';
 import { formatISTDateTime, formatISTDate } from '../utils/dateUtils';
@@ -130,6 +131,22 @@ const Result = () => {
     } finally {
       setSavingManual(false);
     }
+  };
+
+  /**
+   * Submit inspector review overrides from the InspectorReview component.
+   * fieldOverrides: { [parameter]: verifiedValue }
+   * notes: optional string appended to inspector_notes
+   */
+  const handleReviewSubmit = async (fieldOverrides, notes) => {
+    const payload = {
+      inspection_id: parseInt(id),
+      field_overrides: fieldOverrides,
+      inspector_notes: notes || null,
+    };
+    await apiService.submitManualInput(payload);
+    // Re-fetch so rule matrix and summary update
+    await fetchInspection();
   };
 
   const handleGenerateReport = async () => {
@@ -578,32 +595,14 @@ const Result = () => {
           </div>
 
           <div className="physical-form-right">
-            <h4 className="font-semibold text-sm mb-3">Declaration Overrides (If Misread)</h4>
-            <div className="declaration-override-list">
-              {['PRODUCT_NAME', 'MRP', 'DECLARED_NET_QUANTITY', 'MANUFACTURER_NAME'].map(
-                (param) => (
-                  <div key={param} className="form-group mb-2">
-                    <label className="form-label text-xs">
-                      <span>{param.replace(/_/g, ' ')}</span>
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control text-xs font-mono"
-                      placeholder={`Correct ${param.replace(/_/g, ' ').toLowerCase()} if misread`}
-                      value={manualData.field_overrides[param] || ''}
-                      onChange={(e) =>
-                        setManualData({
-                          ...manualData,
-                          field_overrides: {
-                            ...manualData.field_overrides,
-                            [param]: e.target.value,
-                          },
-                        })
-                      }
-                    />
-                  </div>
-                )
-              )}
+            <h4 className="font-semibold text-sm mb-3">Declaration Overrides</h4>
+            <div className="physical-intro-alert" style={{ marginBottom: '1rem' }}>
+              <Info size={14} className="flex-shrink-0" />
+              <p className="text-xs">
+                Declaration review items (MRP, Net Quantity, Manufacturer Name, etc.) are
+                handled in the <strong>Inspector Review</strong> tab above, where detected
+                candidates are listed for selection. This preserves full OCR audit history.
+              </p>
             </div>
 
             <div className="mt-4 text-right">
@@ -805,6 +804,20 @@ const Result = () => {
         <button
           type="button"
           role="tab"
+          aria-selected={activeTab === 'review'}
+          className={`workstation-tab ${activeTab === 'review' ? 'workstation-tab--active' : ''}`}
+          onClick={() => setActiveTab('review')}
+        >
+          <Eye size={15} />
+          <span>Inspector Review</span>
+          {inspection.review_items?.length > 0 && (
+            <span className="tab-badge tab-badge--review">{inspection.review_items.length}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          role="tab"
           aria-selected={activeTab === 'report'}
           className={`workstation-tab ${activeTab === 'report' ? 'workstation-tab--active' : ''}`}
           onClick={() => setActiveTab('report')}
@@ -838,6 +851,20 @@ const Result = () => {
 
       {/* Dedicated Physical Verification Tab */}
       {activeTab === 'physical' && renderPhysicalVerification()}
+
+      {/* Inspector Review Tab — dynamic declaration review workflow */}
+      {activeTab === 'review' && (
+        <div className="card">
+          <div className="card-body">
+            <InspectorReview
+              reviewItems={inspection.review_items || []}
+              ruleResults={ruleResults}
+              extractedFields={inspection.extracted_fields || []}
+              onSubmitReview={handleReviewSubmit}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Dedicated Report Tab */}
       {activeTab === 'report' && renderReportDossier()}

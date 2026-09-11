@@ -18,6 +18,78 @@ logger = logging.getLogger(__name__)
 # Minimum OCR confidence threshold to consider evidence verifiable
 MIN_OCR_CONFIDENCE = 0.6
 
+# ---------------------------------------------------------------------------
+# Cross-field contamination detection (Requirement 6 — Field-level validation hardening)
+# Prevents MRP values, date strings, barcode numbers, and nutritional serving
+# values from being treated as DECLARED_NET_QUANTITY or other declaration fields.
+# ---------------------------------------------------------------------------
+
+# Pattern: bare currency / MRP marker in a quantity field
+_MRP_CONTAMINATION_RE = re.compile(
+    r'(?:^|\s)(?:₹|rs\.?|inr|mrp|maximum\s*retail\s*price)\s*[\d]',
+    re.IGNORECASE,
+)
+# Pattern: standalone currency amount with no quantity unit
+_CURRENCY_ONLY_RE = re.compile(
+    r'^(?:₹|rs\.?|inr)\s*[\d,]+(?:\.\d{1,2})?$',
+    re.IGNORECASE,
+)
+# Pattern: date-like strings (MM/YYYY, DD/MM/YYYY, MonYYYY, etc.)
+_DATE_CONTAMINATION_RE = re.compile(
+    r'(?:'
+    r'\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b'        # DD/MM/YYYY
+    r'|\b\d{1,2}[\/\-\.]\d{4}\b'                          # MM/YYYY
+    r'|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4}\b'  # MonYYYY
+    r'|\b\d{4}[\/\-]\d{1,2}\b'                            # YYYY/MM
+    r')',
+    re.IGNORECASE,
+)
+# Pattern: barcode / EAN / UPC — 8–14 consecutive digits with no alphabetic unit
+_BARCODE_CONTAMINATION_RE = re.compile(r'^\d{8,14}$')
+
+# Nutritional serving markers that must NOT bleed into DECLARED_NET_QUANTITY
+_NUTRITION_SERVING_MARKERS = frozenset([
+    'per 100g', 'per 100ml', 'per serve', 'per serving', 'serving size',
+    'servings per', 'energy', 'protein', 'carbohydrate', 'fat', 'kcal',
+    'calories', 'sodium', 'fibre', 'fiber', 'sugar', 'cholesterol',
+])
+
+
+def _is_mrp_contamination(value: str, parameter: str) -> bool:
+    """Return True if a value looks like an MRP / price value landing in a non-MRP field."""
+    if parameter in ('MRP', 'UNIT_SALE_PRICE'):
+        return False  # currency values are expected here
+    stripped = value.strip()
+    return bool(_MRP_CONTAMINATION_RE.search(stripped) or _CURRENCY_ONLY_RE.match(stripped))
+
+
+def _is_date_contamination(value: str, parameter: str) -> bool:
+    """Return True if a date string has landed in a quantity or text identity field."""
+    if parameter in (
+        'MANUFACTURE_DATE', 'MONTH_YEAR_MANUFACTURE', 'PACKING_DATE',
+        'BEST_BEFORE_USE_BY', 'USE_BEFORE_DATE', 'EXPIRY_DATE',
+        'BEST_BEFORE', 'USE_BY_DATE', 'IMPORT_DATE',
+    ):
+        return False  # dates are expected here
+    stripped = value.strip()
+    # Only flag pure-date strings (short enough not to be a full sentence)
+    if len(stripped) > 20:
+        return False
+    return bool(_DATE_CONTAMINATION_RE.search(stripped))
+
+
+def _is_barcode_contamination(value: str, parameter: str) -> bool:
+    """Return True if a barcode number (8-14 digits) has contaminated a declaration field."""
+    if parameter in ('BARCODE', 'EAN', 'UPC', 'QR_CODE', 'BATCH_NUMBER', 'FSSAI_LICENSE'):
+        return False  # identifiers expected here
+    return bool(_BARCODE_CONTAMINATION_RE.match(value.strip()))
+
+
+def _has_nutrition_marker(value: str) -> bool:
+    """Return True if the value contains nutritional-serving context markers."""
+    lowered = value.lower()
+    return any(marker in lowered for marker in _NUTRITION_SERVING_MARKERS)
+
 # Units recognized under Legal Metrology (Packaged Commodities) Rules
 LEGAL_WEIGHT_UNITS = {
     'g': 'g', 'gm': 'g', 'gms': 'g', 'gram': 'g', 'grams': 'g',
@@ -242,7 +314,71 @@ def _check_preconditions(
             evidence_state=EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
         )
 
+    # 4. Cross-field contamination guards — prevent semantic drift
+    # These run after confidence checks so that low-confidence items still route to NOT_VERIFIABLE
+    # without double-flagging.
+    raw_value_str = str(evidence.get("value") or "").strip()
+    if raw_value_str:
+        # 4a. MRP/currency value in a non-MRP field (e.g., DECLARED_NET_QUANTITY = "₹45")
+        if parameter == "DECLARED_NET_QUANTITY" and _is_mrp_contamination(raw_value_str, parameter):
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=(
+                    f"Suspected MRP/price value '{raw_value_str}' detected as declared net quantity. "
+                    "This field requires a quantity with a legal unit (g, kg, ml, L, pcs). "
+                    "Manual review required."
+                ),
+                normalized_value=raw_value_str,
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+            )
+
+        # 4b. Date string in DECLARED_NET_QUANTITY (e.g., "01/2025" mistaken for quantity)
+        if parameter == "DECLARED_NET_QUANTITY" and _is_date_contamination(raw_value_str, parameter):
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=(
+                    f"A date-like value '{raw_value_str}' was detected in the declared net quantity field. "
+                    "A date cannot represent a net quantity. Manual review required."
+                ),
+                normalized_value=raw_value_str,
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+            )
+
+        # 4c. Barcode/EAN number contaminating a declaration text field
+        if parameter not in ("BARCODE", "EAN", "UPC", "QR_CODE", "BATCH_NUMBER", "FSSAI_LICENSE") \
+                and _is_barcode_contamination(raw_value_str, parameter):
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=(
+                    f"A numeric code '{raw_value_str}' that resembles a barcode or identifier was detected "
+                    f"as '{parameter}'. Declaration values must not be bare numeric codes. Manual review required."
+                ),
+                normalized_value=raw_value_str,
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+            )
+
+        # 4d. Nutritional/serving context value contaminating DECLARED_NET_QUANTITY
+        if parameter == "DECLARED_NET_QUANTITY" and _has_nutrition_marker(raw_value_str):
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=(
+                    f"Value '{raw_value_str}' appears to originate from a nutritional or serving-size "
+                    "context, not a package net quantity declaration. Manual review required."
+                ),
+                normalized_value=raw_value_str,
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+            )
+
     return None
+
 
 
 @register_validator("TEXT_PRESENT")
