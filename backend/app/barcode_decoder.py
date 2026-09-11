@@ -117,6 +117,30 @@ def lookup_barcode(barcode_value: Optional[str]) -> Dict[str, Any]:
     if not barcode_value:
         return {"status": "NOT_DETECTED", "source": "Open Food Facts"}
 
+    # 1. Consult Reference Product Registry first (authoritative known product dataset)
+    try:
+        from app.registry.product_registry import get_product_registry
+        reg = get_product_registry()
+        known = reg.get_by_gtin(barcode_value)
+        if known:
+            logger.info("Barcode %s resolved via Reference Product Registry: %s", barcode_value, known.product_name)
+            return {
+                "status": "FOUND",
+                "source": "Reference Product Registry",
+                "barcode": barcode_value,
+                "product_name": known.product_name,
+                "brands": known.brand,
+                "generic_name": known.generic_name,
+                "quantity": known.declared_net_quantity,
+                "categories": known.category,
+                "manufacturer": known.manufacturer_name,
+                "address": known.manufacturer_address,
+                "standard_mrp": known.standard_mrp,
+                "is_registry_reference": True,
+            }
+    except Exception as reg_exc:
+        logger.warning("Reference Product Registry barcode lookup error: %s", reg_exc)
+
     try:
         import httpx
 

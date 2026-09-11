@@ -231,6 +231,27 @@ async def perform_scan(
         cat_confidence = classification.get('confidence', 0.0)
         product_type = classification.get('product_type') or extracted_fields.get('PRODUCT_TYPE', {}).get('value', 'UNKNOWN')
 
+        # Reference Product Registry matching (Supporting evidence only — does not alter statutory compliance)
+        from app.registry.matcher import match_product, improve_candidate_ranking
+        barcode_val = barcode_result.get('value') if barcode_result else None
+        reg_match = match_product(
+            barcode=barcode_val,
+            brand=extracted_fields.get('BRAND', {}).get('value'),
+            generic_name=extracted_fields.get('GENERIC_NAME', {}).get('value'),
+            product_name=extracted_fields.get('PRODUCT_NAME', {}).get('value'),
+            quantity=extracted_fields.get('DECLARED_NET_QUANTITY', {}).get('value'),
+            quantity_value=extracted_fields.get('DECLARED_NET_QUANTITY', {}).get('quantity_value'),
+            quantity_unit=extracted_fields.get('DECLARED_NET_QUANTITY', {}).get('quantity_unit'),
+            category=category,
+        )
+
+        # Enhance candidate ranking using reference product as supporting context
+        if reg_match.matched and reg_match.reference_product:
+            for fname, fdata in extracted_fields.items():
+                cands = fdata.get('candidates')
+                if cands and isinstance(cands, list):
+                    fdata['candidates'] = improve_candidate_ranking(fname, cands, reg_match.reference_product)
+
         # Category-gated visual detection: only run food symbol detection for confident FOOD products.
         is_confident_food = (
             category == 'FOOD'
@@ -356,6 +377,7 @@ async def perform_scan(
             "ocr_items": ocr_items,
             "barcode_result": barcode_result,
             "images": image_results,
+            "registry_match": reg_match.to_dict(),
         }
         db_ocr = models.OCRResult(
             inspection_id=db_inspection.id,
@@ -459,6 +481,7 @@ async def perform_scan(
                 for index, image_id in sorted(image_index_to_id.items())
             ],
             barcode_result=barcode_result,
+            registry_match=reg_match.to_dict(),
             created_at=created_dt,
             inspection_date=created_dt,
             regulatory_snapshot=snapshot_meta.get('snapshot_id'),

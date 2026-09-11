@@ -431,14 +431,14 @@ const EvidenceViewer = ({
     if (Array.isArray(nameItem.candidates) && nameItem.candidates.length > 0) {
       candidates = nameItem.candidates.map((c, idx) => ({
         value: typeof c === 'object' ? (c.value || c.field_value || JSON.stringify(c)) : String(c),
-        source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Candidate ${idx + 1}`,
+        source: typeof c === 'object' ? (c.source || `Panel ${idx + 1}`) : `Detected Option ${idx + 1}`,
         confidence: typeof c === 'object' ? c.confidence : 0.65,
         evidence_type: typeof c === 'object' ? c.evidence_type : 'OCR_TOKEN',
       }));
     } else if (Array.isArray(nameItem.competing_candidates) && nameItem.competing_candidates.length > 0) {
       candidates = nameItem.competing_candidates.map((c, idx) => ({
         value: typeof c === 'object' ? (c.entity || c.value || String(c)) : String(c),
-        source: `Candidate ${idx + 1}`,
+        source: `Detected Option ${idx + 1}`,
         confidence: 0.65,
         evidence_type: 'ENTITY_CANDIDATE',
       }));
@@ -844,15 +844,15 @@ const EvidenceViewer = ({
                   <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
                   <div>
                     <span className="font-bold text-xs uppercase tracking-wide text-amber-900">
-                      Product Identity Conflict
+                      Conflicting Information: Product Identity
                     </span>
                     <p className="text-2xs text-amber-800 m-0">
-                      Conflicting evidence: multiple package views or candidate text lines returned contradictory product identities.
+                      Different values across images were detected for product identity.
                     </p>
                   </div>
                 </div>
                 <span className="badge badge-warning font-mono text-2xs font-bold">
-                  REQUIRES MANUAL REVIEW
+                  REVIEW REQUIRED
                 </span>
               </div>
 
@@ -861,7 +861,7 @@ const EvidenceViewer = ({
                   <div key={idx} className="conflict-candidate-card">
                     <div className="conflict-candidate-card__top">
                       <span className="candidate-badge font-mono text-2xs font-bold">
-                        Candidate {String.fromCharCode(65 + idx)}
+                        Detected Option {String.fromCharCode(65 + idx)}
                       </span>
                       {cand.confidence !== null && cand.confidence !== undefined && (
                         <span className="candidate-conf font-mono text-2xs">
@@ -873,7 +873,7 @@ const EvidenceViewer = ({
                       {cand.value}
                     </div>
                     <div className="candidate-meta text-2xs text-muted flex items-center justify-between mt-1">
-                      <span>Source: {cand.source || 'Panel Observation'}</span>
+                      <span>Source: {cand.source === 'MULTI_IMAGE_CONFLICT' ? 'Different values across images' : (cand.source || 'Panel Observation')}</span>
                       {cand.evidence_type && <span>Type: {cand.evidence_type}</span>}
                     </div>
                   </div>
@@ -881,7 +881,7 @@ const EvidenceViewer = ({
               </div>
 
               <div className="conflict-resolution-note text-2xs text-amber-900 bg-amber-100 p-1.5 rounded">
-                Conflicting evidence detected. The system does not select an official winner. The inspector must determine the official product identity during physical review.
+                Conflicting information. The system does not select an official value. The inspector must verify the official product identity during review.
               </div>
             </div>
           )}
@@ -1001,7 +1001,7 @@ const EvidenceViewer = ({
                           ) : (
                             <div className="evidence-card__val font-mono">
                               {item.isMissing ? (
-                                <span className="text-muted italic">Evidence not detected</span>
+                                <span className="text-muted italic">Not detected</span>
                               ) : isBarcodeField && isUrlBarcode ? (
                                 <div className="barcode-url-box flex items-center justify-between gap-2">
                                   <span className="truncate max-w-[280px]" title={item.field_value}>
@@ -1030,7 +1030,7 @@ const EvidenceViewer = ({
                         <div className="evidence-card__bottom">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="source-pill font-mono text-2xs">
-                              {item.source}
+                              {item.source === 'MULTI_IMAGE_CONFLICT' ? 'Different values across images' : item.source}
                             </span>
                             {item.source_image_index !== undefined && (
                               <button

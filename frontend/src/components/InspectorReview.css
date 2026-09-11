@@ -409,6 +409,97 @@
   color: var(--status-fail-solid, #EF4444);
 }
 
+/* ── Reference Product Suggestion Card ──────────────── */
+.reference-product-card {
+  padding: 0.85rem 1.15rem;
+  background: #F0FDF4;
+  border: 1px solid #86EFAC;
+  border-radius: var(--radius-md);
+  color: #14532D;
+  transition: all 0.2s ease;
+}
+
+.reference-product-card--active {
+  border-color: #22C55E;
+  box-shadow: 0 0 0 1px #22C55E, 0 1px 3px rgba(34, 197, 94, 0.1);
+}
+
+.reference-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reference-title-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.reference-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0;
+}
+
+.reference-field-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.reference-field-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: #065F46;
+  background: #ECFDF5;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid #A7F3D0;
+  margin: 0.25rem 0 0.5rem 0;
+}
+
+.candidate-option--ref-match {
+  border-color: #86EFAC;
+  background: #F0FDF4;
+}
+
+.btn-outline-success {
+  background: #FFFFFF;
+  border: 1px solid #22C55E;
+  color: #15803D;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-outline-success:hover {
+  background: #22C55E;
+  color: #FFFFFF;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.btn-ghost:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 /* ── Responsive ──────────────────────────────────────── */
 @media (max-width: 640px) {
   .review-panel-header {
@@ -426,5 +517,9 @@
 
   .technical-grid {
     grid-template-columns: 1fr;
+  }
+
+  .reference-card-header {
+    flex-direction: column;
   }
 }
