@@ -1,12 +1,8 @@
 {
     "rewrites": [
         {
-            "source": "/api/:path*",
-            "destination": "https://sih-backend-5slz.onrender.com/api/:path*"
-        },
-        {
             "source": "/(.*)",
             "destination": "/index.html"
         }
     ]
-}
+}

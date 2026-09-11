@@ -1,6 +1,6 @@
 """Cross-platform memory monitoring and garbage collection utilities.
 
-Provides accurate RSS telemetry for Linux containers (Render cgroups) and Windows,
+Provides accurate RSS telemetry for Linux containers/VMs (cgroups) and Windows,
 with proactive heap trimming via libc.malloc_trim(0) where supported.
 """
 
@@ -20,10 +20,10 @@ _IS_LINUX = sys.platform.startswith("linux")
 def get_process_rss_mb() -> float:
     """Return current process Resident Set Size (RSS) in Megabytes.
 
-    Prioritizes real-time VmRSS from /proc/self/status on Linux (Render),
+    Prioritizes real-time VmRSS from /proc/self/status on Linux,
     falling back to standard resource module or Windows PSAPI.
     """
-    # 1. Real-time Linux container telemetry (Render)
+    # 1. Real-time Linux container / host telemetry
     if os.path.exists("/proc/self/status"):
         try:
             with open("/proc/self/status", "r", encoding="utf-8", errors="ignore") as f:

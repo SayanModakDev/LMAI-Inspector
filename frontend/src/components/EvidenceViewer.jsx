@@ -23,6 +23,7 @@ import {
 import ConfidenceBadge from './ConfidenceBadge';
 import StatusBadge from './StatusBadge';
 import FieldDetailModal from './FieldDetailModal';
+import { resolveBackendUrl } from '../services/api';
 import './EvidenceViewer.css';
 
 /**
@@ -246,11 +247,12 @@ const EvidenceViewer = ({
 
   // Active panel image
   const activeImage = images[selectedPanelIndex] || images[0] || null;
-  const imageSrc = activeImage?.image_path
-    ? (activeImage.image_path.startsWith('/uploads/')
+  const rawImageSrc = activeImage?.image_path
+    ? (activeImage.image_path.startsWith('/uploads/') || activeImage.image_path.startsWith('http://') || activeImage.image_path.startsWith('https://')
         ? activeImage.image_path
         : `/uploads/${activeImage.image_path}`)
     : (activeImage?.file_name ? `/uploads/${activeImage.file_name}` : '/placeholder.jpg');
+  const imageSrc = resolveBackendUrl(rawImageSrc);
 
   const handleImageLoad = (e) => {
     if (e.target.naturalWidth && e.target.naturalHeight) {

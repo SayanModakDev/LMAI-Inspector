@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { resolveBackendUrl } from '../services/api';
 
 const SystemHealthContext = createContext(null);
 
@@ -14,7 +15,8 @@ export function SystemHealthProvider({ children }) {
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     try {
-      const res = await fetch('/health', {
+      const healthUrl = resolveBackendUrl('/health');
+      const res = await fetch(healthUrl, {
         signal: controller.signal,
         headers: { 'Accept': 'application/json' }
       });
@@ -25,14 +27,14 @@ export function SystemHealthProvider({ children }) {
         setHealthData(data);
         setLastChecked(new Date());
         
-        // Check reported status
+        // Check reported status from backend
         const status = (data.status || '').toLowerCase();
         if (status === 'running' || status === 'healthy' || status === 'ok') {
           setHealthState('ONLINE');
         } else if (status === 'degraded' || status === 'warning') {
           setHealthState('DEGRADED');
         } else {
-          setHealthState('ONLINE');
+          setHealthState('UNKNOWN');
         }
       } else {
         setHealthData({ error: `HTTP ${res.status}` });

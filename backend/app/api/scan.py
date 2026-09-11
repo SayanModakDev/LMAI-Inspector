@@ -32,6 +32,16 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+def format_public_url(path: str) -> str:
+    """Prefix path with PUBLIC_BASE_URL if configured, otherwise return relative path."""
+    if not path or path.startswith("http://") or path.startswith("https://"):
+        return path
+    base = settings.PUBLIC_BASE_URL.strip().rstrip("/") if settings.PUBLIC_BASE_URL else ""
+    clean_path = path if path.startswith("/") else f"/{path}"
+    return f"{base}{clean_path}" if base else clean_path
+
+
+
 @router.post("/scan", response_model=schemas.ScanResponse)
 async def perform_scan(
     files: List[UploadFile] = File(default=None),
@@ -437,12 +447,12 @@ async def perform_scan(
             review_notes=build_inspection_findings(rule_results).get('needs_review', []),
             ocr_text=raw_text,
             ocr_data=ocr_payload.get('ocr_items', []),
-            image_url=f"/uploads/{safe_filenames[0]}",
+            image_url=format_public_url(f"/uploads/{safe_filenames[0]}"),
             images=[
                 {
                     "id": image_id,
                     "image_index": index,
-                    "image_path": f"/uploads/{safe_filenames[index]}",
+                    "image_path": format_public_url(f"/uploads/{safe_filenames[index]}"),
                     "ocr_status": image_results[index].get("ocr_status"),
                     "ocr_diagnostics": image_results[index].get("ocr_diagnostics"),
                 }

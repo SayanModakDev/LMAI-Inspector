@@ -11,7 +11,7 @@ import {
   Layers,
   ArrowUpDown,
 } from 'lucide-react';
-import { apiService } from '../services/api';
+import { apiService, resolveBackendUrl } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
 import { formatISTDate, formatISTTime, formatISTDateTime } from '../utils/dateUtils';
@@ -174,7 +174,7 @@ const History = () => {
                       <td>
                         {item.report ? (
                           <a
-                            href={`/reports/${item.report.file_name}`}
+                            href={resolveBackendUrl(item.report.file_url || `/reports/${item.report.file_name}`)}
                             target="_blank"
                             rel="noreferrer"
                             className="btn btn-outline btn-sm font-mono text-xs"

@@ -7,7 +7,7 @@ import os
 import sys
 
 # Critical: Configure PaddlePaddle C++ memory limits BEFORE any library can import paddle.
-# Default FLAGS_initial_cpu_memory_in_mb is 500MB, which instantly exceeds Render 512MB RAM limit.
+# Default FLAGS_initial_cpu_memory_in_mb is 500MB, which can exceed lower-RAM host/container limits.
 os.environ["FLAGS_allocator_strategy"] = "naive_best_fit"
 os.environ["FLAGS_fraction_of_cpu_memory_to_use"] = "0.05"
 os.environ["FLAGS_initial_cpu_memory_in_mb"] = "16"
@@ -67,14 +67,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow frontend dev server
+# CORS — allow frontend dev server and configured production origins
+cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+if settings.FRONTEND_URL and settings.FRONTEND_URL.strip():
+    cors_origins.append(settings.FRONTEND_URL.strip())
+if settings.CORS_ORIGINS:
+    for origin in settings.CORS_ORIGINS.split(","):
+        cleaned = origin.strip()
+        if cleaned and cleaned not in cors_origins:
+            cors_origins.append(cleaned)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=list(dict.fromkeys(cors_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
