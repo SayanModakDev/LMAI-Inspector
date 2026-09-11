@@ -270,20 +270,66 @@ async def perform_scan(
                         visual_candidates.append((vis_ev, image_res['image_index']))
             timings['visual_detection_ms'] = round((time.perf_counter() - visual_started) * 1000)
 
-            if visual_candidates and 'VEG_NONVEG_SYMBOL' not in extracted_fields:
-                visual_evidence, image_index = max(visual_candidates, key=lambda item: item[0].get('confidence', 0))
-                extracted_fields['VEG_NONVEG_SYMBOL'] = {
-                    'value': visual_evidence.get('symbol_type'),
-                    'symbol_type': visual_evidence.get('symbol_type'),
-                    'confidence': visual_evidence.get('confidence', 0),
-                    'source': 'VISUAL_DETECTION',
-                    'source_image_index': image_index,
-                    'bbox': visual_evidence.get('bbox'),
-                    'detection_method': visual_evidence.get('detection_method'),
-                    'status': 'CANDIDATE',
-                    'is_candidate': True,
-                    'candidate_status': 'CANDIDATE',
-                }
+            if visual_candidates:
+                # Filter confident candidates
+                confident_cands = [
+                    (ev, idx) for ev, idx in visual_candidates
+                    if ev.get('symbol_type') in ('VEGETARIAN', 'NON_VEGETARIAN') and ev.get('confidence', 0) >= 0.50
+                ]
+                
+                # Check for cross-panel contradiction
+                distinct_types = {ev.get('symbol_type') for ev, _ in confident_cands}
+                if len(distinct_types) > 1:
+                    visual_evidence, image_index = max(confident_cands, key=lambda item: item[0].get('confidence', 0))
+                    extracted_fields['VEG_NONVEG_SYMBOL'] = {
+                        'value': 'CONFLICTING_SYMBOLS',
+                        'symbol_type': 'UNKNOWN',
+                        'confidence': visual_evidence.get('confidence', 0),
+                        'source': 'VISUAL_DETECTION',
+                        'source_image_index': image_index,
+                        'bbox': visual_evidence.get('bbox'),
+                        'detection_method': visual_evidence.get('detection_method'),
+                        'status': 'CONFLICTING_EVIDENCE',
+                        'has_conflict': True,
+                        'conflict_reason': 'Contradictory vegetarian and non-vegetarian symbols detected across package views.',
+                        'is_candidate': True,
+                    }
+                elif confident_cands:
+                    visual_evidence, image_index = max(confident_cands, key=lambda item: item[0].get('confidence', 0))
+                    existing_ev = extracted_fields.get('VEG_NONVEG_SYMBOL')
+                    # Visual symbol detection takes precedence over generic/unanchored OCR text mentions
+                    if not existing_ev or existing_ev.get('source') in ('OCR', 'OCR_LAYOUT', 'TEXT'):
+                        extracted_fields['VEG_NONVEG_SYMBOL'] = {
+                            'value': visual_evidence.get('symbol_type'),
+                            'symbol_type': visual_evidence.get('symbol_type'),
+                            'confidence': visual_evidence.get('confidence', 0),
+                            'source': 'VISUAL_DETECTION',
+                            'source_image_index': image_index,
+                            'bbox': visual_evidence.get('bbox'),
+                            'detection_method': visual_evidence.get('detection_method'),
+                            'features': visual_evidence.get('features', {}),
+                            'status': 'CANDIDATE',
+                            'is_candidate': True,
+                            'candidate_status': 'CANDIDATE',
+                        }
+                else:
+                    # Check if any candidate was ambiguous
+                    ambig_cand = next((item for item in visual_candidates if item[0].get('is_ambiguous')), None)
+                    if ambig_cand:
+                        visual_evidence, image_index = ambig_cand
+                        extracted_fields['VEG_NONVEG_SYMBOL'] = {
+                            'value': 'AMBIGUOUS',
+                            'symbol_type': 'UNKNOWN',
+                            'confidence': visual_evidence.get('confidence', 0),
+                            'source': 'VISUAL_DETECTION',
+                            'source_image_index': image_index,
+                            'bbox': visual_evidence.get('bbox'),
+                            'detection_method': visual_evidence.get('detection_method'),
+                            'status': 'REVIEW',
+                            'is_ambiguous': True,
+                            'is_candidate': True,
+                            'conflict_reason': visual_evidence.get('reason'),
+                        }
         else:
             # Non-food products (COSMETIC, HOUSEHOLD, ELECTRONICS, etc.) or unconfident category:
             # Do NOT run food-symbol detection and do NOT retain VEG_NONVEG_SYMBOL evidence.
@@ -418,6 +464,8 @@ async def perform_scan(
             ev_data['quantity_present'] = result.get('quantity_present')
             ev_data['unit_present'] = result.get('unit_present')
             ev_data['quantity_unit_valid'] = result.get('quantity_unit_valid')
+            ev_data['verification_type'] = result.get('verification_type')
+            ev_data['evidence_state'] = result.get('evidence_state')
 
             db.add(models.RuleResult(
                 inspection_id=db_inspection.id,

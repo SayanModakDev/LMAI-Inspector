@@ -141,8 +141,96 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
     }
 
 
+def _is_physical_verification_rule(r: Any) -> bool:
+    """Check if a rule represents physical inspection / caliper measurement rather than image-based declaration check."""
+    rule_id = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+    parameter = getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else None)
+    v_type = getattr(r, 'verification_type', None) or (r.get('verification_type') if isinstance(r, dict) else None)
+    ev_data = getattr(r, 'evidence_data', None) or (r.get('evidence_data') if isinstance(r, dict) else None) or {}
+
+    if rule_id in ('PC-ALL-012', 'PC-ALL-013'):
+        return True
+    if parameter in ('ACTUAL_NET_CONTENT', 'FONT_SIZE_COMPLIANCE'):
+        return True
+    if v_type in ('PHYSICAL_VERIFICATION_REQUIRED', 'PHYSICAL_INSPECTION', 'MANUAL_MEASUREMENT'):
+        return True
+    if isinstance(ev_data, dict):
+        if ev_data.get('verification_type') in ('PHYSICAL_VERIFICATION_REQUIRED', 'PHYSICAL_INSPECTION', 'MANUAL_MEASUREMENT'):
+            return True
+
+    return False
+
+
+def _is_uncontradicted_visual_candidate(r: Any) -> bool:
+    """Check if a rule is a visual candidate (e.g. VEG_NONVEG_SYMBOL) that was detected without contradiction."""
+    rule_id = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+    parameter = getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else None)
+
+    if parameter != 'VEG_NONVEG_SYMBOL' and rule_id != 'PC-FOOD-005':
+        return False
+
+    ev_data = getattr(r, 'evidence_data', None) or (r.get('evidence_data') if isinstance(r, dict) else None)
+    if not ev_data or not isinstance(ev_data, dict):
+        return False
+
+    # If there is a detected conflict across package views or contradictory symbols, it is NOT uncontradicted!
+    if ev_data.get('has_conflict') is True or ev_data.get('status') == 'CONFLICTING_EVIDENCE':
+        return False
+
+    # Check if a visual symbol candidate was detected
+    val = ev_data.get('value') or ev_data.get('symbol_type')
+    is_cand = (
+        ev_data.get('status') == 'CANDIDATE'
+        or ev_data.get('is_candidate') is True
+        or ev_data.get('source') == 'VISUAL_DETECTION'
+        or bool(val)
+    )
+    if not is_cand or not val:
+        return False
+
+    val_lower = str(val).lower()
+    if 'conflict' in val_lower or 'contradiction' in val_lower or 'unknown' in val_lower:
+        return False
+
+    return True
+
+
+def _is_blocking_for_automated_screening(r: Any) -> bool:
+    """Determine whether an unresolved rule blocks automated screening compliance."""
+    status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+    if status not in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
+        return False
+
+    # 1. Physical-only requirements (e.g., actual gross/net weight on scale, physical font height in mm)
+    # do NOT block automated image screening from reaching COMPLIANT.
+    if _is_physical_verification_rule(r):
+        return False
+
+    # 2. Visual candidate detected without contradiction (e.g. FSSAI veg symbol identified on food panel)
+    # is a non-blocking visual observation pending physical verification.
+    if _is_uncontradicted_visual_candidate(r):
+        return False
+
+    # 3. Optional rule not required
+    required = getattr(r, 'required', None)
+    if required is None and isinstance(r, dict):
+        required = r.get('required')
+    if required is False:
+        return False
+
+    # Any missing mandatory image declaration or critical OCR conflict IS blocking
+    return True
+
+
 def derive_overall_result(rule_results: List[Any]) -> str:
-    """Derive overall inspection result from evaluated rule results."""
+    """Derive overall inspection result from evaluated rule results.
+
+    Priority Logic:
+    1. Deterministic FAIL -> NON_COMPLIANT
+    2. Blocking unresolved critical conflict or missing mandatory declaration -> NOT_VERIFIABLE (REQUIRES REVIEW)
+    3. All image-verifiable requirements pass and remaining unresolved items are physical verification
+       or non-blocking visual candidates -> COMPLIANT
+    """
     from app.core.constants import InspectionStatus
     seen_rule_ids = set()
     deduped = []
@@ -155,18 +243,18 @@ def derive_overall_result(rule_results: List[Any]) -> str:
         deduped.append(r)
 
     has_fail = False
-    has_review = False
+    has_blocking_review = False
 
     for r in deduped:
         status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
         if status == 'FAIL':
             has_fail = True
-        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
-            has_review = True
+        elif _is_blocking_for_automated_screening(r):
+            has_blocking_review = True
 
     if has_fail:
         return InspectionStatus.NON_COMPLIANT
-    if has_review:
+    if has_blocking_review:
         return InspectionStatus.NOT_VERIFIABLE
     return InspectionStatus.COMPLIANT
 
@@ -274,10 +362,15 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
                 evidence_data.get('candidates') or evidence_data.get('competing_candidates') or evidence_data.get('values')
                 if evidence_data else None
             ),
+            'verification_type': verification_type,
+            'required': required,
         }
 
-        if val_result.evidence_state is not None and isinstance(evidence_data, dict):
-            evidence_data.setdefault('evidence_state', val_result.evidence_state)
+        if isinstance(evidence_data, dict):
+            if val_result.evidence_state is not None:
+                evidence_data.setdefault('evidence_state', val_result.evidence_state)
+            if verification_type:
+                evidence_data.setdefault('verification_type', verification_type)
 
         # Expose structured quantity/unit attributes directly on result if available
         if val_result.raw_value is not None:
