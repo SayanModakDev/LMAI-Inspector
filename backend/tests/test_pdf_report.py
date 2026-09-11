@@ -250,3 +250,112 @@ def test_report_api_endpoints_generate_and_download(db_session):
     assert down_resp.status_code == 200
     assert down_resp.headers["content-type"] == "application/pdf"
     assert down_resp.content[:5] == b"%PDF-"
+
+
+def test_inspector_review_audit_trail_and_pdf_reflection(db_session):
+    """Verify that an inspector correction creates a complete audit trail:
+    1. Original OCR preserved in OCR_SUPERSEDED evidence.
+    2. Inspector verified value recorded.
+    3. Rules re-evaluated and overall result updated.
+    4. PDF displays both original OCR and inspector verified value with INSPECTOR_VERIFIED method.
+    5. Clean terminology: no 'AI decision', 'AI recommendation', or old names.
+    """
+    client = TestClient(app)
+
+    # 1. Create inspection with initial unverified MRP declaration
+    insp = models.Inspection(
+        product_name="Audit Trail Test Commodity",
+        brand="QualityBrand",
+        category="FOOD",
+        package_type="RETAIL",
+        import_status="DOMESTIC",
+        overall_result="NOT_VERIFIABLE",
+        inspector_name="Inspector V. Kumar",
+    )
+    db_session.add(insp)
+    db_session.commit()
+    db_session.refresh(insp)
+
+    # Add initial OCR extracted field for MRP with ambiguous reading
+    field_mrp = models.ExtractedField(
+        inspection_id=insp.id,
+        field_name="MRP",
+        field_value="Rs. 9?",
+        confidence=0.45,
+        source="OCR",
+    )
+    db_session.add(field_mrp)
+
+    # Initial rule result for MRP is NOT_VERIFIABLE
+    rr = models.RuleResult(
+        inspection_id=insp.id,
+        rule_id="PC-ALL-003",
+        parameter="MRP",
+        status="NOT_VERIFIABLE",
+        message="Ambiguous MRP reading",
+        evidence_data={"value": "Rs. 9?", "raw_value": "Rs. 9?"},
+        regulatory_source="LEGAL_METROLOGY",
+    )
+    db_session.add(rr)
+    db_session.commit()
+
+    # 2. Inspector applies manual correction via /api/manual-input
+    override_payload = {
+        "inspection_id": insp.id,
+        "field_overrides": {
+            "MRP": "Rs. 95.00 (inclusive of all taxes)",
+        },
+        "inspector_notes": "Verified against physical price label on package base.",
+    }
+    input_resp = client.post("/api/manual-input", json=override_payload)
+    assert input_resp.status_code == 200
+
+    # 3. Verify DB audit trail
+    db_session.expire_all()
+    updated_insp = db_session.query(models.Inspection).filter(models.Inspection.id == insp.id).first()
+
+    # Check that OCR_SUPERSEDED evidence was stored
+    superseded_ev = db_session.query(models.Evidence).filter(
+        models.Evidence.inspection_id == insp.id,
+        models.Evidence.evidence_type == "OCR_SUPERSEDED",
+        models.Evidence.parameter == "MRP",
+    ).first()
+    assert superseded_ev is not None
+    assert superseded_ev.text_content == "Rs. 9?"
+
+    # Check that MANUAL_OVERRIDE evidence was stored
+    override_ev = db_session.query(models.Evidence).filter(
+        models.Evidence.inspection_id == insp.id,
+        models.Evidence.evidence_type == "MANUAL_OVERRIDE",
+        models.Evidence.parameter == "MRP",
+    ).first()
+    assert override_ev is not None
+    assert "95.00" in override_ev.text_content
+
+    # Check that extracted field value is updated to manual
+    mrp_field_now = next(f for f in updated_insp.extracted_fields if f.field_name == "MRP")
+    assert mrp_field_now.source == "MANUAL"
+    assert "95.00" in mrp_field_now.field_value
+
+    # 4. Generate PDF report
+    report = generate_inspection_pdf(updated_insp, db_session)
+    pdf_text = _extract_pdf_text(report.file_path)
+
+    # 5. Verify PDF contents and terminology
+    assert "LMAI INSPECTOR" in pdf_text
+    assert "1.0.0" in pdf_text
+    # Original OCR preserved in PDF
+    assert "Rs. 9?" in pdf_text
+    # Verified value appears in PDF
+    assert "95.00" in pdf_text
+    # Method and status indicators
+    assert "INSPECTOR_VERIFIED" in pdf_text
+    assert "VERIFIED" in pdf_text
+    # Action summary in inspector block
+    assert "Inspector Review Actions" in pdf_text
+
+    # Verify no inaccurate AI claims in PDF
+    assert "AI decision" not in pdf_text
+    assert "AI compliance score" not in pdf_text
+    assert "AI recommendation" not in pdf_text
+    assert "Legal Metrology Compliance Checker" not in pdf_text

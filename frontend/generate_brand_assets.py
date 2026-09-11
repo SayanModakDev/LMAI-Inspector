@@ -474,7 +474,7 @@ def build_og_image_svg():
           </text>
           <text x="4" y="32" font-family="system-ui, -apple-system, sans-serif"
                 font-size="16" font-weight="400" fill="#94A3B8">
-            AI-Assisted OCR • Deterministic Rule Validation • Audit Reports
+            Automated OCR • Deterministic Rule Validation • Audit Reports
           </text>
         </g>
       </g>

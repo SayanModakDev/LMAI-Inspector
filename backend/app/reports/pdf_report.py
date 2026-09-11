@@ -248,6 +248,36 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         deduped_results.append(r)
     results_list = deduped_results
 
+    # Collect all evidence items including superseded OCR and manual overrides
+    all_evidences = []
+    if hasattr(inspection, 'evidence_items') and inspection.evidence_items:
+        all_evidences.extend(inspection.evidence_items)
+    elif hasattr(inspection, 'evidences') and inspection.evidences:
+        all_evidences.extend(inspection.evidences)
+    if db_session:
+        try:
+            db_ev = db_session.query(models.Evidence).filter(models.Evidence.inspection_id == inspection.id).all()
+            for ev in db_ev:
+                if ev not in all_evidences:
+                    all_evidences.append(ev)
+        except Exception as e:
+            logger.warning("Could not query DB evidences: %s", e)
+
+    superseded_ocr: Dict[str, str] = {}
+    manual_overrides: Dict[str, Dict[str, Any]] = {}
+    for ev in all_evidences:
+        etype = getattr(ev, 'evidence_type', None)
+        param = getattr(ev, 'parameter', None)
+        text = getattr(ev, 'text_content', None)
+        if etype == 'OCR_SUPERSEDED' and param:
+            if param not in superseded_ocr:
+                superseded_ocr[param] = text
+        elif etype == 'MANUAL_OVERRIDE' and param:
+            manual_overrides[param] = {
+                'value': text,
+                'created_at': getattr(ev, 'created_at', None),
+            }
+
     # Compute summary counters and overall status using shared rule_engine methods
     from app.rules.rule_engine import calculate_rule_summary, derive_overall_result
     summary_counts = calculate_rule_summary(results_list)
@@ -316,8 +346,8 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             ],
             [
                 _safe_html_p(
-                    "Legal Metrology AI Inspector — Packaging Compliance Screening System<br/>"
-                    "<font color='#64748B'>Regulatory screening baseline reviewed against authoritative sources</font>",
+                    "LMAI Inspector — Automated Legal Metrology Inspection Screening System (v1.0.0)<br/>"
+                    "<font color='#64748B'>Regulatory screening baseline reviewed against authoritative sources under LM(PC) Rules, 2011</font>",
                     subtitle_style,
                 ),
                 _safe_html_p(
@@ -545,9 +575,53 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                 extracted_text = ", ".join(str(v) for v in extracted_text)
             extracted_val_p = _paragraph(extracted_text, small_style)
 
+        is_param_overridden = param_name in superseded_ocr or param_name in manual_overrides
+
+        # 1. Extracted Value handling (special net quantity decomposition or override indication)
+        if is_param_overridden:
+            orig_txt = superseded_ocr.get(param_name, "Not detected initially")
+            curr_val = ed.get("value") or ed.get("raw_value") or r.message or "—"
+            if isinstance(curr_val, list):
+                curr_val = ", ".join(str(v) for v in curr_val)
+            val_display = (
+                f"<b>Verified:</b> {curr_val}<br/>"
+                f"<font color='#64748B'>Orig OCR: \"{orig_txt}\"</font>"
+            )
+            extracted_val_p = _safe_html_p(val_display, small_style)
+        elif param_name in ("DECLARED_NET_QUANTITY", "NET_QUANTITY") or r.rule_id == "PC-ALL-002":
+            val = ed.get("value") or getattr(r, "value", None)
+            unit = ed.get("unit") or getattr(r, "unit", None)
+            raw = ed.get("raw_value") or getattr(r, "raw_value", None) or ed.get("value_text")
+            if ed.get("is_multipack") or getattr(r, "is_multipack", False):
+                decl_expr = ed.get("declared_expression") or val or raw
+                pack_cnt = ed.get("pack_count") or getattr(r, "pack_count", "—")
+                unit_qty = ed.get("unit_quantity") or ed.get("unit_net_quantity") or getattr(r, "unit_quantity", "—")
+                derived_tot = ed.get("derived_total_quantity") or getattr(r, "derived_total_quantity", "—")
+                val_display = (
+                    f"<b>Expression:</b> {decl_expr or '—'}<br/>"
+                    f"<b>Pack Count:</b> {pack_cnt} &nbsp;|&nbsp; <b>Unit Qty:</b> {unit_qty} {unit or ''}<br/>"
+                    f"<b>Derived Total:</b> {derived_tot} {unit or ''} <i>(derived)</i><br/>"
+                    f"<font color='#64748B'>Raw: \"{raw or '—'}\"</font>"
+                )
+            else:
+                val_display = (
+                    f"<b>Value:</b> {val or '—'}<br/>"
+                    f"<b>Unit:</b> {unit or '—'}<br/>"
+                    f"<font color='#64748B'>Raw: \"{raw or '—'}\"</font>"
+                )
+            extracted_val_p = _safe_html_p(val_display, small_style)
+        else:
+            extracted_text = ed.get("value") or ed.get("raw_value") or r.message or "—"
+            if isinstance(extracted_text, list):
+                extracted_text = ", ".join(str(v) for v in extracted_text)
+            extracted_val_p = _paragraph(extracted_text, small_style)
+
         # 2. Validation method
         val_method = ed.get("validation_method") or (rule_def.validation_method if rule_def else "STATUTORY_CHECK")
-        val_display = f"<b>Method:</b> {val_method}"
+        if is_param_overridden:
+            val_display = f"<b>Method:</b> {val_method}<br/><font color='#047857'><b>Inspector Verified</b></font>"
+        else:
+            val_display = f"<b>Method:</b> {val_method}"
         if param_name in ("DECLARED_NET_QUANTITY", "NET_QUANTITY") or r.rule_id == "PC-ALL-002":
             q_valid = ed.get("quantity_unit_valid")
             if q_valid is not None:
@@ -579,7 +653,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         elif r.status == "FAIL":
             status_p = _safe_html_p("<b><font color='#B71C1C'>FAIL</font></b>", small_bold)
         elif r.status in ("NOT_VERIFIABLE", "NEEDS_REVIEW"):
-            status_p = _safe_html_p("<b><font color='#B45309'>NOT_VERIFIABLE</font></b>", small_bold)
+            status_p = _safe_html_p("<b><font color='#B45309'>REVIEW REQUIRED</font></b>", small_bold)
         else:
             status_p = _safe_html_p("<b><font color='#64748B'>NOT_APPLICABLE</font></b>", small_bold)
 
@@ -686,27 +760,59 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
 
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph("Extracted Declaration Field Audit", heading_style))
+    story.append(Paragraph(
+        "Traceable audit chain comparing initial machine-extracted OCR declarations against inspector-verified entries.",
+        subtitle_style,
+    ))
+    story.append(Spacer(1, 1.5 * mm))
 
     extracted_headers = [
-        _paragraph("Statutory Field", th_style),
-        _paragraph("Extracted Text Content", th_style),
-        _paragraph("Source", th_style),
-        _paragraph("Confidence", th_style),
+        _paragraph("Statutory Declaration", th_style),
+        _paragraph("Original Extracted Value (OCR)", th_style),
+        _paragraph("Inspector Verified Value", th_style),
+        _paragraph("Verification Method", th_style),
+        _paragraph("Audit Status", th_style),
     ]
     extracted_rows = [extracted_headers]
     for field in (inspection.extracted_fields or []):
-        conf_str = f"{int(field.confidence * 100)}%" if field.confidence is not None else "—"
+        param = field.field_name
+        is_overridden = param in superseded_ocr or field.source == 'MANUAL' or param in manual_overrides
+
+        orig_val = superseded_ocr.get(param)
+        if not orig_val and not is_overridden:
+            orig_val = field.field_value
+        elif not orig_val and is_overridden:
+            orig_val = "Not detected initially"
+
+        if is_overridden:
+            verified_val = field.field_value or manual_overrides.get(param, {}).get('value', '—')
+            verified_display = f"<b><font color='#047857'>{verified_val}</font></b>"
+            method_display = "<b>INSPECTOR_VERIFIED</b><br/><font color='#64748B'>Manual review correction</font>"
+            status_display = "<b><font color='#047857'>VERIFIED</font></b><br/><font color='#64748B'>OCR superseded</font>"
+        else:
+            verified_display = "<font color='#64748B'>As extracted</font>"
+            conf_pct = f"{int(field.confidence * 100)}%" if field.confidence is not None else "—"
+            method_display = f"<b>{field.source or 'OCR'}</b> (Conf: {conf_pct})"
+            status_display = "<font color='#334155'>UNMODIFIED</font>"
+
         extracted_rows.append([
-            _paragraph(field.field_name, small_bold),
-            _paragraph(field.field_value or "—", small_style),
-            _paragraph(field.source or "OCR", small_style),
-            _paragraph(conf_str, small_style),
+            _paragraph(param, small_bold),
+            _paragraph(orig_val or "—", small_style),
+            _safe_html_p(verified_display, small_style),
+            _safe_html_p(method_display, small_style),
+            _safe_html_p(status_display, small_style),
         ])
 
     if len(extracted_rows) == 1:
-        extracted_rows.append([_paragraph("No fields extracted.", small_style), _paragraph("—", small_style), _paragraph("—", small_style), _paragraph("—", small_style)])
+        extracted_rows.append([
+            _paragraph("No fields extracted.", small_style),
+            _paragraph("—", small_style),
+            _paragraph("—", small_style),
+            _paragraph("—", small_style),
+            _paragraph("—", small_style),
+        ])
 
-    extracted_table = _table(extracted_rows, [45 * mm, 160 * mm, 34 * mm, 28 * mm], header=True)
+    extracted_table = _table(extracted_rows, [40 * mm, 72 * mm, 72 * mm, 47 * mm, 42 * mm], header=True)
     story.append(extracted_table)
 
     # =========================================================================
@@ -782,6 +888,14 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(Spacer(1, 3 * mm))
 
     # Inspector Review & Sign-Off Block
+    review_summary_text = ""
+    if manual_overrides or superseded_ocr:
+        rev_count = len(manual_overrides) or len(superseded_ocr)
+        review_summary_text = (
+            f"<br/><br/><b>Inspector Review Actions:</b> {rev_count} declaration(s) verified/corrected "
+            f"via manual review. Compliance rules re-evaluated. Original machine OCR preserved in audit log."
+        )
+
     inspector_block = [
         [
             _safe_html_p(
@@ -789,14 +903,16 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                 f"<b>Name:</b> {inspection.inspector_name or '___________________________'}<br/>"
                 "<b>Designation:</b> Legal Metrology Inspector<br/>"
                 "<b>Jurisdiction / Zone:</b> ___________________________<br/>"
-                f"<b>Inspection Date:</b> {date_str[:10]}",
+                f"<b>Inspection Date:</b> {date_str[:10]}"
+                f"{review_summary_text}",
                 small_style,
             ),
             _safe_html_p(
                 "<b>Action Taken / Disposition:</b><br/>"
-                "[  ] Notice Issued under Section 39 / Rule 32<br/>"
+                f"[{'X' if canonical_result == InspectionStatus.COMPLIANT and (manual_overrides or superseded_ocr) else '  '}] Verified Compliant on Label & Physical Check<br/>"
+                f"[{'X' if canonical_result == InspectionStatus.NON_COMPLIANT else '  '}] Notice Issued under Section 39 / Rule 32<br/>"
+                f"[{'X' if canonical_result == InspectionStatus.NOT_VERIFIABLE else '  '}] Review Required / Physical Verification Mandated<br/>"
                 "[  ] Product Seized / Detained<br/>"
-                "[  ] Verified Compliant on Label & Physical Check<br/>"
                 "[  ] Sample Sent for Physical / Laboratory Analysis<br/><br/>"
                 "<b>Inspector Signature:</b> ___________________________",
                 small_style,

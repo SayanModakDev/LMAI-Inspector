@@ -61,8 +61,8 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description=(
-        "AI-Assisted Packaged Commodity Compliance Checking System. "
-        "This is an inspection-support tool — NOT automatic legal certification."
+        "LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, "
+        "computer vision, structured evidence extraction, deterministic rule evaluation, and inspector verification."
     ),
     lifespan=lifespan,
 )
@@ -110,7 +110,8 @@ def health_check():
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "disclaimer": (
-            "This is an AI-assisted screening/inspection-support tool. "
-            "Final legal verification must be made by the authorized inspector."
+            "LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, "
+            "computer vision, structured evidence extraction, deterministic rule evaluation, and inspector verification. "
+            "Final statutory verification must be performed by the authorized inspector."
         ),
     }

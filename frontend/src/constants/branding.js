@@ -6,10 +6,11 @@
 export const BRAND_CONFIG = {
   name: 'LMAI Inspector',
   fullName: 'LMAI Inspector Engine',
+  version: '1.0.0',
   tagline: 'Legal Metrology • Packaged Commodities',
   subTagline: 'Compliance Screening',
   disclaimer:
-    'This system is an inspection screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.',
+    'LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, computer vision, structured evidence extraction, deterministic rule evaluation and inspector verification. Inspection outputs are screening aids to assist human verification and do not constitute final legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.',
   legalStandard: 'Legal Metrology (Packaged Commodities) Rules, 2011',
   systemRole: 'Legal Metrology Inspection Screening',
   themeColors: {

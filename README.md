@@ -1,13 +1,13 @@
-# AI-Assisted Packaged Commodity Compliance System
+# LMAI Inspector (v1.0.0)
 
-An AI-powered system designed to assist Legal Metrology inspectors in validating compliance of packaged commodities with Legal Metrology (Packaged Commodities) Rules, 2011.
+LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, computer vision, structured evidence extraction, deterministic rule evaluation and inspector verification.
 
 ## Overview
-This system uses Optical Character Recognition (OCR) to extract text from product labels and automatically validates mandatory declarations (like MRP, Net Quantity, Date of Manufacturing, etc.) based on configurable rules.
+This system uses Optical Character Recognition (OCR) and computer vision to extract declaration text from product labels and automatically screens mandatory declarations (like MRP, Net Quantity, Date of Manufacturing, etc.) against configurable deterministic rules under the Legal Metrology (Packaged Commodities) Rules, 2011.
 
-Each inspection can include any number of product images. OCR, visual candidates, barcode attempts, and extracted evidence from all images are combined into one inspection result.
+Each inspection can include multiple product images. OCR, visual candidates, barcode decodes, and extracted evidence from all packaging panels are synthesized into one inspection record.
 
-It acts as an **inspection-support tool** to highlight potential non-compliances for further review by human inspectors.
+It acts as an **automated inspection-support system** to identify potential non-compliances and conflicting evidence for physical verification and final determination by authorized inspectors.
 
 ## Architecture
 - **Frontend:** React + Vite (deployed on Vercel or any static host)
@@ -134,7 +134,7 @@ The rule matrix separates `LEGAL_METROLOGY` from `FSSAI_FOOD_LABELING`. Source c
 - https://consumeraffairs.gov.in/pages/legal-metrology-act
 - https://www.fssai.gov.in/
 
-Rules remain marked `PENDING_VERIFICATION` where the exact gazette provision, amendment, exception, or effective date has not been independently mapped into the matrix. The application is an AI-assisted inspection-support tool, not a final legal certification system.
+Rules remain marked `PENDING_VERIFICATION` where the exact gazette provision, amendment, exception, or effective date has not been independently mapped into the matrix. The application is an automated inspection-support system, not a final legal certification system.
 
 ## Disclaimer
-This is a support tool. Final legal verification must be made by an authorized inspector.
+This is an automated inspection-support screening tool. Final statutory verification must be performed by an authorized inspector in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.
