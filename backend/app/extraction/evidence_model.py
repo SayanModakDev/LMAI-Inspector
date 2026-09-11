@@ -188,10 +188,14 @@ FIELD_SCOPING_REGISTRY: Dict[str, FieldScopingRule] = {
     "BRAND": FieldScopingRule(
         field_name="BRAND",
         positive_indicators=["brand", "brand name", "trademark", "trade mark", "tm", "®", "™"],
-        negative_indicators=["manufactured by", "pvt ltd", "ingredients", "nutrition", "store in", "net wt", "net qty"],
+        negative_indicators=[
+            "manufactured by", "pvt ltd", "ingredients", "nutrition", "store in",
+            "net wt", "net qty", "use by", "less waste", "directions", "serving suggestion",
+            "eco friendly", "recycle", "save earth", "caution", "warning"
+        ],
         expected_value_type="TEXT",
         allowed_sections={SECTION_FRONT_PRODUCT, SECTION_IDENTITY, SECTION_OTHER, SECTION_UNKNOWN},
-        disallowed_sections={SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_CONSUMER_CARE},
+        disallowed_sections={SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING},
         proximity_expectations="TITLE_TOP",
     ),
     "GENERIC_NAME": FieldScopingRule(

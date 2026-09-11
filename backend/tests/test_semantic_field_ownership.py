@@ -502,3 +502,141 @@ class TestBrandProductNameSemanticOwnership:
         assert fields.get("CONSUMER_CARE") is not None
         assert fields.get("FSSAI_LICENSE", {}).get("value") == "10014031001025"
 
+
+class TestBrandNonBrandSemanticIsolation:
+    """Rigorous tests verifying that non-brand phrases (marketing slogans, usage instructions,
+    sustainability claims, generic commodities) are NEVER classified as BRAND, while affirmative
+    brands and multi-image reconciliation function correctly (Requirements A through H).
+    """
+
+    def test_requirement_a_explicit_brand_labelled(self):
+        """Requirement A: Explicit brand label ('Brand: Sunrise') correctly produces BRAND."""
+        raw_text = (
+            "Brand: Sunrise\n"
+            "Net Qty: 500 g\n"
+            "MRP Rs. 50"
+        )
+        fields = extract_declarations(raw_text)
+        brand = fields.get("BRAND")
+        assert brand is not None, "Explicit 'Brand:' declaration must extract BRAND"
+        assert brand.get("value") == "Sunrise"
+
+    def test_requirement_b_product_name_and_brand_remain_separated(self):
+        """Requirement B: Explicit brand and product name are cleanly separated."""
+        raw_text = (
+            "Brand: Haldiram's\n"
+            "Product Name: Aloo Bhujia\n"
+            "Net Qty: 200 g\n"
+            "MRP Rs. 45"
+        )
+        fields = extract_declarations(raw_text)
+        brand = fields.get("BRAND")
+        pname = fields.get("PRODUCT_NAME")
+        assert brand is not None
+        assert pname is not None
+        assert "Haldiram" in brand.get("value")
+        assert "Aloo Bhujia" in pname.get("value")
+        assert "Aloo Bhujia" not in brand.get("value")
+        assert "Haldiram" not in pname.get("value")
+
+    def test_requirement_c_marketing_slogan_only_must_not_become_brand(self):
+        """Requirement C: Slogan text without brand keyword ('Taste The Goodness') must NOT become BRAND."""
+        raw_text = (
+            "Taste The Goodness\n"
+            "MRP Rs. 50\n"
+            "Net Qty: 200 g"
+        )
+        fields = extract_declarations(raw_text)
+        brand = fields.get("BRAND")
+        # BRAND must NOT be extracted from marketing slogan
+        assert brand is None or brand.get("value") is None or "Taste" not in brand.get("value", ""), \
+            f"Marketing slogan must not become BRAND. Got: {brand}"
+
+    def test_requirement_d_sustainability_text_must_not_become_brand(self):
+        """Requirement D: Sustainability / usage text ('Use By Less Waste') must NOT become BRAND."""
+        raw_text = (
+            "Use By Less Waste\n"
+            "Net Qty: 500 g\n"
+            "MRP Rs. 85"
+        )
+        fields = extract_declarations(raw_text)
+        brand = fields.get("BRAND")
+        assert brand is None or brand.get("value") is None or "Less Waste" not in brand.get("value", ""), \
+            f"Sustainability slogan 'Use By Less Waste' must NOT become BRAND. Got: {brand}"
+
+    def test_requirement_d_additional_imperative_and_planet_claims(self):
+        """Requirement D extra: Slogans like 'Save Water Drink Clean' or 'Recycle For Green Tomorrow'."""
+        for text in [
+            "Save Water Drink Clean\nNet Qty: 1 L\nMRP Rs. 20",
+            "Recycle For Green Tomorrow\nNet Qty: 500 ml\nMRP Rs. 40",
+            "100% Eco Friendly Package\nNet Qty: 250 g\nMRP Rs. 60",
+            "Best Quality Guaranteed\nNet Qty: 1 kg\nMRP Rs. 100",
+        ]:
+            fields = extract_declarations(text)
+            brand = fields.get("BRAND")
+            assert brand is None or brand.get("value") is None, \
+                f"Text '{text.splitlines()[0]}' must not be extracted as BRAND. Got: {brand}"
+
+    def test_requirement_e_generic_commodity_name_remains_generic(self):
+        """Requirement E: Generic commodity without brand keyword must not become BRAND."""
+        raw_text = (
+            "Refined Sunflower Oil\n"
+            "Net Qty: 1 L\n"
+            "MRP Rs. 150"
+        )
+        fields = extract_declarations(raw_text)
+        brand = fields.get("BRAND")
+        gen = fields.get("GENERIC_NAME")
+        assert gen is not None, "Generic commodity name should be captured"
+        assert "SUNFLOWER OIL" in gen.get("value", "").upper() or "EDIBLE OIL" in gen.get("value", "").upper()
+        assert brand is None or brand.get("value") is None, \
+            f"Generic commodity alone must not become BRAND. Got: {brand}"
+
+    def test_requirement_f_same_brand_repeated_across_multiple_images(self):
+        """Requirement F: Same brand across multiple images merges with CONFIRMED_SAME and no conflict."""
+        f1 = extract_declarations("Brand: Amul\nNet Qty: 500 ml")
+        f2 = extract_declarations("Brand: Amul\nMRP Rs. 30")
+        f1["BRAND"]["source_image_index"] = 0
+        f2["BRAND"]["source_image_index"] = 1
+
+        merged = merge_extracted_fields([f1, f2])
+        brand = merged.get("BRAND")
+        assert brand is not None
+        assert brand.get("value") == "Amul"
+        assert brand.get("has_conflict") is False
+        assert brand.get("candidate_classification") == "CONFIRMED_SAME"
+
+    def test_requirement_g_genuine_brand_conflict_across_images_remains_visible(self):
+        """Requirement G: Conflicting brands across images trigger review / conflict."""
+        f1 = extract_declarations("Brand: Sunrise\nNet Qty: 500 g")
+        f2 = extract_declarations("Brand: Moonlite\nNet Qty: 500 g")
+        f1["BRAND"]["source_image_index"] = 0
+        f2["BRAND"]["source_image_index"] = 1
+
+        merged = merge_extracted_fields([f1, f2])
+        brand = merged.get("BRAND")
+        assert brand is not None
+        assert brand.get("status") in ("CONFLICTING_EVIDENCE", "REVIEW")
+        assert brand.get("review_required") is True or brand.get("has_conflict") is True
+        assert brand.get("candidate_classification") in ("MULTI_PANEL_EVIDENCE", "TRUE_CONFLICT")
+        distinct_vals = brand.get("values", [])
+        assert any("Sunrise" in v for v in distinct_vals)
+        assert any("Moonlite" in v for v in distinct_vals)
+
+    def test_requirement_h_multipack_package_semantics_unaltered(self):
+        """Requirement H: Multipack quantity semantics are completely preserved."""
+        raw_text = (
+            "Brand: Parle\n"
+            "10 X 50 g\n"
+            "MRP Rs. 100"
+        )
+        fields = extract_declarations(raw_text)
+        qty = fields.get("DECLARED_NET_QUANTITY")
+        assert qty is not None
+        assert qty.get("is_multipack") is True
+        assert qty.get("pack_count") == 10
+        assert str(qty.get("unit_net_quantity")) == "50"
+        assert qty.get("unit") == "g"
+        assert qty.get("derived_total_quantity") == 500
+        assert fields.get("BRAND", {}).get("value") == "Parle"
+

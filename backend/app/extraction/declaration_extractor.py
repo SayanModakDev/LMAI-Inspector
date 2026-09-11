@@ -964,23 +964,54 @@ def _is_disallowed_product_name_line(line: str) -> bool:
     return False
 
 
+# Generic Non-Brand Patterns: Slogans, usage instructions, sustainability claims, imperative clauses
+NON_BRAND_PATTERNS = [
+    # 1. Usage instructions, directions, storage, preparation, shelf life
+    r'\b(?:use\s+by|best\s+before|how\s+to\s+use|directions?\s*(?:for\s+use)?|instructions?|serving\s+suggestions?|store\s+in|keep\s+(?:in|away|cool|dry)|shake\s+well|caution|warning|dispose\s+of|external\s+use|do\s+not\s+(?:consume|eat|use|freeze)|for\s+best\s+results)\b',
+    # 2. Sustainability, civic, environmental, planet claims
+    r'\b(?:less\s+waste|zero\s+waste|waste\s+less|save\s+(?:earth|water|trees|nature|planet|energy|food)|eco\s+friendly|recycl(?:e|able|ing)|recycle\s+me|planet\s+friendly|green\s+energy|biodegradable|sustainable|clean\s+green|carbon\s+neutral|help\s+save|plant\s+based)\b',
+    # 3. Marketing slogans, taste, quality, promotional claims
+    r'\b(?:delicious|tasty|crispy|crunchy|natural\s+goodness|healthy\s+choice|rich\s+taste|rich\s+aroma|special\s+offer|extra\s+value|buy\s+\d+\s+get\s+\d+|free\s+with|trusted\s+quality|best\s+quality|quality\s+guaranteed|guaranteed\s+(?:quality|satisfaction)|guarantee[ds]?|satisfaction|authentic\s+taste|since\s+\d{4}|made\s+with|goodness\s+of|great\s+taste|freshly\s+baked|taste\s+the|pure\s+and\s+fresh|eat\s+healthy|live\s+better|love\s+food|feel\s+good|better\s+together|perfect\s+choice|expert\s+care|premium\s+quality|100%\s*(?:pure|natural|veg(?:etarian)?|organic|fresh|authentic|eco))\b',
+    # 4. Imperative verb clause structures (e.g. "Use By Less Waste", "Save Water", "Eat Fresh")
+    r'^(?:use|eat|drink|save|recycle|keep|enjoy|taste|choose|protect|help|cook|serve|try|discover|wash|apply|love|live)\s+(?:by|in|with|for|our|the|and|your|more|less|to|healthy|fresh|well|now|safe|clean|green)\b',
+    # 5. Statutory, regulatory, contact, nutrition declaration prefixes
+    r'\b(?:m\.?r\.?p\.?|net\s*(?:wt|qty|weight|volume)|batch|lot|mfg|mfd|pkd|exp|fssai|ingredients?|nutrition(?:al)?|consumer\s*care|customer\s*care|helpline|licen[cs]e)\b',
+    # 6. Corporate legal entity suffixes (pure manufacturer/packer registration names)
+    r'\b(?:pvt\.?\s*ltd\.?|private\s+limited|llp|inc\.?|corporation|gmbh|co\.?\s*kg)\b',
+    # 7. Generic commodity declaration headers
+    r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]',
+]
+
+STANDALONE_COMMODITY_NOUNS = {
+    'salt', 'sugar', 'oil', 'tea', 'coffee', 'soap', 'shampoo',
+    'flour', 'atta', 'maida', 'rice', 'dal', 'biscuit', 'biscuits',
+    'cookies', 'detergent', 'cleaner', 'water', 'juice', 'milk',
+}
+
+
 def _is_disallowed_brand_candidate(val: str) -> bool:
-    """Validate that an extracted brand candidate string is not a corporate registration or statutory line."""
+    """Validate that an extracted brand candidate string represents a genuine brand name,
+    excluding marketing slogans, usage instructions, sustainability claims, and corporate legal entities.
+    """
     if not val or not val.strip():
         return True
-    words = val.split()
+    clean_val = val.strip()
+    words = clean_val.split()
     if not (1 <= len(words) <= 5):
         return True
-    lower = val.lower()
-    # Reject corporate legal entity suffixes (pure manufacturer/packer registration names)
-    if re.search(r'\b(?:pvt\.?\s*ltd\.?|private\s+limited|llp|inc\.?|corporation)\b', lower):
+    lower = clean_val.lower()
+
+    for pattern in NON_BRAND_PATTERNS:
+        if re.search(pattern, lower, re.IGNORECASE):
+            return True
+
+    # If all tokens are purely marketing words
+    if len(words) >= 2 and all(w.lower().rstrip('.,;:-') in MARKETING_TERMS or w.lower().rstrip('sed') in MARKETING_TERMS for w in words):
         return True
-    # Reject statutory declaration headers
-    if re.search(r'\b(?:m\.?r\.?p\.?|net\s*(?:wt|qty|weight|volume)|batch|mfg|exp|pkd|best\s*before|consumer\s*care|ingredients?)\b', lower):
+
+    if lower in STANDALONE_COMMODITY_NOUNS:
         return True
-    # Reject generic commodity declaration headers
-    if re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]', lower):
-        return True
+
     return False
 
 
@@ -1771,9 +1802,11 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
 
     elif field_name == 'BRAND':
-        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS):
+        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_MARKETING):
             return True
         if COMPANY_SUFFIX_RE.search(val) or VENDOR_PREFIX_RE.search(val):
+            return True
+        if _is_disallowed_brand_candidate(val):
             return True
         if len(val) <= 1:
             return True
@@ -3469,23 +3502,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 brand_tokens = [t for t in re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text) if t.lower() not in MARKETING_TERMS and t.lower() not in COMMODITY_DESCRIPTORS]
                 if len(brand_tokens) >= 1:
                     cand_brand = ' '.join(brand_tokens).title()
-                    if 'BRAND' not in fields:
-                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.84, 'source': 'OCR'}
-                    if 'PRODUCT_NAME' not in fields:
-                        fields['PRODUCT_NAME'] = build_product_name_candidate(
-                            value=f"{cand_brand} {gen_name.title()}",
-                            raw_text=f"{cand_brand} {gen_name.title()}",
-                            status="VALID",
-                            confidence=0.85,
-                            source='OCR_LAYOUT',
-                        )
-                elif idx > 0 and 'BRAND' not in fields:
-                    # Check preceding line for brand name
-                    prev_line = lines[idx - 1].strip()
-                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
-                    if 1 <= len(prev_words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in prev_words) and not _is_section_boundary(prev_line):
-                        cand_brand = ' '.join(prev_words).title()
-                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                    if not _is_disallowed_brand_candidate(cand_brand):
+                        if 'BRAND' not in fields:
+                            fields['BRAND'] = {'value': cand_brand, 'confidence': 0.84, 'source': 'OCR'}
                         if 'PRODUCT_NAME' not in fields:
                             fields['PRODUCT_NAME'] = build_product_name_candidate(
                                 value=f"{cand_brand} {gen_name.title()}",
@@ -3494,6 +3513,22 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                                 confidence=0.85,
                                 source='OCR_LAYOUT',
                             )
+                elif idx > 0 and 'BRAND' not in fields:
+                    # Check preceding line for brand name
+                    prev_line = lines[idx - 1].strip()
+                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
+                    if 1 <= len(prev_words) <= 4 and not _is_section_boundary(prev_line):
+                        cand_brand = ' '.join(prev_words).title()
+                        if not _is_disallowed_brand_candidate(cand_brand):
+                            fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                            if 'PRODUCT_NAME' not in fields:
+                                fields['PRODUCT_NAME'] = build_product_name_candidate(
+                                    value=f"{cand_brand} {gen_name.title()}",
+                                    raw_text=f"{cand_brand} {gen_name.title()}",
+                                    status="VALID",
+                                    confidence=0.85,
+                                    source='OCR_LAYOUT',
+                                )
                 break
         if matched_generic:
             break
@@ -3505,10 +3540,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
             brand_words = re.findall(r'[A-Za-z][A-Za-z&-]*', line)
             product_words = re.findall(r'[A-Za-z][A-Za-z&-]*', next_line)
             if (1 <= len(brand_words) <= 3 and brand_words and line.upper() == line and
-                    not any(w.lower() in MARKETING_TERMS for w in brand_words) and
+                    not _is_disallowed_brand_candidate(' '.join(brand_words)) and
                     any(word.lower() in {'salt', 'sugar', 'soap', 'shampoo', 'biscuit', 'oil', 'tea', 'powder', 'cream', 'cleaner', 'flour', 'rice'} for word in product_words)):
                 brand = ' '.join(word.title() for word in brand_words)
-                generic = ' '.join(product_words).title()
                 fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
                 if 'PRODUCT_NAME' not in fields:
                     fields['PRODUCT_NAME'] = build_product_name_candidate(
@@ -3525,7 +3559,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if 'BRAND' not in fields and lines:
         first_line = lines[0].strip()
         first_words = re.findall(r"[A-Za-z][A-Za-z&'-]*", first_line)
-        if 1 <= len(first_words) <= 3 and not _is_disallowed_product_name_line(first_line) and not any(w.lower() in MARKETING_TERMS for w in first_words):
+        if (1 <= len(first_words) <= 3 and
+                not _is_disallowed_brand_candidate(first_line) and
+                not _is_disallowed_product_name_line(first_line)):
             remaining = lines[1:]
             has_product_nouns = bool(re.search(
                 r'\b(?:salt|sugar|biscuit|cookies|oil|tea|coffee|soap|shampoo|cream|flour|atta|maida|rice|masala|juice|toothpaste|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink)\b',
