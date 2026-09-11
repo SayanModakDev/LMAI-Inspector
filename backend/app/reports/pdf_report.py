@@ -297,7 +297,23 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_bg = colors.HexColor('#E8F5E9')
         overall_border = colors.HexColor('#2E7D32')
         overall_color = '#1B5E20'
-        overall_desc = "All applicable statutory declarations under Legal Metrology Rules passed deterministic verification."
+        from app.rules.rule_engine import _is_physical_verification_rule
+        physical_outstanding = [
+            r for r in results_list
+            if (getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)) in ('NOT_VERIFIABLE', 'NEEDS_REVIEW')
+            and _is_physical_verification_rule(r)
+        ]
+        if physical_outstanding:
+            param_names = ", ".join(
+                str(getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else '')).replace('_', ' ').title()
+                for r in physical_outstanding
+            )
+            overall_desc = (
+                f"All image-verifiable declarations passed automated screening. "
+                f"Physical inspection ({len(physical_outstanding)} checks: {param_names}) requires in-person measurement."
+            )
+        else:
+            overall_desc = "All applicable statutory declarations under Legal Metrology Rules passed deterministic verification."
     elif canonical_result == InspectionStatus.NON_COMPLIANT:
         overall_label = "NON-COMPLIANT"
         overall_bg = colors.HexColor('#FFEBEE')

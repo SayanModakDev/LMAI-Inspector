@@ -246,8 +246,7 @@ const Result = () => {
   const isReviewRequired =
     rawOverall === 'NOT_VERIFIABLE' ||
     rawOverall === 'NEEDS_REVIEW' ||
-    rawOverall === 'REQUIRES_REVIEW' ||
-    reviewCount > 0;
+    rawOverall === 'REQUIRES_REVIEW';
 
   // Filtered Rules for Matrix Table
   const filteredRules = ruleResults.filter((r) => {

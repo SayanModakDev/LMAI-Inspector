@@ -145,6 +145,25 @@ const ResultHero = ({
       };
     }
 
+    const physicalOutstanding = ruleResults.filter(
+      (r) =>
+        (r.status === 'NOT_VERIFIABLE' || r.status === 'NEEDS_REVIEW') &&
+        (r.parameter === 'ACTUAL_NET_CONTENT' ||
+          r.parameter === 'FONT_SIZE_COMPLIANCE' ||
+          r.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
+          (r.reason || r.message || '').toLowerCase().includes('physical verification'))
+    );
+
+    if (physicalOutstanding.length > 0) {
+      return {
+        secondary: `${physicalOutstanding.length} check${physicalOutstanding.length === 1 ? '' : 's'} require physical verification`,
+        main: 'All image-verifiable declarations passed automated screening.',
+        reasons: physicalOutstanding.map(
+          (r) => `${formatParamLabel(r.parameter)}: In-person measurement required`
+        ),
+      };
+    }
+
     return {
       secondary: 'All screening criteria satisfied',
       main: 'All verified declarations satisfy applicable screening rules.',
