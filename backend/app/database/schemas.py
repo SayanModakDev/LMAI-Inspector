@@ -32,6 +32,7 @@ class ScanResponse(BaseModel):
     image_url: Optional[str] = None
     images: List[dict] = []
     barcode_result: Optional[dict] = None
+    registry_match: Optional[dict] = None
     created_at: Optional[datetime] = None
     inspection_date: Optional[datetime] = None
     regulatory_snapshot: Optional[str] = None
@@ -64,6 +65,8 @@ class InspectionDetail(BaseModel):
     summary: Optional[Dict[str, int]] = None
     evidence: List[dict] = []
     report: Optional[dict] = None
+    review_items: Optional[List[dict]] = None
+    registry_match: Optional[dict] = None
 
     class Config:
         from_attributes = True

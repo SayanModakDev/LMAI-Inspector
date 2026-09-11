@@ -15,7 +15,7 @@ const Home = () => {
           />
         </div>
         <p className="hero-subtitle">
-          AI-assisted label OCR and deterministic statutory validation for packaged commodity inspections under Legal Metrology (Packaged Commodities) Rules, 2011.
+          Automated label OCR and deterministic statutory validation for packaged commodity inspections under Legal Metrology (Packaged Commodities) Rules, 2011.
         </p>
         
         <div className="action-cards">

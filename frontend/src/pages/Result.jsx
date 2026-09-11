@@ -394,7 +394,7 @@ const Result = () => {
                         {String(extractedVal).startsWith('CONFLICT:') ? (
                           <span className="text-danger font-semibold">{extractedVal}</span>
                         ) : extractedVal === '—' ? (
-                          <span className="text-muted italic">Evidence not detected</span>
+                          <span className="text-muted italic">Not detected</span>
                         ) : (
                           extractedVal
                         )}
@@ -462,7 +462,7 @@ const Result = () => {
                                     (rule.status === 'FAIL'
                                       ? 'Review non-compliant declaration against applicable rules.'
                                       : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
-                                      ? 'Image-based screening cannot confirm this requirement. Physical verification is required according to the inspection configuration.'
+                                      ? 'Screening cannot confirm this declaration. Review required.'
                                       : 'Declaration satisfies verified rule criteria.')}
                                 </div>
                               </div>
@@ -478,7 +478,7 @@ const Result = () => {
               {filteredRules.length === 0 && (
                 <tr>
                   <td colSpan="7" className="p-4 text-center text-muted">
-                    No rules match the selected filter.
+                    No rules matching the current filters.
                   </td>
                 </tr>
               )}
@@ -489,14 +489,11 @@ const Result = () => {
     </div>
   );
 
-  // Sub-renderer for Physical Verification Section (Section 18 strictly)
+  // Sub-renderer for Physical Verification Form (Tab 2)
   const renderPhysicalVerification = () => (
-    <div className="card physical-verification-card" id="physical-verification-section">
+    <div className="card physical-verification-card">
       <div className="card-header flex-between">
-        <div className="flex items-center gap-2">
-          <Scale size={18} className="text-primary" />
-          <span className="font-semibold text-sm">PHYSICAL VERIFICATION REQUIRED</span>
-        </div>
+        <span className="font-semibold text-sm">Legal Metrology Net Content & Physical Verification</span>
         <span className="badge badge-warning font-mono text-xs">Direct Physical Inspection</span>
       </div>
 
@@ -504,7 +501,7 @@ const Result = () => {
         <div className="physical-intro-alert mb-4">
           <ShieldCheck size={22} className="text-teal flex-shrink-0" />
           <div className="text-xs leading-relaxed">
-            <strong>Physical Verification Notice:</strong> Image-based screening cannot confirm this requirement. Physical verification is required according to the inspection configuration.
+            <strong>Physical Verification Notice:</strong> Screening cannot confirm this requirement. Physical verification required according to the inspection configuration.
           </div>
         </div>
 
@@ -669,7 +666,7 @@ const Result = () => {
             <div>
               <span className="meta-lbl">Manufacturer / Packer:</span>
               <span className="meta-val">
-                {inspection.product?.manufacturer || 'Evidence not detected'}
+                {inspection.product?.manufacturer || 'Not detected'}
               </span>
             </div>
             <div>
@@ -860,6 +857,7 @@ const Result = () => {
               reviewItems={inspection.review_items || []}
               ruleResults={ruleResults}
               extractedFields={inspection.extracted_fields || []}
+              registryMatch={inspection.registry_match}
               onSubmitReview={handleReviewSubmit}
             />
           </div>

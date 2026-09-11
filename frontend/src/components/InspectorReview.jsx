@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Info,
   Zap,
+  BookmarkCheck,
 } from 'lucide-react';
 import ConfidenceBadge from './ConfidenceBadge';
 import StatusBadge from './StatusBadge';
@@ -36,14 +37,14 @@ const REVIEW_STATUSES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// User-facing review language (Requirement 8)
-// Plain language first; technical details available only in the expanded dossier.
+// User-facing review language (Part B)
+// Plain inspector language; technical details available in the expanded dossier.
 // ---------------------------------------------------------------------------
 const EVIDENCE_STATE_MESSAGES = {
   EVIDENCE_CONFLICTING:           'Conflicting information — review required.',
   EVIDENCE_NOT_DETECTED:          'Not detected.',
   EVIDENCE_LOW_CONFIDENCE:        'Low confidence — review required.',
-  EVIDENCE_DETECTED_UNASSOCIATED: 'Detected but not linked.',
+  EVIDENCE_DETECTED_UNASSOCIATED: 'Detected, not linked.',
   PHYSICAL_VERIFICATION_REQUIRED: 'Physical verification required.',
 };
 
@@ -57,12 +58,119 @@ function getReviewMessage(item) {
   }
   const candidates = item.candidates || [];
   if (candidates.length > 1) {
-    return 'Multiple values detected — select the verified value.';
+    return 'Different values detected — select the verified value.';
   }
   if (!item.extracted_value) {
     return 'Not detected.';
   }
   return 'Review required.';
+}
+
+function getReferenceHint(param, refProd) {
+  if (!refProd) return null;
+  const p = (param || '').toUpperCase();
+  if (p === 'PRODUCT_NAME' && refProd.product_name) return `Reference product: ${refProd.product_name}`;
+  if (p === 'BRAND' && refProd.brand) return `Reference brand: ${refProd.brand}`;
+  if (p === 'GENERIC_NAME' && refProd.generic_name) return `Reference generic name: ${refProd.generic_name}`;
+  if (p === 'DECLARED_NET_QUANTITY' && refProd.declared_net_quantity) return `Reference standard quantity: ${refProd.declared_net_quantity}`;
+  if (p === 'MANUFACTURER_NAME' && refProd.manufacturer_name) return `Reference manufacturer: ${refProd.manufacturer_name}`;
+  if (p === 'MRP' && refProd.standard_mrp) return `Reference typical MRP: ₹${refProd.standard_mrp}`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// ProductReferenceCard — Suggestion card for known products
+// ---------------------------------------------------------------------------
+function ProductReferenceCard({ registryMatch, onUseAsReference, onIgnore, isReferenceActive }) {
+  if (!registryMatch || !registryMatch.matched || !registryMatch.reference_product) {
+    return null;
+  }
+  const ref = registryMatch.reference_product;
+  const confPct = registryMatch.confidence_percent || Math.round((registryMatch.confidence || 0) * 100);
+
+  return (
+    <div className={`reference-product-card ${isReferenceActive ? 'reference-product-card--active' : ''}`}>
+      <div className="reference-card-header">
+        <div className="reference-title-block">
+          <BookmarkCheck size={18} className="text-emerald-600 flex-shrink-0" />
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="reference-main-title font-bold text-sm text-emerald-950">
+                Known product match
+              </span>
+              <span className="badge badge-success font-mono text-2xs font-semibold">
+                Match confidence: {confPct}%
+              </span>
+            </div>
+            <p className="reference-matched-by text-xs text-emerald-800 mt-0.5 mb-0">
+              <strong>Matched by:</strong> {registryMatch.matched_by}
+            </p>
+          </div>
+        </div>
+
+        <div className="reference-actions flex items-center gap-2">
+          {!isReferenceActive ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-success"
+              onClick={onUseAsReference}
+              title="Use reference product data as supporting context for review"
+            >
+              Use as reference
+            </button>
+          ) : (
+            <span className="badge badge-success text-2xs py-1 px-2 flex items-center gap-1">
+              <CheckCircle2 size={11} /> Reference active
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost text-muted"
+            onClick={onIgnore}
+            title="Dismiss reference suggestion"
+          >
+            Ignore
+          </button>
+        </div>
+      </div>
+
+      <div className="reference-details-grid mt-2">
+        <div>
+          <span className="reference-field-label text-2xs text-emerald-800">Product:</span>
+          <span className="reference-field-value text-xs font-semibold text-emerald-950 ml-1">{ref.product_name}</span>
+        </div>
+        {ref.brand && (
+          <div>
+            <span className="reference-field-label text-2xs text-emerald-800">Brand:</span>
+            <span className="reference-field-value text-xs text-emerald-950 ml-1">{ref.brand}</span>
+          </div>
+        )}
+        {ref.generic_name && (
+          <div>
+            <span className="reference-field-label text-2xs text-emerald-800">Generic Name:</span>
+            <span className="reference-field-value text-xs text-emerald-950 ml-1">{ref.generic_name}</span>
+          </div>
+        )}
+        {ref.declared_net_quantity && (
+          <div>
+            <span className="reference-field-label text-2xs text-emerald-800">Standard Qty:</span>
+            <span className="reference-field-value text-xs font-mono text-emerald-950 ml-1">{ref.declared_net_quantity}</span>
+          </div>
+        )}
+        {ref.manufacturer_name && (
+          <div className="col-span-full">
+            <span className="reference-field-label text-2xs text-emerald-800">Manufacturer:</span>
+            <span className="reference-field-value text-xs text-emerald-950 ml-1">{ref.manufacturer_name}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="reference-disclaimer mt-2 pt-1 border-t border-emerald-200 flex items-center gap-1.5 text-2xs text-emerald-700">
+        <Info size={11} className="flex-shrink-0" />
+        <span>Supporting evidence only. Does not declare legal compliance or replace physical inspection.</span>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -73,12 +181,13 @@ function CandidateOption({ candidate, paramKey, isSelected, onSelect }) {
   const conf  = candidate.ocr_confidence ?? candidate.confidence ?? null;
   const src   = candidate.source_image ?? candidate.source_type ?? candidate.source ?? '';
   const imgIdx = candidate.source_image_index ?? candidate.source_image_id ?? null;
+  const isRefMatch = Boolean(candidate.is_reference_match);
   const candId = `cand_${paramKey}__${value}__${src}`;
 
   return (
     <label
       htmlFor={candId}
-      className={`candidate-option ${isSelected ? 'candidate-option--selected' : ''}`}
+      className={`candidate-option ${isSelected ? 'candidate-option--selected' : ''} ${isRefMatch ? 'candidate-option--ref-match' : ''}`}
     >
       <input
         id={candId}
@@ -92,10 +201,15 @@ function CandidateOption({ candidate, paramKey, isSelected, onSelect }) {
       <span className="candidate-value font-mono">
         {value || <em className="text-muted">—</em>}
       </span>
+      {isRefMatch && (
+        <span className="badge badge-success font-mono text-2xs" style={{ fontSize: '10px', padding: '1px 5px' }}>
+          Reference match
+        </span>
+      )}
       {conf !== null && <ConfidenceBadge confidence={conf} size="xs" />}
       {(src || imgIdx !== null) && (
         <span className="candidate-source text-muted text-2xs">
-          {src}{imgIdx !== null ? ` · image ${Number(imgIdx) + 1}` : ''}
+          {src === 'MULTI_IMAGE_CONFLICT' ? 'Different values across images' : src}{imgIdx !== null ? ` · image ${Number(imgIdx) + 1}` : ''}
         </span>
       )}
     </label>
@@ -105,11 +219,12 @@ function CandidateOption({ candidate, paramKey, isSelected, onSelect }) {
 // ---------------------------------------------------------------------------
 // ReviewItemCard — one review card per flagged parameter
 // ---------------------------------------------------------------------------
-function ReviewItemCard({ item, verifiedValues, onVerify, onClear }) {
+function ReviewItemCard({ item, verifiedValues, onVerify, onClear, isReferenceActive, referenceProduct }) {
   const param = item.parameter;
   const candidates = item.candidates || [];
   const hasExtracted = Boolean(item.extracted_value);
   const reviewMsg = getReviewMessage(item);
+  const refHint = isReferenceActive && referenceProduct ? getReferenceHint(param, referenceProduct) : null;
 
   const [manualValue, setManualValue]         = useState('');
   const [selectedCandidate, setSelectedCandidate] = useState(null);
@@ -236,12 +351,20 @@ function ReviewItemCard({ item, verifiedValues, onVerify, onClear }) {
         </div>
       )}
 
-      {/* ── Candidate selection ─────────────────────────── */}
+      {/* ── Candidate / option selection ─────────────────── */}
       {!verifiedEntry && (
         <div className="candidate-selection-area">
+          {/* Reference product specification hint if active */}
+          {refHint && (
+            <div className="reference-field-hint">
+              <BookmarkCheck size={12} className="text-emerald-600 flex-shrink-0" />
+              <span>{refHint}</span>
+            </div>
+          )}
+
           {candidates.length > 0 && (
             <>
-              <span className="dossier-label mb-1">Select verified value:</span>
+              <span className="dossier-label mb-1">Select verified value from detected options:</span>
               <div className="candidate-list">
                 {candidates.map((cand, i) => {
                   const candVal =
@@ -291,7 +414,7 @@ function ReviewItemCard({ item, verifiedValues, onVerify, onClear }) {
           {/* No candidates — manual entry only */}
           {candidates.length === 0 && (
             <div className="manual-only-area">
-              <span className="dossier-label">Enter verified value:</span>
+              <span className="dossier-label">No options detected — enter verified value:</span>
               <input
                 type="text"
                 className="form-control text-xs font-mono mt-1"
@@ -372,6 +495,7 @@ export default function InspectorReview({
   reviewItems = [],
   ruleResults = [],
   extractedFields = [],
+  registryMatch = null,
   onSubmitReview,
 }) {
   const [verifiedValues, setVerifiedValues] = useState({});
@@ -379,6 +503,8 @@ export default function InspectorReview({
   const [submitting, setSubmitting]         = useState(false);
   const [successMsg, setSuccessMsg]         = useState(null);
   const [submitError, setSubmitError]       = useState(null);
+  const [isReferenceActive, setIsReferenceActive] = useState(false);
+  const [isReferenceIgnored, setIsReferenceIgnored] = useState(false);
 
   // Prefer server-built reviewItems; fall back to deriving from ruleResults
   const effectiveItems = React.useMemo(() => {
@@ -497,11 +623,24 @@ export default function InspectorReview({
         </div>
       </div>
 
+      {/* Known Product Reference Suggestion Card */}
+      {!isReferenceIgnored && registryMatch?.matched && (
+        <ProductReferenceCard
+          registryMatch={registryMatch}
+          isReferenceActive={isReferenceActive}
+          onUseAsReference={() => setIsReferenceActive(true)}
+          onIgnore={() => {
+            setIsReferenceActive(false);
+            setIsReferenceIgnored(true);
+          }}
+        />
+      )}
+
       {/* Audit notice */}
       <div className="review-notice-banner">
         <Info size={14} className="flex-shrink-0 text-primary" />
         <p className="text-xs leading-relaxed">
-          Select the verified value from detected candidates, or enter it manually. Original
+          Select the verified value from detected options, or enter it manually. Original
           OCR evidence is preserved as an audit trail and never overwritten. Submission
           re-runs the deterministic compliance engine — no rule can silently pass without
           a verified value.
@@ -531,6 +670,8 @@ export default function InspectorReview({
             verifiedValues={verifiedValues}
             onVerify={handleVerify}
             onClear={handleClear}
+            isReferenceActive={isReferenceActive}
+            referenceProduct={registryMatch?.reference_product}
           />
         ))}
       </div>

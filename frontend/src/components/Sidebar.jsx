@@ -74,7 +74,7 @@ const Sidebar = ({ onCloseMobile }) => {
         </NavLink>
         <div className="sidebar-brand__badge">
           <ShieldCheck size={12} className="text-teal" />
-          <span>AI COMPLIANCE SCREENING</span>
+          <span>LMAI INSPECTOR</span>
         </div>
       </div>
 

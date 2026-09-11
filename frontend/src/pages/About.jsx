@@ -10,7 +10,7 @@ const About = () => {
         </div>
         <div className="card-body">
           <p className="mb-4">
-            This application is an AI-assisted compliance checking system designed to support Legal Metrology 
+            This application is an inspection support tool designed to assist Legal Metrology 
             inspectors in verifying packaged commodity declarations.
           </p>
           
@@ -24,7 +24,7 @@ const About = () => {
           </ol>
           
           <div className="warning-banner" style={{ marginTop: '2rem' }}>
-            <strong>Statutory Notice:</strong> This system is an AI-assisted compliance screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.
+            <strong>Statutory Notice:</strong> This system is an inspection screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.
           </div>
         </div>
       </div>

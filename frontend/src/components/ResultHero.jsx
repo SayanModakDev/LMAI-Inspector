@@ -73,7 +73,7 @@ const ResultHero = ({
 
   // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
   const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
-  let canonicalStatus = 'REQUIRES REVIEW';
+  let canonicalStatus = 'REVIEW REQUIRED';
   let bannerModifier = 'review';
 
   if (rawStatus === 'COMPLIANT') {
@@ -83,7 +83,7 @@ const ResultHero = ({
     canonicalStatus = 'NON-COMPLIANT';
     bannerModifier = 'non-compliant';
   } else {
-    canonicalStatus = 'REQUIRES REVIEW';
+    canonicalStatus = 'REVIEW REQUIRED';
     bannerModifier = 'review';
   }
 
@@ -135,12 +135,12 @@ const ResultHero = ({
       };
     }
 
-    if (canonicalStatus === 'REQUIRES REVIEW') {
+    if (canonicalStatus === 'REVIEW REQUIRED') {
       return {
         secondary: `${reviewCount} declaration${reviewCount === 1 ? '' : 's'} require attention`,
         main: 'Screening could not conclusively verify one or more declarations.',
         reasons: reviewRules
-          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} requires verification`)
+          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} review required`)
           .filter(Boolean),
       };
     }
@@ -219,10 +219,10 @@ const ResultHero = ({
 
   // Compact review reasons list derived dynamically from backend findings
   const compactReviewReasons = React.useMemo(() => {
-    if (canonicalStatus !== 'REQUIRES REVIEW') return [];
+    if (canonicalStatus !== 'REVIEW REQUIRED') return [];
     const list = [];
     if (isProductNameConflict) {
-      list.push('Product identity conflict');
+      list.push('Conflicting information');
     }
     const hasGenericMissing = reviewRules.some(
       (r) =>
@@ -249,7 +249,7 @@ const ResultHero = ({
       if ((p === 'ACTUAL_NET_CONTENT' || p === 'FONT_SIZE_COMPLIANCE') && hasPhysical) return;
       const label = formatParamLabel(p);
       const isMissing = (r.reason || '').toLowerCase().includes('not detected');
-      const entry = isMissing ? `${label} not detected` : `${label} manual review`;
+      const entry = isMissing ? `${label} not detected` : `${label} review required`;
       if (!list.includes(entry) && list.length < 5) {
         list.push(entry);
       }
@@ -453,7 +453,7 @@ const ResultHero = ({
                   type="button"
                   onClick={handleScrollToConflict}
                   className="conflict-view-btn text-2xs font-semibold text-primary inline-flex items-center gap-0.5"
-                  title="View conflicting product candidates"
+                  title="View conflicting product options"
                 >
                   <span>View evidence</span>
                   <ChevronRight size={10} />

@@ -225,7 +225,7 @@ const Settings = () => {
                 </span>
               </div>
               <div className="standard-item">
-                <span className="standard-title">Advisory on AI Compliance Screening</span>
+                <span className="standard-title">Advisory on Compliance Screening</span>
                 <span className="standard-desc">
                   {BRAND_CONFIG.disclaimer}
                 </span>

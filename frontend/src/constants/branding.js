@@ -5,13 +5,13 @@
 
 export const BRAND_CONFIG = {
   name: 'LMAI Inspector',
-  fullName: 'Legal Metrology AI Inspector',
+  fullName: 'LMAI Inspector Engine',
   tagline: 'Legal Metrology • Packaged Commodities',
   subTagline: 'Compliance Screening',
   disclaimer:
-    'This system is an AI-assisted compliance screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.',
+    'This system is an inspection screening tool. Inspection outputs are recommendations to assist human verification and do not constitute legal certificates or statutory enforcement orders. Final regulatory determinations must be made by authorized personnel in accordance with the Legal Metrology (Packaged Commodities) Rules, 2011.',
   legalStandard: 'Legal Metrology (Packaged Commodities) Rules, 2011',
-  systemRole: 'AI-Assisted Compliance Screening',
+  systemRole: 'Legal Metrology Inspection Screening',
   themeColors: {
     primary: '#0B2545',
     accentGreen: '#10B981',

@@ -28,7 +28,7 @@ const StatusBadge = ({ status, size = 'md', showBinary = false, className = '' }
     Icon = XCircle;
   } else if (norm === 'NOT_VERIFIABLE' || norm === 'NEEDS_REVIEW' || norm === 'REVIEW' || norm === 'MANUAL_CHECK') {
     type = 'review';
-    label = showBinary ? 'REVIEW — EVIDENCE NEEDED' : (norm === 'MANUAL_CHECK' ? 'MANUAL CHECK' : 'REQUIRES REVIEW');
+    label = 'REVIEW REQUIRED';
     Icon = AlertTriangle;
   } else if (norm === 'NOT_APPLICABLE' || norm === 'NA') {
     type = 'na';
