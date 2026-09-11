@@ -12,6 +12,7 @@
   justify-content: center;
   z-index: 999;
   padding: 1rem;
+  overflow-y: auto;
   animation: fadeIn 0.15s ease-out;
 }
 

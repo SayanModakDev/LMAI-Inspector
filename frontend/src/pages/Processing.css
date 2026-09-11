@@ -93,6 +93,22 @@
   background-color: var(--primary-50);
   border-color: var(--primary-100);
   box-shadow: 0 0 0 1px var(--primary-500);
+  animation: stagePulse 2s infinite ease-in-out;
+}
+
+@keyframes stagePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px var(--primary-500);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--primary-400), 0 2px 8px rgba(37, 99, 235, 0.12);
+  }
+}
+
+.pipeline-stage--error {
+  background-color: var(--status-fail-bg);
+  border-color: var(--status-fail-border);
+  box-shadow: 0 0 0 1px var(--status-fail-border);
 }
 
 .pipeline-stage--pending {
@@ -143,6 +159,30 @@
 
 .pipeline-stage--active .stage-status-text {
   color: var(--primary-700);
+}
+
+.pipeline-stage--error .stage-title {
+  color: var(--status-fail-text);
+}
+
+.pipeline-stage--error .stage-status-text {
+  color: var(--status-fail-text);
+}
+
+.upload-progress-bar-container {
+  width: 100%;
+  max-width: 280px;
+  height: 4px;
+  background-color: var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.35rem;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-600), var(--accent-teal-500));
+  transition: width 0.2s ease;
 }
 
 /* Processing Error State */
