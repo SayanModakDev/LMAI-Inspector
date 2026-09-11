@@ -306,6 +306,15 @@ const EvidenceViewer = ({
         competing_candidates: field.competing_candidates,
         is_ambiguous: field.is_ambiguous || field.status === 'AMBIGUOUS',
         role: field.role,
+        candidate_classification: field.candidate_classification,
+        evidence_state: field.evidence_state,
+        semantic_section: field.semantic_section,
+        source_context: field.source_context,
+        conflict_reason: field.conflict_reason,
+        normalized_value: field.normalized_value,
+        evidence_merge_type: field.evidence_merge_type,
+        review_required: field.review_required,
+        has_conflict: field.has_conflict,
       });
     });
 

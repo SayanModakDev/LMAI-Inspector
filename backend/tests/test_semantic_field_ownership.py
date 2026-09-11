@@ -2,7 +2,7 @@
 Multipack Retention, and Result Aggregation Consistency.
 """
 import pytest
-from app.extraction.declaration_extractor import extract_declarations
+from app.extraction.declaration_extractor import extract_declarations, merge_extracted_fields
 from app.rules.rule_engine import evaluate_rules, calculate_rule_summary, derive_overall_result
 from app.core.ontology import DatePrecision, ContactType
 
@@ -296,3 +296,209 @@ class TestSemanticFieldOwnership:
         assert summary["review_count"] == 1
         assert summary["passed_count"] == 1
         assert summary["failed_count"] == 0
+
+
+class TestBrandProductNameSemanticOwnership:
+    """Rigorous tests for BRAND and PRODUCT_NAME semantic ownership, boundary isolation,
+    and multi-image reconciliation (Requirements A through G).
+    """
+
+    def test_requirement_a_brand_only_prominent_text_does_not_become_product_name(self):
+        """REQUIREMENT A: Brand-only prominent text
+        -> BRAND candidate emitted
+        -> must NOT become PRODUCT_NAME automatically.
+        """
+        raw_text = (
+            "Aura Botanics\n"
+            "Net Wt: 100 g\n"
+            "MRP Rs. 50"
+        )
+        fields = extract_declarations(raw_text)
+
+        brand = fields.get("BRAND")
+        assert brand is not None, "BRAND candidate must be detected from prominent brand text"
+        assert "Aura Botanics" in brand.get("value", "")
+
+        pname = fields.get("PRODUCT_NAME")
+        if pname:
+            # If generated, it must NOT simply be the brand name
+            assert pname.get("value") != "Aura Botanics"
+            assert pname.get("status") in ("NOT_DETECTED", "REVIEW", "AMBIGUOUS")
+        else:
+            # Absent is also valid under statutory screening
+            assert pname is None
+
+        # Verify rule evaluation: rule for PRODUCT_NAME cannot be PASS when only brand is present
+        rule = {
+            "rule_id": "PC-ALL-001",
+            "rule_name": "Product Name Declaration",
+            "parameter": "PRODUCT_NAME",
+            "required": True,
+            "is_active": True,
+        }
+        results, overall = evaluate_rules([rule], fields)
+        assert results[0]["status"] == "NOT_VERIFIABLE"
+
+    def test_requirement_b_explicit_product_name_and_brand_remain_cleanly_separated(self):
+        """REQUIREMENT B: Explicit product-name + brand
+        -> PRODUCT_NAME and BRAND remain cleanly separated without mutual leakage.
+        """
+        raw_text = (
+            "Brand: Sunfeast\n"
+            "Product Name: Dark Fantasy Choco Fills\n"
+            "Net Qty: 75 g\n"
+            "MRP Rs. 40"
+        )
+        fields = extract_declarations(raw_text)
+
+        brand = fields.get("BRAND")
+        pname = fields.get("PRODUCT_NAME")
+
+        assert brand is not None, "BRAND must be extracted"
+        assert pname is not None, "PRODUCT_NAME must be extracted"
+
+        assert brand.get("value") == "Sunfeast"
+        assert pname.get("value") == "Dark Fantasy Choco Fills"
+
+        # Explicit isolation check: neither contains the other
+        assert "Dark Fantasy" not in brand.get("value")
+        assert "Sunfeast" not in pname.get("value")
+
+    def test_requirement_c_same_brand_repeated_across_multiple_images_no_product_conflict(self):
+        """REQUIREMENT C: Same brand repeated across multiple images
+        -> BRAND is CONFIRMED_SAME
+        -> must NOT create PRODUCT_NAME conflict.
+        """
+        img1_text = (
+            "Brand: Heritage\n"
+            "Product Name: Full Cream Fresh Milk\n"
+            "Net Qty: 500 ml"
+        )
+        img2_text = (
+            "Brand: Heritage\n"
+            "MRP Rs. 34.00\n"
+            "Date of Packing: 12/2024"
+        )
+        f1 = extract_declarations(img1_text)
+        f2 = extract_declarations(img2_text)
+
+        merged = merge_extracted_fields([f1, f2])
+
+        # Brand agreement across panels
+        brand = merged.get("BRAND")
+        assert brand is not None
+        assert brand.get("value") == "Heritage"
+        assert brand.get("has_conflict") is False
+        assert brand.get("candidate_classification") == "CONFIRMED_SAME"
+
+        # Product name must NOT conflict with image 2's brand
+        pname = merged.get("PRODUCT_NAME")
+        assert pname is not None
+        assert pname.get("value") == "Full Cream Fresh Milk"
+        assert pname.get("has_conflict") is False
+        assert "CONFLICT" not in str(pname.get("value"))
+
+    def test_requirement_d_genuine_product_name_conflict_across_images_remains_visible(self):
+        """REQUIREMENT D: Genuine product-name conflict across images
+        -> Contradictory product names across panels MUST remain flagged as conflicts.
+        """
+        img1_text = (
+            "Brand: Sunfeast\n"
+            "Product Name: Choco Fills Biscuits\n"
+            "Net Qty: 75 g"
+        )
+        img2_text = (
+            "Brand: Sunfeast\n"
+            "Product Name: Vanilla Fills Biscuits\n"
+            "Net Qty: 75 g"
+        )
+        f1 = extract_declarations(img1_text)
+        f2 = extract_declarations(img2_text)
+        f1['PRODUCT_NAME']['source_image_index'] = 0
+        f2['PRODUCT_NAME']['source_image_index'] = 1
+
+        merged = merge_extracted_fields([f1, f2])
+
+        pname = merged.get("PRODUCT_NAME")
+        assert pname is not None
+        # Must retain review / multi-panel status requiring human verification
+        assert pname.get("status") in ("CONFLICTING_EVIDENCE", "REVIEW")
+        assert pname.get("review_required") is True or pname.get("has_conflict") is True
+        assert pname.get("candidate_classification") in ("MULTI_PANEL_EVIDENCE", "TRUE_CONFLICT")
+        distinct_vals = pname.get("values", [])
+        assert any("Choco" in v for v in distinct_vals)
+        assert any("Vanilla" in v for v in distinct_vals)
+
+    def test_requirement_e_brand_and_generic_commodity_name_remain_separate(self):
+        """REQUIREMENT E: Brand + generic commodity name
+        -> BRAND and GENERIC_NAME remain separate; no synthetic manufactured PRODUCT_NAME.
+        """
+        raw_text = (
+            "Brand: Sunrise Agro\n"
+            "Generic Name: Refined Sunflower Oil\n"
+            "Net Qty: 1 L\n"
+            "MRP Rs. 145"
+        )
+        fields = extract_declarations(raw_text)
+
+        brand = fields.get("BRAND")
+        gen = fields.get("GENERIC_NAME")
+
+        assert brand is not None, "BRAND must be extracted"
+        assert gen is not None, "GENERIC_NAME must be extracted"
+
+        assert "Sunrise" in brand.get("value")
+        assert gen.get("value") in ("EDIBLE OIL", "REFINED SUNFLOWER OIL")
+
+        # They must remain separate and not merged into a synthetic PRODUCT_NAME
+        pname = fields.get("PRODUCT_NAME")
+        if pname:
+            assert pname.get("value") != "Sunrise Agro Refined Sunflower Oil"
+
+    def test_requirement_f_multipack_declaration_retention_unaltered(self):
+        """REQUIREMENT F: Multipack declaration
+        -> Existing printed/unit/derived quantity semantics remain unchanged.
+        """
+        raw_text = (
+            "PARLE-G\n"
+            "12 X 25 g\n"
+            "MRP Rs. 60"
+        )
+        fields = extract_declarations(raw_text)
+
+        qty = fields.get("DECLARED_NET_QUANTITY")
+        assert qty is not None
+        assert qty.get("is_multipack") is True
+        assert qty.get("pack_count") == 12
+        assert str(qty.get("unit_net_quantity")) == "25"
+        assert qty.get("unit") == "g"
+        assert qty.get("derived_total_quantity") == 300
+
+    def test_requirement_g_existing_retail_package_regression(self):
+        """REQUIREMENT G: Existing actual retail regression
+        -> Quantity, MRP, manufacturer, dates, consumer care, barcode all extract cleanly.
+        """
+        raw_text = (
+            "Manufactured by: Sunrise Agro Foods Pvt Ltd\n"
+            "Plot 14, GIDC Industrial Area, Phase II, Ahmedabad, Gujarat 382445\n"
+            "Brand: Sunrise\n"
+            "Generic Name: Iodized Salt\n"
+            "Net Qty: 1 kg\n"
+            "MRP Rs. 28.00\n"
+            "Date of Pkg: 10/2024\n"
+            "Consumer Care: Call 1800-200-4000 or email support@sunrise.com\n"
+            "FSSAI Lic No: 10014031001025"
+        )
+        fields = extract_declarations(raw_text)
+
+        assert fields.get("BRAND", {}).get("value") == "Sunrise"
+        assert fields.get("GENERIC_NAME", {}).get("value") in ("SALT", "IODIZED SALT")
+        assert "Sunrise Agro Foods" in fields.get("MANUFACTURER_NAME", {}).get("value", "")
+        assert "Plot 14" in fields.get("MANUFACTURER_ADDRESS", {}).get("value", "")
+        assert fields.get("DECLARED_NET_QUANTITY", {}).get("numeric_value") == 1
+        assert fields.get("DECLARED_NET_QUANTITY", {}).get("unit") == "kg"
+        assert "28" in fields.get("MRP", {}).get("value", "")
+        assert (fields.get("MONTH_YEAR_MANUFACTURE") is not None or fields.get("PACKING_DATE") is not None)
+        assert fields.get("CONSUMER_CARE") is not None
+        assert fields.get("FSSAI_LICENSE", {}).get("value") == "10014031001025"
+

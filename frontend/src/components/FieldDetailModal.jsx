@@ -67,17 +67,31 @@ const FieldDetailModal = ({ field, onClose }) => {
 
   // Additional technical metadata
   const technicalMeta = {
+    parameter: field.field_name || field.parameter,
+    compliance_status: field.status,
+    candidate_classification: field.candidate_classification,
+    evidence_state: field.evidence_state,
+    semantic_section: field.semantic_section,
+    source_context: field.source_context,
     extraction_method: field.extraction_method || field.source || 'OCR Rule Parser',
     source_panel: `Panel ${(field.source_image_index || 0) + 1}`,
     confidence_raw: field.confidence,
     rule_id: field.rule_id,
-    bbox: field.bbox,
     role: field.role,
+    conflict_reason: field.conflict_reason,
+    spatial_bbox: field.bbox,
     is_multipack: field.is_multipack,
     pack_count: field.pack_count,
     unit_quantity: field.unit_quantity || field.unit_net_quantity,
     derived_total: field.derived_total_quantity,
+    competing_candidates: field.candidates || field.competing_candidates,
   };
+
+  const cleanedTechnicalMeta = Object.fromEntries(
+    Object.entries(technicalMeta).filter(
+      ([_, v]) => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0)
+    )
+  );
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
@@ -240,7 +254,7 @@ const FieldDetailModal = ({ field, onClose }) => {
                   </div>
                 )}
                 <pre className="technical-json-block font-mono text-2xs">
-                  {JSON.stringify(technicalMeta, null, 2)}
+                  {JSON.stringify(cleanedTechnicalMeta, null, 2)}
                 </pre>
               </div>
             )}

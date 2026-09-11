@@ -948,20 +948,112 @@ def _is_disallowed_product_name_line(line: str) -> bool:
     if re.search(r'^(?:100\s*%\s*(?:pure|natural|veg(?:etarian)?)|best\s+quality|premium\s+quality|original\s+taste|fresh\s+and\s+pure|delicious\s+taste|new\s+look)$', lower):
         return True
 
+    # 7. Explicit Brand Labels or Trademark Declarations
+    if re.search(r'\b(?:brand\s*(?:name)?|trade\s*mark|regd?\s*(?:brand|trade\s*mark))\s*[:.\s-]', lower):
+        return True
+    if re.search(r'^(?:brand|trademark|tm)\s*[:.\s-]', lower):
+        return True
+    if re.search(r'^[A-Za-z0-9&\'\s.-]{1,35}\s*(?:™|\(tm\)|®|\(r\))\s*$', line_clean, re.I):
+        if not re.search(r'\b(?:extract|oil|flour|biscuit|powder|cream|salt|sugar|tea|coffee|soap|shampoo|juice|paste|rice|noodles|sauce|water|snack|chips|mixture|masala)\b', lower):
+            return True
+
+    # 8. Statutory Generic Name / Commodity declaration headers
+    if re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]', lower):
+        return True
+
     return False
+
+
+def _is_disallowed_brand_candidate(val: str) -> bool:
+    """Validate that an extracted brand candidate string is not a corporate registration or statutory line."""
+    if not val or not val.strip():
+        return True
+    words = val.split()
+    if not (1 <= len(words) <= 5):
+        return True
+    lower = val.lower()
+    # Reject corporate legal entity suffixes (pure manufacturer/packer registration names)
+    if re.search(r'\b(?:pvt\.?\s*ltd\.?|private\s+limited|llp|inc\.?|corporation)\b', lower):
+        return True
+    # Reject statutory declaration headers
+    if re.search(r'\b(?:m\.?r\.?p\.?|net\s*(?:wt|qty|weight|volume)|batch|mfg|exp|pkd|best\s*before|consumer\s*care|ingredients?)\b', lower):
+        return True
+    # Reject generic commodity declaration headers
+    if re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]', lower):
+        return True
+    return False
+
+
+def _extract_brand_candidate(lines: List[str]) -> Optional[Dict[str, Any]]:
+    """Extract explicit BRAND candidate from anchor labels, trademark markers, or top banner."""
+    # 1. Explicit brand label
+    for line in lines:
+        m = re.search(r'\b(?:brand\s*(?:name)?|trade\s*mark|regd?\s*(?:brand|trade\s*mark))\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'brand')
+            val = cut_val or val
+            if not _is_disallowed_brand_candidate(val):
+                return {'value': val.title(), 'confidence': 0.92, 'source': 'OCR_LABEL', 'role': 'BRAND'}
+
+    # 2. Trademarked tokens/lines (e.g. "BrandName™", "BrandName®")
+    for line in lines[:10]:
+        line_clean = line.strip()
+        m = re.search(r'^([A-Za-z0-9&\'\s.-]+?)\s*(?:™|\(tm\)|®|\(r\))\s*$', line_clean, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            words = val.split()
+            if 1 <= len(words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in words):
+                return {'value': val.title(), 'confidence': 0.88, 'source': 'OCR_TRADEMARK', 'role': 'BRAND'}
+    return None
+
+
+def _extract_explicit_product_name(lines: List[str]) -> Optional[str]:
+    """Extract explicit PRODUCT_NAME candidate from statutory/front-panel product labels."""
+    for line in lines:
+        m = re.search(r'\b(?:product\s*(?:name)?|item\s*(?:name)?|article\s*(?:name)?|name\s+of\s+(?:the\s+)?(?:product|item))\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'product')
+            val = cut_val or val
+            words = val.split()
+            if 1 <= len(words) <= 10 and not _is_disallowed_product_name_line(val):
+                return val.title()
+    return None
+
+
+def _extract_explicit_generic_name(lines: List[str]) -> Optional[str]:
+    """Extract explicit GENERIC_NAME candidate from statutory commodity labels."""
+    for line in lines:
+        m = re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'generic')
+            val = cut_val or val
+            words = val.split()
+            if 1 <= len(words) <= 8 and not _is_disallowed_product_name_line(val):
+                return val.upper()
+    return None
 
 
 def _extract_product_name_candidates(
     lines: List[str],
-    ocr_items: Optional[List[Dict[str, Any]]] = None
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+    known_brand: Optional[str] = None,
 ) -> Tuple[Optional[str], List[Dict[str, Any]], str]:
     """Score front-label candidates and detect ambiguity when multiple plausible candidates exist.
+
+    Enforces strict semantic field ownership: candidates strongly identified as BRAND are excluded
+    unless accompanied by independent product identity terms.
 
     Returns:
         (primary_candidate, competing_candidates, status)
         where status is 'VALID' or 'AMBIGUOUS'.
     """
     scored = []
+    clean_known = re.sub(r'[^\w\s]', '', known_brand.lower()).strip() if known_brand else ""
+    brand_words = set(clean_known.split()) if clean_known else set()
+
     for index, line in enumerate(lines[:25]):
         if _is_disallowed_product_name_line(line):
             continue
@@ -971,6 +1063,38 @@ def _extract_product_name_candidates(
             continue
         if any(w in MARKETING_TERMS for w in lowered) and len(words) <= 3:
             continue
+
+        clean_line = re.sub(r'[^\w\s]', '', line.lower()).strip()
+        line_word_set = set(clean_line.split())
+
+        # Strict semantic exclusion: reject candidates that are identical to or pure subsets of the brand
+        if clean_known:
+            if clean_line == clean_known:
+                continue
+            if line_word_set and line_word_set.issubset(brand_words):
+                continue
+
+        # If brand-only text with no other lines: reject isolated brand banner at index 0
+        if not clean_known and index == 0 and len(words) <= 2:
+            # Check if there are any product descriptors or if line is purely an isolated name
+            has_product_nouns = bool(re.search(
+                r'\b(?:salt|sugar|biscuit|cookies|oil|tea|coffee|soap|shampoo|cream|flour|atta|maida|rice|masala|juice|toothpaste|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink)\b',
+                line, re.I
+            ))
+            # Check if following lines are exclusively statutory metadata (MRP, Net Qty, Dates)
+            remaining_lines = lines[1:]
+            is_lone_front_title = (
+                not has_product_nouns and
+                len(remaining_lines) >= 1 and
+                all(
+                    re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|net\s*(?:wt|qty|weight|volume)|mfg|mfd|pkd|exp|batch|use\s*by|best\s*before)\b', l, re.I)
+                    or _is_disallowed_product_name_line(l)
+                    for l in remaining_lines
+                )
+            )
+            if is_lone_front_title:
+                # This lone prominent text is a BRAND candidate, not a PRODUCT_NAME
+                continue
 
         score = 1.0 + max(0, 8 - index) * 0.08
         if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice|toothpaste|noodles)\b', line, re.I):
@@ -1008,9 +1132,9 @@ def _extract_product_name_candidates(
     return top_cand, [], "VALID"
 
 
-def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]] = None, known_brand: Optional[str] = None) -> Optional[str]:
     """Score front-label candidates; do not let a marketing adjective become a product."""
-    cand, _, _ = _extract_product_name_candidates(lines, ocr_items)
+    cand, _, _ = _extract_product_name_candidates(lines, ocr_items, known_brand=known_brand)
     return cand
 
 
@@ -1158,6 +1282,12 @@ def _product_names_conflict(s1: str, s2: str) -> bool:
     set1, set2 = set(words1), set(words2)
     if set1 == set2:
         return False
+
+    # Panel detail expansion: if all words of one candidate are fully contained in the other
+    # and the shorter phrase has at least 2 words (e.g. "Tata Salt" vs "Tata Salt Vacuum Evaporated Iodised")
+    if (set1.issubset(set2) or set2.issubset(set1)) and min(len(set1), len(set2)) >= 2:
+        return False
+
     overlap = set1.intersection(set2)
     union = set1.union(set2)
     similarity = len(overlap) / len(union) if union else 1.0
@@ -1626,7 +1756,7 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
 
     elif field_name == 'PRODUCT_NAME':
-        if sec == SECTION_NUTRITION:
+        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS):
             return True
         # Reject nutrition table rows
         if NUTRITION_CONTEXT_RE.search(val) or NUTRITION_LINE_RE.search(val):
@@ -1634,6 +1764,18 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
         # Reject very short low-confidence fragments (likely OCR noise)
         conf = float(candidate.get('confidence') or 0)
         if len(val) <= 3 and conf < 0.7:
+            return True
+        # Reject candidates with explicit brand ownership
+        anchor = str(candidate.get('anchor_label') or '').lower()
+        if 'brand' in anchor or 'trade mark' in anchor or candidate.get('role') == 'BRAND':
+            return True
+
+    elif field_name == 'BRAND':
+        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS):
+            return True
+        if COMPANY_SUFFIX_RE.search(val) or VENDOR_PREFIX_RE.search(val):
+            return True
+        if len(val) <= 1:
             return True
 
     elif field_name == 'MRP':
@@ -1692,6 +1834,9 @@ def _classify_multi_image_evidence(
             for j in range(i + 1, len(groups)):
                 v_i = str(groups[i][0].get('value', ''))
                 v_j = str(groups[j][0].get('value', ''))
+                if field_name in ('PRODUCT_NAME', 'BRAND') and _product_names_conflict(v_i, v_j):
+                    all_fuzzy_similar = False
+                    break
                 if not _fuzzy_ocr_similar(v_i, v_j):
                     all_fuzzy_similar = False
                     break
@@ -1797,6 +1942,37 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
             if val is None or not str(val).strip():
                 continue
             candidates_by_field.setdefault(name, []).append(dict(candidate))
+
+    # Phase 0: Semantic Field Ownership Validation across Images
+    # If any image extracted BRAND, collect the verified brand values.
+    # Candidates in PRODUCT_NAME that are purely identical to BRAND must NOT be promoted to PRODUCT_NAME.
+    all_brand_values = set()
+    for field_set in field_sets:
+        if not field_set or not isinstance(field_set, dict):
+            continue
+        brand_item = field_set.get('BRAND')
+        if brand_item and isinstance(brand_item, dict):
+            b_val = str(brand_item.get('value') or '').strip().lower()
+            if b_val:
+                all_brand_values.add(b_val)
+                b_clean = re.sub(r'[^\w\s]', '', b_val).strip()
+                if b_clean:
+                    all_brand_values.add(b_clean)
+
+    if 'PRODUCT_NAME' in candidates_by_field and all_brand_values:
+        clean_pname_candidates = []
+        for cand in candidates_by_field['PRODUCT_NAME']:
+            val_clean = re.sub(r'[^\w\s]', '', str(cand.get('value') or '').lower()).strip()
+            if val_clean in all_brand_values:
+                cand['candidate_classification'] = 'RECLASSIFIED_AS_BRAND'
+                cand['evidence_merge_type'] = 'RECLASSIFIED_AS_BRAND'
+                if 'BRAND' not in candidates_by_field or not candidates_by_field['BRAND']:
+                    b_cand = dict(cand)
+                    b_cand['role'] = 'BRAND'
+                    candidates_by_field.setdefault('BRAND', []).append(b_cand)
+            else:
+                clean_pname_candidates.append(cand)
+        candidates_by_field['PRODUCT_NAME'] = clean_pname_candidates
 
     for name, candidates in candidates_by_field.items():
         if not candidates:
@@ -3223,21 +3399,28 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
             lines = grouped_lines + extra_lines
     fields: Dict[str, Any] = {}
 
-    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, effective_items)
-    if p_cand:
+    # 1. Explicit Statutory / Front-Panel Labels
+    explicit_pname = _extract_explicit_product_name(lines)
+    explicit_brand = _extract_brand_candidate(lines)
+    explicit_generic = _extract_explicit_generic_name(lines)
+
+    if explicit_pname:
         fields['PRODUCT_NAME'] = build_product_name_candidate(
-            value=p_cand[:200],
-            raw_text=p_cand,
-            status=p_status,
-            competing_candidates=competing_pnames,
-            confidence=0.65 if p_status == "AMBIGUOUS" else 0.85,
-            source='OCR',
+            value=explicit_pname[:200],
+            raw_text=explicit_pname,
+            status="VALID",
+            confidence=0.92,
+            source='OCR_LABEL',
         )
 
-    # Generalized Commodity & Brand Extraction
+    if explicit_brand:
+        fields['BRAND'] = explicit_brand
+
+    if explicit_generic:
+        fields['GENERIC_NAME'] = {'value': explicit_generic, 'confidence': 0.90, 'source': 'OCR_LABEL'}
+
+    # 2. Generalized Commodity & Brand Extraction
     # Detect generic commodity descriptors across food, personal care, and household commodities.
-    # Combines front-panel layout (brand line above generic product name, or brand prefix
-    # on the same line before the generic commodity name) in a product-agnostic manner.
     GENERIC_COMMODITY_VOCABULARY = [
         (r'\b(?:crystal\s+sugar|granulated\s+sugar|white\s+sugar|refined\s+sugar)\b', 'CRYSTAL SUGAR', 'SUGAR'),
         (r'\b(?:sugar)\b', 'SUGAR', 'SUGAR'),
@@ -3262,7 +3445,6 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     matched_generic = None
     matched_type = None
 
-    # 1. Scan lines from top of package, skipping ingredient, nutrition, and address sections
     for idx, line in enumerate(lines[:12]):
         sec = classify_line_section(line)
         if sec in (SECTION_INGREDIENTS, SECTION_NUTRITION, SECTION_ADDRESS, SECTION_CONSUMER_CARE, SECTION_STORAGE):
@@ -3275,29 +3457,21 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
             if m_gen:
                 matched_generic = gen_name
                 matched_type = prod_type
-                fields['GENERIC_NAME'] = {'value': gen_name, 'confidence': 0.85, 'source': 'OCR'}
-                fields['PRODUCT_TYPE'] = {'value': prod_type, 'confidence': 0.85, 'source': 'OCR'}
+                if 'GENERIC_NAME' not in fields:
+                    fields['GENERIC_NAME'] = {'value': gen_name, 'confidence': 0.85, 'source': 'OCR'}
+                if 'PRODUCT_TYPE' not in fields:
+                    fields['PRODUCT_TYPE'] = {'value': prod_type, 'confidence': 0.85, 'source': 'OCR'}
 
                 # Check if brand tokens appear before the generic match on the same line
                 before_text = line[:m_gen.start()].strip()
-                brand_tokens = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text)
-                if len(brand_tokens) >= 1 and not any(t.lower() in MARKETING_TERMS for t in brand_tokens):
+                before_text = re.sub(r'^(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]*', '', before_text, flags=re.I).strip()
+                COMMODITY_DESCRIPTORS = {'refined', 'pure', 'fresh', 'natural', 'organic', 'raw', 'extra', 'virgin', 'cold', 'pressed', 'classic', 'premium'}
+                brand_tokens = [t for t in re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text) if t.lower() not in MARKETING_TERMS and t.lower() not in COMMODITY_DESCRIPTORS]
+                if len(brand_tokens) >= 1:
                     cand_brand = ' '.join(brand_tokens).title()
-                    fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR'}
-                    fields['PRODUCT_NAME'] = build_product_name_candidate(
-                        value=f"{cand_brand} {gen_name.title()}",
-                        raw_text=f"{cand_brand} {gen_name.title()}",
-                        status="VALID",
-                        confidence=0.85,
-                        source='OCR_LAYOUT',
-                    )
-                elif idx > 0 and 'BRAND' not in fields:
-                    # Check preceding line for brand name
-                    prev_line = lines[idx - 1].strip()
-                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
-                    if 1 <= len(prev_words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in prev_words) and not _is_section_boundary(prev_line):
-                        cand_brand = ' '.join(prev_words).title()
-                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                    if 'BRAND' not in fields:
+                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.84, 'source': 'OCR'}
+                    if 'PRODUCT_NAME' not in fields:
                         fields['PRODUCT_NAME'] = build_product_name_candidate(
                             value=f"{cand_brand} {gen_name.title()}",
                             raw_text=f"{cand_brand} {gen_name.title()}",
@@ -3305,11 +3479,26 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                             confidence=0.85,
                             source='OCR_LAYOUT',
                         )
+                elif idx > 0 and 'BRAND' not in fields:
+                    # Check preceding line for brand name
+                    prev_line = lines[idx - 1].strip()
+                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
+                    if 1 <= len(prev_words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in prev_words) and not _is_section_boundary(prev_line):
+                        cand_brand = ' '.join(prev_words).title()
+                        fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                        if 'PRODUCT_NAME' not in fields:
+                            fields['PRODUCT_NAME'] = build_product_name_candidate(
+                                value=f"{cand_brand} {gen_name.title()}",
+                                raw_text=f"{cand_brand} {gen_name.title()}",
+                                status="VALID",
+                                confidence=0.85,
+                                source='OCR_LAYOUT',
+                            )
                 break
         if matched_generic:
             break
 
-    # 2. Front panel uppercase brand above generic line layout fallback
+    # 3. Front panel uppercase brand above generic line layout fallback
     if 'BRAND' not in fields:
         for index, line in enumerate(lines[:-1]):
             next_line = lines[index + 1]
@@ -3321,7 +3510,7 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 brand = ' '.join(word.title() for word in brand_words)
                 generic = ' '.join(product_words).title()
                 fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
-                if 'PRODUCT_NAME' not in fields or (fields['PRODUCT_NAME'].get('confidence', 0) < 0.8 and fields['PRODUCT_NAME'].get('status') != 'AMBIGUOUS'):
+                if 'PRODUCT_NAME' not in fields:
                     fields['PRODUCT_NAME'] = build_product_name_candidate(
                         value=f'{brand} {generic}',
                         raw_text=f'{brand} {generic}',
@@ -3331,17 +3520,36 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                     )
                 break
 
-    # 3. If product name is still missing or low confidence, combine available brand + generic
-    if 'PRODUCT_NAME' not in fields or (fields['PRODUCT_NAME'].get('confidence', 0) < 0.7 and fields['PRODUCT_NAME'].get('status') != 'AMBIGUOUS'):
-        if 'BRAND' in fields and 'GENERIC_NAME' in fields:
-            fields['PRODUCT_NAME'] = build_product_name_candidate(
-                value=f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
-                raw_text=f"{fields['BRAND']['value']} {fields['GENERIC_NAME']['value'].title()}",
-                status="VALID",
-                confidence=0.82,
-                source='OCR',
-            )
-        elif p_cand and 'PRODUCT_NAME' not in fields:
+    # 4. Brand-only prominent text fallback:
+    # If BRAND is still missing, check if line 0 is a 1-3 word title without product nouns, followed by statutory declarations
+    if 'BRAND' not in fields and lines:
+        first_line = lines[0].strip()
+        first_words = re.findall(r"[A-Za-z][A-Za-z&'-]*", first_line)
+        if 1 <= len(first_words) <= 3 and not _is_disallowed_product_name_line(first_line) and not any(w.lower() in MARKETING_TERMS for w in first_words):
+            remaining = lines[1:]
+            has_product_nouns = bool(re.search(
+                r'\b(?:salt|sugar|biscuit|cookies|oil|tea|coffee|soap|shampoo|cream|flour|atta|maida|rice|masala|juice|toothpaste|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink)\b',
+                first_line, re.I
+            ))
+            if not has_product_nouns and (
+                not remaining or
+                all(
+                    re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|net\s*(?:wt|qty|weight|volume)|mfg|mfd|pkd|exp|batch|use\s*by|best\s*before)\b', l, re.I)
+                    or _is_disallowed_product_name_line(l)
+                    for l in remaining
+                )
+            ):
+                fields['BRAND'] = {'value': first_line.title(), 'confidence': 0.80, 'source': 'OCR_LAYOUT', 'role': 'BRAND'}
+
+    # 5. Extract front-panel PRODUCT_NAME candidates (with known_brand scoping)
+    known_brand_val = fields.get('BRAND', {}).get('value')
+    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, effective_items, known_brand=known_brand_val)
+
+    if 'PRODUCT_NAME' not in fields and p_cand:
+        # Strict semantic validation: do not allow candidate identical to the brand to become PRODUCT_NAME
+        cand_clean = re.sub(r'[^\w\s]', '', p_cand.lower()).strip()
+        brand_clean = re.sub(r'[^\w\s]', '', str(known_brand_val or '').lower()).strip()
+        if not (brand_clean and cand_clean == brand_clean):
             fields['PRODUCT_NAME'] = build_product_name_candidate(
                 value=p_cand[:200],
                 raw_text=p_cand,
