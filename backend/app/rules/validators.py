@@ -7,9 +7,15 @@ is executed deterministically rather than merely checking field presence.
 
 from dataclasses import dataclass, field
 import logging
+import math
 import re
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+from app.core.ontology import (
+    QuantityType,
+    extract_quantity_value_unit,
+    normalize_unit,
+)
 from app.extraction.cleaner import is_artifact_token
 from app.extraction.evidence_model import EvidenceAvailabilityState
 
@@ -1415,6 +1421,571 @@ def validate_veg_nonveg_present(
     )
 
 
+def _extract_declared_quantity_and_unit(
+    all_fields: Dict[str, Any],
+    evidence: Optional[Dict[str, Any]] = None,
+) -> Tuple[Optional[float], Optional[str]]:
+    """Deterministically retrieve declared net quantity numeric value and unit.
+
+    Checks evidence override first, then all_fields ('DECLARED_NET_QUANTITY', 'NET_QUANTITY').
+    """
+    if evidence:
+        for val_k, unit_k in [
+            ("declared_quantity", "declared_unit"),
+            ("declared_weight", "declared_unit"),
+            ("declared_net_quantity", "declared_unit"),
+        ]:
+            if evidence.get(val_k) is not None:
+                try:
+                    q = float(evidence[val_k])
+                    u = evidence.get(unit_k) or evidence.get("unit")
+                    return q, str(u) if u else None
+                except (ValueError, TypeError):
+                    pass
+
+    decl_field = (all_fields or {}).get("DECLARED_NET_QUANTITY") or (all_fields or {}).get("NET_QUANTITY")
+    if decl_field is not None:
+        if isinstance(decl_field, dict):
+            num_val = decl_field.get("numeric_value")
+            if num_val is None:
+                num_val = (
+                    decl_field.get("unit_net_quantity")
+                    or decl_field.get("unit_quantity")
+                    or decl_field.get("quantity_value")
+                )
+            unit_val = (
+                decl_field.get("normalized_unit")
+                or decl_field.get("unit")
+                or decl_field.get("quantity_unit")
+            )
+
+            if num_val is not None:
+                try:
+                    return float(num_val), str(unit_val) if unit_val else None
+                except (ValueError, TypeError):
+                    pass
+
+            text_val = decl_field.get("value") or decl_field.get("raw_value")
+            if text_val:
+                parsed_val, parsed_u, _ = extract_quantity_value_unit(str(text_val))
+                if parsed_val is not None:
+                    return parsed_val, parsed_u or (str(unit_val) if unit_val else None)
+        elif isinstance(decl_field, (int, float)):
+            return float(decl_field), None
+        elif isinstance(decl_field, str):
+            parsed_val, parsed_u, _ = extract_quantity_value_unit(decl_field)
+            if parsed_val is not None:
+                return parsed_val, parsed_u
+
+    return None, None
+
+
+def _extract_measured_quantity_and_unit(
+    evidence: Optional[Dict[str, Any]],
+) -> Tuple[Optional[float], Optional[str]]:
+    """Extract physical measured quantity and unit from evidence."""
+    if not evidence:
+        return None, None
+
+    for k in (
+        "measured_weight",
+        "measured_quantity",
+        "actual_weight",
+        "actual_quantity",
+        "actual_net_content",
+        "numeric_value",
+    ):
+        v = evidence.get(k)
+        if v is not None:
+            try:
+                num = float(v)
+                u = (
+                    evidence.get("measured_unit")
+                    or evidence.get("actual_unit")
+                    or evidence.get("unit")
+                    or evidence.get("quantity_unit")
+                )
+                return num, str(u) if u else None
+            except (ValueError, TypeError):
+                pass
+
+    for k in ("value", "raw_value", "raw_text"):
+        v = evidence.get(k)
+        if v is not None:
+            if isinstance(v, (int, float)):
+                u = evidence.get("measured_unit") or evidence.get("unit")
+                return float(v), str(u) if u else None
+            if isinstance(v, str) and v.strip():
+                parsed_val, parsed_u, _ = extract_quantity_value_unit(v)
+                if parsed_val is not None:
+                    u = evidence.get("measured_unit") or evidence.get("unit") or parsed_u
+                    return parsed_val, str(u) if u else None
+
+    return None, None
+
+
+def _convert_to_base_units(
+    declared_qty: float,
+    declared_unit: Optional[str],
+    measured_qty: float,
+    measured_unit: Optional[str],
+) -> Tuple[float, float, str, Optional[str]]:
+    """Convert declared and measured quantities to their canonical base unit (g, ml, m, sq m, pieces).
+
+    Returns:
+        Tuple of (declared_base, measured_base, base_unit, error_message_if_any)
+    """
+    decl_u_norm, decl_type = normalize_unit(declared_unit)
+    if not measured_unit:
+        measured_unit = declared_unit
+    meas_u_norm, meas_type = normalize_unit(measured_unit)
+
+    if decl_type and meas_type and decl_type != meas_type:
+        return (
+            declared_qty,
+            measured_qty,
+            decl_u_norm or declared_unit or "",
+            f"Measurement dimension mismatch: declared is {decl_type.value} ({declared_unit}) but measured is {meas_type.value} ({measured_unit}).",
+        )
+
+    target_type = decl_type or meas_type or QuantityType.MASS
+    decl_clean = (decl_u_norm or declared_unit or "g").lower()
+    meas_clean = (meas_u_norm or measured_unit or "g").lower()
+
+    if target_type == QuantityType.MASS:
+        base_u = "g"
+        if decl_clean in ("kg", "kgs", "kilogram", "kilograms"):
+            d_base = declared_qty * 1000.0
+        elif decl_clean in ("mg", "milligram", "milligrams"):
+            d_base = declared_qty / 1000.0
+        else:
+            d_base = declared_qty
+
+        if meas_clean in ("kg", "kgs", "kilogram", "kilograms"):
+            m_base = measured_qty * 1000.0
+        elif meas_clean in ("mg", "milligram", "milligrams"):
+            m_base = measured_qty / 1000.0
+        else:
+            m_base = measured_qty
+
+        return d_base, m_base, base_u, None
+
+    if target_type == QuantityType.VOLUME:
+        base_u = "ml"
+        if decl_clean in ("l", "ltr", "litre", "litres", "liter", "liters"):
+            d_base = declared_qty * 1000.0
+        elif decl_clean in ("cl",):
+            d_base = declared_qty * 10.0
+        else:
+            d_base = declared_qty
+
+        if meas_clean in ("l", "ltr", "litre", "litres", "liter", "liters"):
+            m_base = measured_qty * 1000.0
+        elif meas_clean in ("cl",):
+            m_base = measured_qty * 10.0
+        else:
+            m_base = measured_qty
+
+        return d_base, m_base, base_u, None
+
+    if target_type == QuantityType.LENGTH_AREA:
+        base_u = decl_u_norm or "m"
+        d_base = declared_qty
+        m_base = measured_qty
+        if "cm" in decl_clean:
+            d_base = declared_qty / 100.0
+            base_u = "m"
+        if "cm" in meas_clean:
+            m_base = measured_qty / 100.0
+        return d_base, m_base, base_u, None
+
+    return declared_qty, measured_qty, decl_u_norm or "pieces", None
+
+
+def calculate_maximum_permissible_error(
+    declared_quantity: float,
+    unit: str,
+) -> Tuple[float, float, str, str]:
+    """Calculate Maximum Permissible Error (MPE) under Rule 14 & Second Schedule of LMPC Rules, 2011.
+
+    Args:
+        declared_quantity: Declared quantity in canonical base units (e.g. g for mass, ml for volume).
+        unit: Canonical unit string ('g', 'ml', etc.).
+
+    Returns:
+        Tuple of (mpe_value, min_allowable_quantity, base_unit, calculation_description).
+    """
+    q = float(declared_quantity)
+    u = unit.lower()
+
+    if u in ("g", "gm", "gram", "grams", "ml", "millilitre", "millilitres", "milliliter", "milliliters"):
+        base_u = "g" if u in ("g", "gm", "gram", "grams") else "ml"
+        if q <= 50.0:
+            mpe = 0.09 * q
+            desc = f"9.0% of declared quantity ({q:g}{base_u})"
+        elif q <= 100.0:
+            mpe = 4.5
+            desc = f"4.5{base_u} (Rule 14 flat tier for 50-100{base_u})"
+        elif q <= 200.0:
+            mpe = 0.045 * q
+            desc = f"4.5% of declared quantity ({q:g}{base_u})"
+        elif q <= 300.0:
+            mpe = 9.0
+            desc = f"9.0{base_u} (Rule 14 flat tier for 200-300{base_u})"
+        elif q <= 500.0:
+            mpe = 0.03 * q
+            desc = f"3.0% of declared quantity ({q:g}{base_u})"
+        elif q <= 1000.0:
+            mpe = 15.0
+            desc = f"15.0{base_u} (Rule 14 flat tier for 500-1000{base_u})"
+        elif q <= 10000.0:
+            mpe = 0.015 * q
+            desc = f"1.5% of declared quantity ({q:g}{base_u})"
+        elif q <= 15000.0:
+            mpe = 150.0
+            desc = f"150.0{base_u} (Rule 14 flat tier for 10000-15000{base_u})"
+        else:
+            mpe = 0.01 * q
+            desc = f"1.0% of declared quantity ({q:g}{base_u})"
+
+        min_allowable = q - mpe
+        return round(mpe, 4), round(min_allowable, 4), base_u, desc
+
+    mpe = round(0.02 * q, 4)
+    min_allowable = round(q - mpe, 4)
+    return mpe, min_allowable, u, f"2.0% of declared quantity ({q:g}{u})"
+
+
+@register_validator("PHYSICAL_WEIGHT_CHECK")
+def validate_physical_weight(
+    evidence: Optional[Dict[str, Any]],
+    rule: Dict[str, Any],
+    all_fields: Dict[str, Any],
+) -> ValidationResult:
+    """Validate physical gravimetric/volumetric net quantity against Second Schedule MPE tolerances.
+
+    Rule PC-ALL-012 (Legal Metrology Act Sec 18, Rule 14 & Second Schedule, Rule 19 & Third Schedule).
+    Never infers physical weight from OCR, Gemini, visual detection, or package dimensions.
+    Returns NOT_VERIFIABLE when trustworthy physical measurement is unavailable.
+    """
+    parameter = rule.get("parameter", "ACTUAL_NET_CONTENT")
+
+    # 1. Missing evidence check
+    if not evidence:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "Physical net content verification requires direct gravimetric/volumetric measurement "
+                "using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided."
+            ),
+            evidence=None,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 2. Source trustworthiness check (Strict anti-hallucination & anti-visual-inference guard)
+    source = str(evidence.get("source") or "").upper()
+    is_physical = bool(
+        evidence.get("is_physical_measurement") is True
+        or evidence.get("physical_measurement") is True
+        or source in (
+            "PHYSICAL_MEASUREMENT",
+            "SCALE",
+            "CALIBRATED_SCALE",
+            "GRAVIMETRIC",
+            "INSPECTOR_INPUT",
+            "PHYSICAL_INSPECTION",
+            "MANUAL_MEASUREMENT",
+        )
+    )
+
+    if (
+        source in ("GEMINI", "LLM", "AI", "PROMPT", "CHAT")
+        or (source in ("OCR", "VISUAL_DETECTION", "VISUAL", "IMAGE", "INFERENCE") and not is_physical)
+        or evidence.get("inferred_from_image") is True
+        or evidence.get("inferred_from_dimensions") is True
+        or evidence.get("is_estimated") is True
+    ):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "Physical weight cannot be inferred from OCR, Gemini, visual detection, package dimensions, "
+                "or product categories. Physical measurement using calibrated apparatus is required under Rule 19 & Third Schedule."
+            ),
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 3. Extract measured physical quantity
+    meas_qty, meas_unit = _extract_measured_quantity_and_unit(evidence)
+    if meas_qty is None or meas_qty <= 0:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason="No valid physical measured weight/quantity provided in measurement evidence.",
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 4. Retrieve declared net quantity from all_fields
+    decl_qty, decl_unit = _extract_declared_quantity_and_unit(all_fields, evidence)
+    if decl_qty is None or decl_qty <= 0:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason="Cannot verify physical weight: declared net quantity declaration could not be retrieved from package evidence.",
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 5. Unit conversion and normalization
+    d_base, m_base, base_u, err = _convert_to_base_units(
+        decl_qty, decl_unit, meas_qty, meas_unit
+    )
+    if err:
+        return ValidationResult(
+            status="FAIL",
+            binary=0,
+            reason=err,
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value,
+        )
+
+    # 6. Statutory MPE calculation
+    mpe, min_allowable, base_u, calc_desc = calculate_maximum_permissible_error(d_base, base_u)
+    deficiency = round(d_base - m_base, 4)
+
+    # 7. Compliance determination
+    if m_base < min_allowable:
+        status = "FAIL"
+        binary = 0
+        reason = (
+            f"Actual weight {m_base:g}{base_u} is below declared {d_base:g}{base_u} by {deficiency:g}{base_u}, "
+            f"exceeding maximum permissible error of {mpe:g}{base_u} (minimum allowable: {min_allowable:g}{base_u} "
+            f"under Rule 14 & Second Schedule)."
+        )
+    else:
+        status = "PASS"
+        binary = 1
+        if m_base >= d_base:
+            reason = (
+                f"Actual weight {m_base:g}{base_u} satisfies declared {d_base:g}{base_u} "
+                f"(exceeds or meets declared quantity; within MPE tolerance of {mpe:g}{base_u})."
+            )
+        else:
+            reason = (
+                f"Actual weight {m_base:g}{base_u} satisfies declared {d_base:g}{base_u} "
+                f"within maximum permissible error tolerance (deficiency {deficiency:g}{base_u} <= MPE {mpe:g}{base_u}, "
+                f"minimum allowable: {min_allowable:g}{base_u} under Rule 14 & Second Schedule)."
+            )
+
+    # 8. Provenance preservation
+    ev_record = dict(evidence)
+    ev_record.update({
+        "declared_quantity": decl_qty,
+        "declared_unit": decl_unit,
+        "declared_base_quantity": d_base,
+        "measured_quantity": meas_qty,
+        "measured_unit": meas_unit,
+        "measured_base_quantity": m_base,
+        "base_unit": base_u,
+        "applicable_tolerance_mpe": mpe,
+        "minimum_allowable_quantity": min_allowable,
+        "deficiency": max(0.0, deficiency),
+        "mpe_calculation": calc_desc,
+        "statutory_reference": "Legal Metrology Act 2009 Sec 18; LMPC Rules 2011 Rule 14 (Sched II), Rule 19 (Sched III)",
+    })
+
+    return ValidationResult(
+        status=status,
+        binary=binary,
+        reason=reason,
+        normalized_value=f"{m_base:g} {base_u}",
+        raw_value=str(evidence.get("raw_value") or evidence.get("value") or f"{meas_qty} {meas_unit or base_u}"),
+        value=m_base,
+        unit=base_u,
+        evidence=ev_record,
+        evidence_state=EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+    )
+
+
+@register_validator("FONT_SIZE_CHECK")
+def validate_font_size(
+    evidence: Optional[Dict[str, Any]],
+    rule: Dict[str, Any],
+    all_fields: Dict[str, Any],
+) -> ValidationResult:
+    """Validate font/numeral height in millimetres against Rule 7(3) Table-I / Table-II minimums.
+
+    Rule PC-ALL-013 (Legal Metrology (Packaged Commodities) Rules, 2011 Rule 7(3)).
+    Never interprets raw OCR bounding box pixel height as physical millimetres.
+    Requires calibrated measurement (caliper, calibrated optical graticule, or physical measurement gauge).
+    Returns NOT_VERIFIABLE when calibrated physical measurement is unavailable.
+    """
+    parameter = rule.get("parameter", "FONT_SIZE_COMPLIANCE")
+
+    # 1. Missing evidence check
+    if not evidence:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "Visual screening cannot confirm physical millimetre height without calibrated optics and "
+                "physical scale reference. Physical measurement of numeral and letter height in millimeters "
+                "using calibrated gauge or caliper under Rule 7 Table-I/II required."
+            ),
+            evidence=None,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 2. Source trustworthiness check (Strict anti-hallucination & anti-visual-inference guard)
+    source = str(evidence.get("source") or "").upper()
+    if source in ("GEMINI", "LLM", "AI", "PROMPT", "CHAT"):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason="Font size compliance cannot be determined by Gemini or visual LLM estimation. Calibrated physical measurement required under Rule 7 Table-I/II.",
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 3. Calibration verification
+    is_calibrated = bool(
+        evidence.get("is_calibrated") is True
+        or evidence.get("calibrated") is True
+        or evidence.get("calibration_factor") is not None
+        or evidence.get("calibration_reference") is not None
+        or source in (
+            "CALIPER",
+            "VERNIER_CALIPER",
+            "CALIBRATED_GAUGE",
+            "CALIBRATED_OPTICS",
+            "OPTICAL_GRATICULE",
+            "PHYSICAL_MEASUREMENT",
+            "INSPECTOR_INPUT",
+        )
+    )
+
+    # Reject raw uncalibrated pixel bounding boxes
+    if not is_calibrated or (evidence.get("pixel_height") is not None and not evidence.get("is_calibrated")):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "Visual screening cannot confirm physical millimetre height without calibrated optics and "
+                "physical scale reference. Ordinary OCR bounding box pixel height cannot be interpreted as physical millimetres."
+            ),
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 4. Extract measured physical height in mm
+    measured_mm: Optional[float] = None
+    for k in (
+        "measured_height_mm",
+        "measured_font_size_mm",
+        "measured_height",
+        "measured_mm",
+        "font_size_mm",
+        "numeric_value",
+        "value",
+    ):
+        v = evidence.get(k)
+        if v is not None:
+            if isinstance(v, (int, float)):
+                measured_mm = float(v)
+                break
+            if isinstance(v, str):
+                cleaned = re.sub(r"[^\d.]", "", v)
+                if cleaned:
+                    try:
+                        measured_mm = float(cleaned)
+                        break
+                    except ValueError:
+                        pass
+
+    if measured_mm is None or measured_mm <= 0:
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason="No valid calibrated font height measurement in millimetres found in evidence.",
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+        )
+
+    # 5. Determine applicable minimum font height requirement under Rule 7(3) Table-I / Table-II
+    required_mm: float = 2.0  # Statutory baseline for numerals/letters
+    rule_specified = rule.get("minimum_height_mm") or rule.get("required_height_mm") or rule.get("threshold_mm")
+    ev_specified = evidence.get("required_height_mm") or evidence.get("minimum_height_mm") or evidence.get("threshold_mm")
+
+    if rule_specified is not None:
+        try:
+            required_mm = float(rule_specified)
+        except (ValueError, TypeError):
+            pass
+    elif ev_specified is not None:
+        try:
+            required_mm = float(ev_specified)
+        except (ValueError, TypeError):
+            pass
+    else:
+        decl_qty, decl_unit = _extract_declared_quantity_and_unit(all_fields, evidence)
+        if decl_qty is not None and decl_qty > 0:
+            norm_u, q_type = normalize_unit(decl_unit)
+            if q_type == QuantityType.MASS:
+                q_g = decl_qty * 1000.0 if norm_u == "kg" else (decl_qty / 1000.0 if norm_u == "mg" else decl_qty)
+                if q_g <= 50.0:
+                    required_mm = 1.0
+                elif q_g <= 200.0:
+                    required_mm = 2.0
+                elif q_g <= 1000.0:
+                    required_mm = 4.0
+                else:
+                    required_mm = 6.0
+            elif q_type == QuantityType.VOLUME:
+                q_ml = decl_qty * 1000.0 if norm_u == "L" else (decl_qty * 10.0 if norm_u == "cl" else decl_qty)
+                if q_ml <= 50.0:
+                    required_mm = 1.0
+                elif q_ml <= 200.0:
+                    required_mm = 2.0
+                elif q_ml <= 1000.0:
+                    required_mm = 4.0
+                else:
+                    required_mm = 6.0
+
+    # 6. Compare measured physical height deterministically
+    if measured_mm >= required_mm:
+        status = "PASS"
+        binary = 1
+        reason = f"Measured font height {measured_mm:g}mm satisfies statutory minimum {required_mm:g}mm under Rule 7(3)."
+    else:
+        status = "FAIL"
+        binary = 0
+        reason = f"Font height {measured_mm:g}mm is below required {required_mm:g}mm under Rule 7(3)."
+
+    # 7. Preserve evidence provenance
+    ev_record = dict(evidence)
+    ev_record.update({
+        "measured_height_mm": measured_mm,
+        "required_height_mm": required_mm,
+        "is_calibrated": True,
+        "statutory_reference": "Rule 7(3), Table-I & Table-II of Legal Metrology (Packaged Commodities) Rules, 2011",
+    })
+
+    return ValidationResult(
+        status=status,
+        binary=binary,
+        reason=reason,
+        normalized_value=f"{measured_mm:g} mm",
+        raw_value=str(evidence.get("raw_value") or evidence.get("value") or f"{measured_mm} mm"),
+        value=measured_mm,
+        unit="mm",
+        evidence=ev_record,
+        evidence_state=EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+    )
+
+
 # Fallback mapping from rule parameter to validation method if omitted in rule dict
 DEFAULT_PARAMETER_VALIDATION_METHODS: Dict[str, str] = {
     "PRODUCT_NAME": "TEXT_PRESENT",
@@ -1437,6 +2008,8 @@ DEFAULT_PARAMETER_VALIDATION_METHODS: Dict[str, str] = {
     "VEG_NONVEG_SYMBOL": "VEG_NONVEG_PRESENT",
     "BATCH_NUMBER": "BATCH_NUMBER_PRESENT",
     "USE_BEFORE_DATE": "EXPIRY_DATE_PRESENT",
+    "ACTUAL_NET_CONTENT": "PHYSICAL_WEIGHT_CHECK",
+    "FONT_SIZE_COMPLIANCE": "FONT_SIZE_CHECK",
 }
 
 
