@@ -66,6 +66,16 @@ class PackageContext(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Overall classification confidence")
     reasoning: Optional[str] = Field(default=None, description="Factual textual basis for inferred context")
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Allow safe dictionary-like .get access on the Pydantic model for backward compatibility."""
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        """Allow dictionary-like subscription on the Pydantic model for backward compatibility."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
 
 class LLMExtractionResult(BaseModel):
     """Complete structured output from Gemini Semantic Evidence Resolver."""

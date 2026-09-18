@@ -82,6 +82,11 @@ class GeminiClient:
         metadata: Dict[str, Any] = {
             "llm_enabled": self.is_enabled(),
             "llm_model": self.settings.GEMINI_MODEL,
+            "requested_model": self.settings.GEMINI_MODEL,
+            "used_model": None,
+            "model_used": None,
+            "fallback_used": False,
+            "fallback_occurred": False,
             "llm_fallback_model": self.settings.GEMINI_FALLBACK_MODEL,
             "llm_status": "DISABLED" if not self.is_enabled() else "PENDING",
             "llm_processing_time_ms": 0,
@@ -172,8 +177,11 @@ class GeminiClient:
                     if parsed_result:
                         metadata["llm_status"] = "SUCCESS"
                         metadata["llm_model"] = model_name
+                        metadata["requested_model"] = self.settings.GEMINI_MODEL
+                        metadata["used_model"] = model_name
                         metadata["model_used"] = model_name
                         metadata["llm_model_tier"] = model_tier
+                        metadata["fallback_used"] = (model_tier == "fallback")
                         metadata["fallback_occurred"] = (model_tier == "fallback")
                         metadata["llm_processing_time_ms"] = elapsed_ms
                         metadata["latency_ms"] = elapsed_ms
@@ -198,8 +206,15 @@ class GeminiClient:
                         error_str,
                     )
 
-                    is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str.upper() or "quota" in error_str.lower()
-                    is_server_error = "500" in error_str or "503" in error_str or "UNAVAILABLE" in error_str.upper()
+                    is_rate_limit = (
+                        "429" in error_str
+                        or "RESOURCE_EXHAUSTED" in error_str.upper()
+                        or "quota" in error_str.lower()
+                    )
+                    is_server_error = (
+                        any(c in error_str for c in ("500", "502", "503", "504"))
+                        or any(t in error_str.upper() for t in ("UNAVAILABLE", "DEADLINE_EXCEEDED", "TIMEOUT", "INTERNAL"))
+                    )
 
                     if retry_idx < max_retries - 1 and (is_rate_limit or is_server_error):
                         sleep_time = backoff_base * (2 ** retry_idx)
