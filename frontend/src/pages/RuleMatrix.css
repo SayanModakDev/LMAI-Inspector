@@ -1,0 +1,119 @@
+.rule-matrix-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.rule-matrix-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.rule-matrix-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.rule-matrix-subtitle {
+  font-size: 0.825rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.rule-matrix-filter-body {
+  padding: 0.85rem 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.rule-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 280px;
+}
+
+.rule-search-input {
+  width: 100%;
+  padding: 0.45rem 0.75rem 0.45rem 2.2rem;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  font-size: 0.825rem;
+}
+
+.rule-search-input:focus {
+  outline: none;
+  border-color: var(--primary-600);
+}
+
+.rule-filter-selectors {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.filter-select-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.form-control-sm {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.775rem;
+  width: auto;
+}
+
+.rule-row {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.rule-row:hover {
+  background-color: #F8FAFC;
+}
+
+.rule-row--expanded {
+  background-color: #F1F5F9;
+}
+
+.rule-expanded-row td {
+  background-color: #F8FAFC;
+  padding: 1rem 1.5rem;
+}
+
+.rule-detail-card {
+  border-left: 3px solid var(--primary-600);
+  padding-left: 1rem;
+}
+
+.rule-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.detail-tag {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.detail-text {
+  font-size: 0.825rem;
+  color: var(--text-main);
+  line-height: 1.4;
+}

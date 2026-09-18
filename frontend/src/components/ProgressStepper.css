@@ -1,0 +1,107 @@
+.progress-stepper {
+  width: 100%;
+  padding: 0.85rem 1.25rem;
+  background: #FFFFFF;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  margin-bottom: 1.25rem;
+}
+
+.progress-stepper__track {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+}
+
+.stepper-node {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  z-index: 2;
+  position: relative;
+}
+
+.stepper-node__circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.775rem;
+  font-weight: 700;
+  transition: all 0.2s ease;
+  border: 2px solid var(--border-medium);
+  background-color: #FFFFFF;
+  color: var(--text-muted);
+}
+
+.stepper-node__content {
+  display: flex;
+  flex-direction: column;
+}
+
+.stepper-node__step-num {
+  font-size: 0.675rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.stepper-node__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* States */
+.stepper-node--current .stepper-node__circle {
+  border-color: var(--primary-700);
+  background-color: var(--primary-700);
+  color: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.stepper-node--current .stepper-node__title {
+  color: var(--primary-800);
+  font-weight: 700;
+}
+
+.stepper-node--completed .stepper-node__circle {
+  border-color: var(--status-pass-solid);
+  background-color: var(--status-pass-solid);
+  color: #FFFFFF;
+}
+
+.stepper-node--completed .stepper-node__title {
+  color: var(--text-main);
+}
+
+.stepper-connector {
+  flex: 1;
+  height: 2px;
+  background-color: var(--border-subtle);
+  margin: 0 0.65rem;
+  transition: background-color 0.25s ease;
+}
+
+.stepper-connector--completed {
+  background-color: var(--status-pass-solid);
+}
+
+/* Responsive collapse on mobile / tablet */
+@media (max-width: 840px) {
+  .progress-stepper {
+    padding: 0.65rem 0.85rem;
+  }
+  .stepper-node__content {
+    display: none;
+  }
+  .stepper-node--current .stepper-node__content {
+    display: flex;
+  }
+}
