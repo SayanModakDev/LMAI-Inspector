@@ -141,7 +141,7 @@ const Reports = () => {
                     </div>
                   ) : (
                     <Link to={`/result/${item.id}`} className="btn btn-primary btn-sm full-width">
-                      <Printer size={13} /> Review & Generate PDF
+                      <Printer size={13} /> Generate PDF
                     </Link>
                   )}
                 </div>

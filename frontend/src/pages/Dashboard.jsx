@@ -91,11 +91,11 @@ const Dashboard = () => {
           subtitle="Meets all verified rules"
         />
         <MetricCard
-          label="Requires Review"
+          label="Not Detected"
           value={stats?.not_verifiable ?? 0}
           status="review"
           icon={<AlertTriangle size={18} />}
-          subtitle="Insufficient / conflicting evidence"
+          subtitle="Declarations not detected in package images"
         />
         <MetricCard
           label="Failed (Non-Compliant)"
@@ -266,7 +266,7 @@ const Dashboard = () => {
                   <FileText size={16} className="capability-icon text-primary" />
                   <div>
                     <div className="capability-title">Inspection Report Generation</div>
-                    <div className="capability-desc">Generates PDF inspection reports summarizing declarations, compliance checks, and evidence for review.</div>
+                    <div className="capability-desc">Generates PDF inspection reports summarizing declarations, automatic checks, and package evidence.</div>
                   </div>
                 </li>
               </ul>

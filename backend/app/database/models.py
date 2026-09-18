@@ -50,14 +50,14 @@ class Inspection(Base):
     product_type = Column(String(100), nullable=True)
     category = Column(String(50), nullable=True)  # FOOD, COSMETIC, UNKNOWN
     category_confidence = Column(Float, nullable=True)
-    package_type = Column(String(50), default="RETAIL")  # RETAIL, WHOLESALE, etc.
-    import_status = Column(String(50), default="DOMESTIC")  # DOMESTIC, IMPORTED
+    package_type = Column(String(50), default="NOT_DETECTED")  # RETAIL, WHOLESALE, NOT_DETECTED
+    import_status = Column(String(50), default="NOT_DETECTED")  # DOMESTIC, IMPORTED, NOT_DETECTED
     quantity_type = Column(String(50), nullable=True)  # WEIGHT, VOLUME, COUNT, LENGTH, AREA
     overall_result = Column(String(50), nullable=True)  # COMPLIANT, NON-COMPLIANT, NOT_VERIFIABLE
     priority = Column(String(20), default="MEDIUM")  # LOW, MEDIUM, HIGH
     image_path = Column(String(500), nullable=True)
     processed_image_path = Column(String(500), nullable=True)
-    inspector_name = Column(String(255), default="Default Inspector")
+    inspector_name = Column(String(255), default="Automatic Image Analysis")
     inspector_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     notes = Column(Text, nullable=True)
     regulatory_snapshot = Column(String(255), nullable=True)
@@ -118,11 +118,6 @@ class Product(Base):
     unit_sale_price = Column(String(50), nullable=True)
     ingredients = Column(Text, nullable=True)
     dimensions = Column(String(100), nullable=True)
-    # Physical measurement fields — NEVER populated from OCR
-    actual_measured_weight = Column(Float, nullable=True)
-    actual_weight_unit = Column(String(20), nullable=True)
-    measurement_source = Column(String(50), nullable=True)  # MANUAL_SCALE, etc.
-    measurement_timestamp = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     inspection = relationship("Inspection", back_populates="product")
@@ -207,7 +202,6 @@ class Rule(Base):
     publication_date = Column(String(20), nullable=True)
     applicability = Column(String(255), nullable=True)
     screening_scope = Column(Text, nullable=True)
-    physical_scope = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -233,7 +227,6 @@ class RuleResult(Base):
     citation = Column(String(255), nullable=True)
     verification_status = Column(String(50), nullable=True)
     review_required = Column(Boolean, default=False)
-    inspector_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     inspection = relationship("Inspection", back_populates="rule_results")

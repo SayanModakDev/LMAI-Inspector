@@ -15,8 +15,8 @@ class ScanResponse(BaseModel):
     inspection_id: int
     category: Optional[str] = None
     category_confidence: Optional[float] = None
-    package_type: str = "RETAIL"
-    import_status: str = "DOMESTIC"
+    package_type: str = "NOT_DETECTED"
+    import_status: str = "NOT_DETECTED"
     product_name: Optional[str] = None
     brand: Optional[str] = None
     product_type: Optional[str] = None
@@ -46,8 +46,8 @@ class InspectionDetail(BaseModel):
     product_name: Optional[str] = None
     category: Optional[str] = None
     category_confidence: Optional[float] = None
-    package_type: str = "RETAIL"
-    import_status: str = "DOMESTIC"
+    package_type: str = "NOT_DETECTED"
+    import_status: str = "NOT_DETECTED"
     quantity_type: Optional[str] = None
     overall_result: Optional[str] = None
     priority: str = "MEDIUM"
@@ -78,8 +78,8 @@ class InspectionSummary(BaseModel):
     inspection_date: Optional[datetime] = None
     product_name: Optional[str] = None
     category: Optional[str] = None
-    package_type: Optional[str] = "RETAIL"
-    import_status: Optional[str] = "DOMESTIC"
+    package_type: Optional[str] = "NOT_DETECTED"
+    import_status: Optional[str] = "NOT_DETECTED"
     overall_result: Optional[str] = None
     priority: str = "MEDIUM"
     inspector_name: Optional[str] = None
@@ -88,21 +88,6 @@ class InspectionSummary(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# ---------------------------------------------------------------------------
-# Manual Input
-# ---------------------------------------------------------------------------
-class ManualInputRequest(BaseModel):
-    """POST /api/manual-input body."""
-    inspection_id: int
-    actual_measured_weight: Optional[float] = None
-    actual_weight_unit: Optional[str] = None
-    measurement_source: Optional[str] = "MANUAL_SCALE"
-    inspector_notes: Optional[str] = None
-    # Category-aware declaration corrections. Values are stored as MANUAL
-    # evidence while earlier OCR evidence remains traceable in evidence_items.
-    field_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +143,6 @@ class RuleSchema(BaseModel):
     publication_date: Optional[str] = None
     applicability: Optional[str] = None
     screening_scope: Optional[str] = None
-    physical_scope: Optional[str] = None
     notes: Optional[str] = None
 
 

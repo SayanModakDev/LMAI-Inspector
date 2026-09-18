@@ -42,7 +42,7 @@ const PIPELINE_STAGES = [
 const Processing = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { files, packageType, importStatus, previewUrls } = location.state || {};
+  const { files, previewUrls } = location.state || {};
 
   const [activeStageIndex, setActiveStageIndex] = useState(0);
   const [error, setError] = useState(null);
@@ -106,8 +106,6 @@ const Processing = () => {
       try {
         const response = await apiService.uploadScan(
           files,
-          packageType,
-          importStatus,
           (progressEvent) => {
             if (progressEvent.total && isMountedRef.current) {
               const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -149,7 +147,7 @@ const Processing = () => {
     };
 
     executeInspection();
-  }, [files, packageType, importStatus, navigate]);
+  }, [files, navigate]);
 
   return (
     <div className="processing-page">

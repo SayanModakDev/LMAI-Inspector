@@ -14,7 +14,7 @@ os.environ.setdefault("FLAGS_eager_delete_tensor_gb", "0.0")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
-from app.ocr.preprocessing import generate_single_variant, validate_image_file
+from app.ocr.preprocessing import generate_rotated_variant, generate_single_variant, validate_image_file
 from app.utils.memory import force_garbage_collection, log_memory_checkpoint
 
 logger = logging.getLogger(__name__)
@@ -197,17 +197,23 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     finally:
         force_garbage_collection()
 
-    # Targeted retry: Only generate fallback variant if primary pass yielded zero text
+    # Targeted retries: rotations are attempted only when the primary pass is weak.
     primary_count = candidates[0]["count"] if candidates else 0
-    if primary_count == 0:
+    if primary_count < 3:
         variant_dir = os.path.join(os.path.dirname(image_path), "ocr_variants")
-        for v_name in ["contrast"]:
+        retry_variants = ["contrast"]
+        if primary_count == 0:
+            retry_variants.extend(["rotate90", "rotate180", "rotate270"])
+        for v_name in retry_variants:
             attempt_count += 1
             logger.info("OCR retry attempt started for %s (variant=%s)", image_path, v_name)
             v_path = None
             try:
                 # Generate single variant on demand; releases NumPy arrays immediately
-                v_path = generate_single_variant(image_path, v_name, variant_dir)
+                if v_name.startswith("rotate"):
+                    v_path = generate_rotated_variant(image_path, int(v_name.replace("rotate", "")), variant_dir)
+                else:
+                    v_path = generate_single_variant(image_path, v_name, variant_dir)
                 ocr = _get_ocr()
                 v_results = ocr.ocr(v_path, cls=False)
                 v_items = _collect_ocr_items(v_results)

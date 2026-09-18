@@ -87,7 +87,7 @@ const History = () => {
             {[
               { key: 'ALL', label: 'All Inspections' },
               { key: 'COMPLIANT', label: 'Compliant' },
-              { key: 'NOT_VERIFIABLE', label: 'Requires Review' },
+              { key: 'NOT_VERIFIABLE', label: 'Not Detected' },
               { key: 'NON_COMPLIANT', label: 'Non-Compliant' },
             ].map((tab) => (
               <button
@@ -165,8 +165,8 @@ const History = () => {
                         <span className="badge badge-gray">{item.category || 'COMMODITY'}</span>
                       </td>
                       <td className="text-xs">
-                        <div className="text-secondary">{item.package_type || 'RETAIL'}</div>
-                        <div className="text-muted font-mono">{item.import_status || 'DOMESTIC'}</div>
+                        <div className="text-secondary">{item.package_type || 'NOT_DETECTED'}</div>
+                        <div className="text-muted font-mono">{item.import_status || 'NOT_DETECTED'}</div>
                       </td>
                       <td>
                         <StatusBadge status={item.overall_result} size="sm" showBinary={true} />
@@ -187,7 +187,7 @@ const History = () => {
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <Link to={`/result/${item.id}`} className="btn btn-primary btn-sm">
-                          <Eye size={13} /> Review Inspection
+                          <Eye size={13} /> View Inspection
                         </Link>
                       </td>
                     </tr>

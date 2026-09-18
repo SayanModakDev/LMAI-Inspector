@@ -15,12 +15,6 @@ import {
 import ProgressStepper from '../components/ProgressStepper';
 import './Scan.css';
 
-const PACKAGE_TYPE_GUIDANCE = {
-  RETAIL: 'Retail-package declaration set applies.',
-  WHOLESALE: 'Wholesale-package declaration set applies; retail-only declarations may be not applicable.',
-  INSTITUTIONAL: 'Retail packaged-commodity screening requirements are excluded where applicable.',
-};
-
 const Scan = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -30,8 +24,6 @@ const Scan = () => {
 
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
-  const [packageType, setPackageType] = useState('RETAIL');
-  const [importStatus, setImportStatus] = useState('DOMESTIC');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [error, setError] = useState(null);
 
@@ -151,8 +143,6 @@ const Scan = () => {
     navigate('/processing', {
       state: {
         files,
-        packageType,
-        importStatus,
         previewUrls: previews,
       },
     });
@@ -291,59 +281,32 @@ const Scan = () => {
           )}
         </div>
 
-        {/* Right: Inspection Scope Parameters */}
+        {/* Right: Automatic Inspection */}
         <div className="scan-params-col">
           <div className="card">
             <div className="card-header flex-between">
               <div className="flex items-center gap-2">
                 <Layers size={16} className="text-primary" />
-                <span>Inspection Scope Parameters</span>
+                <span>Automatic Inspection</span>
               </div>
-              <span className="badge badge-gray font-mono">User Configured</span>
+              <span className="badge badge-success font-mono">Image Driven</span>
             </div>
 
             <div className="card-body">
               <form onSubmit={handleSubmit}>
                 <div className="scope-input-section">
                   <div className="text-xs text-muted leading-relaxed">
-                    <span className="font-semibold text-main">Scope Scaffolding:</span> These parameters reflect operational context specified by the user to configure applicable rule sets. Declarations (MRP, Net Qty, Dates) will be detected automatically by the OCR engine.
+                    <span className="font-semibold text-main">No configuration required:</span> package type, import status, category, product identity, declarations, applicable rules, and compliance are determined from all submitted package panels.
                   </div>
 
                   <div className="form-group mb-0">
-                    <label className="form-label flex-between items-center mb-1">
-                      <span className="font-semibold">Package Classification</span>
-                      <span className="scope-badge">Inspection Scope • User supplied</span>
-                    </label>
-                    <select
-                      className="form-control"
-                      value={packageType}
-                      onChange={(e) => setPackageType(e.target.value)}
-                    >
-                      <option value="RETAIL">Retail Package (Direct Consumer Sale)</option>
-                      <option value="WHOLESALE">Wholesale Package (Commercial Distribution)</option>
-                      <option value="INSTITUTIONAL">Institutional / Industrial Consumption</option>
-                    </select>
-                    <span className="form-help">
-                      {PACKAGE_TYPE_GUIDANCE[packageType] || PACKAGE_TYPE_GUIDANCE.RETAIL}
-                    </span>
+                    <label className="form-label mb-1"><span className="font-semibold">Package context</span></label>
+                    <div className="form-help">Detecting from retail-sale, bulk, institutional, quantity, price, and declaration evidence.</div>
                   </div>
 
                   <div className="form-group mb-0">
-                    <label className="form-label flex-between items-center mb-1">
-                      <span className="font-semibold">Import Status</span>
-                      <span className="scope-badge">Inspection Scope • User supplied</span>
-                    </label>
-                    <select
-                      className="form-control"
-                      value={importStatus}
-                      onChange={(e) => setImportStatus(e.target.value)}
-                    >
-                      <option value="DOMESTIC">Domestic Commodity</option>
-                      <option value="IMPORTED">Imported Commodity (Overseas Manufacturing)</option>
-                    </select>
-                    <span className="form-help">
-                      For inspection scoping only; origin/manufacturing declarations are evaluated from package evidence.
-                    </span>
+                    <label className="form-label mb-1"><span className="font-semibold">Import status</span></label>
+                    <div className="form-help">Detecting from country-of-origin, made/manufactured-in, importer, and origin evidence.</div>
                   </div>
                 </div>
 

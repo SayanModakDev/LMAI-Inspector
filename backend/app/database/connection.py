@@ -79,7 +79,6 @@ def _add_missing_columns():
             "publication_date": "VARCHAR(20)",
             "applicability": "VARCHAR(255)",
             "screening_scope": "TEXT",
-            "physical_scope": "TEXT",
             "notes": "TEXT",
         },
         "rule_results": {

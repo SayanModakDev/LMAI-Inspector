@@ -33,7 +33,7 @@ const Home = () => {
               <FileText size={32} />
             </div>
             <h3>Inspection History</h3>
-            <p>Review past inspections, manual verifications, and generated PDF reports.</p>
+            <p>Review past inspections and generated PDF reports.</p>
             <Link to="/history" className="btn btn-outline mt-auto">View History</Link>
           </div>
           
@@ -50,7 +50,7 @@ const Home = () => {
       
       <div className="info-banner warning-banner">
         <strong>Important Disclaimer:</strong> This system is an inspection-support tool. 
-        It does not provide automatic legal certification. Final verification must be made by the authorized inspector.
+        It provides automatic package-image screening results and does not issue statutory certificates.
       </div>
     </div>
   );

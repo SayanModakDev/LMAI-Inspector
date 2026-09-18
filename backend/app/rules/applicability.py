@@ -5,12 +5,11 @@ only the rules applicable to a specific product context.
 Filters by:
 - Category (FOOD, COSMETIC, ALL)
 - Package type (RETAIL, WHOLESALE, ALL)
-- Condition (APPLICABLE, IMPORTED_ONLY, PHYSICAL_ONLY)
+- Condition (APPLICABLE, IMPORTED_ONLY)
 - Active status
 
 Rules with condition=IMPORTED_ONLY are only included when import_status=IMPORTED.
-Rules with condition=PHYSICAL_ONLY are only included when physical measurements
-are available (manual input).
+All active rules are evaluated against declarations detected from package images.
 """
 
 import logging
@@ -23,10 +22,9 @@ logger = logging.getLogger(__name__)
 def get_applicable_rules(
     all_rules: List[Dict[str, Any]],
     category: str = "UNKNOWN",
-    package_type: str = "RETAIL",
-    import_status: str = "DOMESTIC",
+    package_type: str = "NOT_DETECTED",
+    import_status: str = "NOT_DETECTED",
     product_type: str = "UNKNOWN",
-    has_physical_data: bool = False,
     inspection_date: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -37,7 +35,6 @@ def get_applicable_rules(
         category: Product category — FOOD, COSMETIC, or UNKNOWN.
         package_type: RETAIL, WHOLESALE, INSTITUTIONAL, or INDUSTRIAL.
         import_status: DOMESTIC or IMPORTED.
-        has_physical_data: Whether manual measurement data was provided.
         inspection_date: ISO date string (YYYY-MM-DD) controlling rule version applicability.
 
     Returns:
@@ -130,34 +127,10 @@ def get_applicable_rules(
     logger.info(
         f"Rule applicability: {len(applicable)}/{len(all_rules)} rules applicable "
         f"(category={category}, product_type={product_type}, pkg={package_type}, import={import_status}, "
-        f"physical={has_physical_data}, date={norm_inspect_date})"
+        f"date={norm_inspect_date})"
     )
 
     return applicable
-
-
-def categorize_rules_by_verification_type(
-    rules: List[Dict[str, Any]],
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Group applicable rules by their verification_type.
-
-    Returns:
-        {
-            "IMAGE_VERIFIABLE": [...],
-            "IMAGE_ESTIMABLE": [...],
-            "PHYSICAL_VERIFICATION_REQUIRED": [...],
-        }
-    """
-    groups: Dict[str, List[Dict[str, Any]]] = {}
-
-    for rule in rules:
-        vtype = rule.get('verification_type', 'IMAGE_VERIFIABLE')
-        if vtype not in groups:
-            groups[vtype] = []
-        groups[vtype].append(rule)
-
-    return groups
 
 
 def get_rule_priority_order(

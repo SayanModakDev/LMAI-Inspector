@@ -40,7 +40,7 @@ const AppLayout = ({ children }) => {
     if (pathname === '/history') return 'Inspection History Registry';
     if (pathname === '/reports') return 'Inspection Reports & Summaries';
     if (pathname === '/rules') return 'Legal Metrology Rule Matrix';
-    if (pathname === '/settings') return 'Inspector Profile & System Settings';
+    if (pathname === '/settings') return 'Workstation Settings';
     if (pathname === '/about') return 'About LMAI Inspector';
     return 'LMAI Inspector';
   };
@@ -95,9 +95,9 @@ const AppLayout = ({ children }) => {
             <Link to="/scan" className="btn btn-primary btn-sm topbar-cta">
               <Plus size={14} /> New Inspection
             </Link>
-            <Link to="/settings" className="topbar-inspector-pill" title="Configure Inspector Profile">
+            <Link to="/settings" className="topbar-inspector-pill" title="Configure Workstation Settings">
               <ShieldCheck size={14} className="text-primary" />
-              <span>{profile.name || 'Inspector Profile'}</span>
+              <span>{profile.name || 'Workspace User'}</span>
             </Link>
           </div>
         </header>

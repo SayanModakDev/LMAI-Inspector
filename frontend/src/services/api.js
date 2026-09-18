@@ -24,11 +24,9 @@ const api = axios.create({
 
 export const apiService = {
   // Scan
-  uploadScan: async (files, packageType = 'RETAIL', importStatus = 'DOMESTIC', onUploadProgress) => {
+  uploadScan: async (files, onUploadProgress) => {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
-    formData.append('package_type', packageType);
-    formData.append('import_status', importStatus);
 
     const response = await api.post('/scan', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -51,11 +49,6 @@ export const apiService = {
 
   getDashboardStats: async () => {
     const response = await api.get('/dashboard');
-    return response.data;
-  },
-
-  submitManualInput: async (data) => {
-    const response = await api.post('/manual-input', data);
     return response.data;
   },
 

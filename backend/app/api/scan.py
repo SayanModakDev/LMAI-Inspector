@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.classification.category_classifier import classify_category
+from app.classification.package_context import detect_package_context
 from app.core.config import get_settings
 from app.database import models, schemas
 from app.database.connection import get_db
@@ -16,6 +17,7 @@ from app.ocr.ocr_service import run_ocr
 from app.ocr.preprocessing import preprocess_image
 from app.rules.applicability import get_applicable_rules
 from app.rules.rule_engine import evaluate_rules, build_inspection_findings, calculate_rule_summary
+from app.reports.pdf_report import generate_inspection_pdf
 from app.utils.helpers import (
     generate_filename,
     sanitize_filename,
@@ -46,8 +48,6 @@ def format_public_url(path: str) -> str:
 async def perform_scan(
     files: List[UploadFile] = File(default=None),
     file: UploadFile = File(default=None),
-    package_type: str = Form("RETAIL"),
-    import_status: str = Form("DOMESTIC"),
     db: Session = Depends(get_db),
 ):
     """Upload any number of label images and perform one combined inspection pipeline."""
@@ -225,6 +225,11 @@ async def perform_scan(
         timings['declaration_extraction_ms'] = round((time.perf_counter() - extraction_started) * 1000)
         log_memory_checkpoint("RSS after semantic extraction")
 
+        package_context = detect_package_context(raw_text, extracted_fields)
+        package_type = package_context['package_type']
+        import_status = package_context['import_status']
+        timings['package_context'] = package_context
+
         # Classification precedes category-specific visual checks
         classification = classify_category(raw_text, extracted_fields, settings.CATEGORY_CONFIDENCE_THRESHOLD)
         category = classification.get('category', 'UNKNOWN')
@@ -346,7 +351,6 @@ async def perform_scan(
             product_type=product_type,
             package_type=package_type,
             import_status=import_status,
-            has_physical_data=False,
             inspection_date=current_date_str,
         )
 
@@ -359,7 +363,7 @@ async def perform_scan(
         priority = 'HIGH' if overall_result == 'NON-COMPLIANT' else 'MEDIUM'
 
         db_inspection = models.Inspection(
-            product_name=extracted_fields.get('PRODUCT_NAME', {}).get('value', 'Unknown Product'),
+            product_name=extracted_fields.get('PRODUCT_NAME', {}).get('value', 'NOT_DETECTED'),
             category=category,
             category_confidence=cat_confidence,
             brand=extracted_fields.get('BRAND', {}).get('value'),
@@ -405,6 +409,7 @@ async def perform_scan(
             manufacturer=extracted_fields.get('MANUFACTURER_NAME', {}).get('value'),
             address=extracted_fields.get('MANUFACTURER_ADDRESS', {}).get('value'),
             mrp=extracted_fields.get('MRP', {}).get('value'),
+            unit_sale_price=extracted_fields.get('UNIT_SALE_PRICE', {}).get('value'),
             declared_net_quantity_value=extracted_fields.get('DECLARED_NET_QUANTITY', {}).get('quantity_value'),
             declared_net_quantity_unit=extracted_fields.get('DECLARED_NET_QUANTITY', {}).get('quantity_unit'),
             country_of_origin=extracted_fields.get('COUNTRY_OF_ORIGIN', {}).get('value'),
@@ -424,6 +429,7 @@ async def perform_scan(
             "barcode_result": barcode_result,
             "images": image_results,
             "registry_match": reg_match.to_dict(),
+            "package_context": package_context,
         }
         db_ocr = models.OCRResult(
             inspection_id=db_inspection.id,
@@ -491,6 +497,13 @@ async def perform_scan(
         db_ocr.ocr_data['timings'] = timings
         db.commit()
         logger.info("scan timing complete inspection=%s timings=%s", db_inspection.id, timings)
+
+        try:
+            generate_inspection_pdf(db_inspection, db)
+            logger.info("automatic report generated inspection=%s", db_inspection.id)
+        except Exception as report_exc:
+            # A report failure must not discard an otherwise completed inspection.
+            logger.exception("automatic report generation failed inspection=%s: %s", db_inspection.id, report_exc)
 
         created_dt = db_inspection.created_at
         if created_dt and created_dt.tzinfo is None:

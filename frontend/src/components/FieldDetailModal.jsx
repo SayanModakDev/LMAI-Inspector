@@ -271,7 +271,7 @@ const FieldDetailModal = ({ field, onClose }) => {
         {/* Modal Footer */}
         <div className="field-detail-modal__footer">
           <button type="button" className="btn btn-outline btn-sm" onClick={onClose}>
-            Close Inspector Details
+            Close Details
           </button>
         </div>
       </div>
