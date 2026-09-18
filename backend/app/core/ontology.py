@@ -483,3 +483,38 @@ def build_product_name_candidate(
         "bbox": bbox,
     }
 
+
+def extract_quantity_value_unit(text: Optional[str]) -> Tuple[Optional[float], Optional[str], Optional[str]]:
+    """
+    Extract numeric quantity value and standard unit from a quantity declaration string.
+    Supports units: g, kg, ml, l, litre, liter, pieces, units, N, etc.
+    Returns: (numeric_value, unit, raw_matched_string)
+    """
+    if not text:
+        return None, None, None
+    import re
+    # Match multipack or standard quantity e.g. 500 g, 10 x 50 g = 500 g
+    # Find all number + unit pairs
+    matches = re.findall(
+        r'(\d+(?:\.\d+)?)\s*(kg|g|gm|gms|grams|l|ltr|litre|litres|liter|liters|ml|mll|millilitre|millilitres|pcs|pieces|units|n|count|u)\b',
+        str(text),
+        re.IGNORECASE,
+    )
+    if matches:
+        # Take the last match (often total quantity in multipacks like 10 x 50 g = 500 g)
+        val_str, unit_str = matches[-1]
+        try:
+            return float(val_str), unit_str.lower(), f"{val_str} {unit_str}"
+        except ValueError:
+            pass
+
+    # Fallback to single number
+    num_match = re.search(r'(\d+(?:\.\d+)?)', str(text))
+    if num_match:
+        try:
+            return float(num_match.group(1)), None, num_match.group(1)
+        except ValueError:
+            pass
+
+    return None, None, None
+
