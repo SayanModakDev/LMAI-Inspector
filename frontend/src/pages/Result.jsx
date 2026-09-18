@@ -3,15 +3,12 @@ import { useParams, Link } from 'react-router-dom';
 import {
   FileText,
   Download,
-  Scale,
   CheckCircle2,
   XCircle,
   AlertTriangle,
   RotateCcw,
-  Save,
   ChevronDown,
   ChevronRight,
-  ShieldCheck,
   Search,
   Eye,
   Layers,
@@ -20,16 +17,14 @@ import {
   History,
   PlusCircle,
   Barcode,
-  Info,
 } from 'lucide-react';
 import { apiService, resolveBackendUrl } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
 import StatusBadge from '../components/StatusBadge';
 import EvidenceViewer from '../components/EvidenceViewer';
-import InspectorReview from '../components/InspectorReview';
 import ResultHero from '../components/ResultHero';
 import ErrorState from '../components/ErrorState';
-import { formatISTDateTime, formatISTDate } from '../utils/dateUtils';
+import { formatISTDateTime } from '../utils/dateUtils';
 import './Result.css';
 
 const Result = () => {
@@ -39,7 +34,7 @@ const Result = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Active Workstation Tab: 'evidence' (default primary showcase) | 'matrix' | 'physical' | 'report'
+  // Active workstation tab: evidence, rules, or report.
   const [activeTab, setActiveTab] = useState('evidence');
 
   // Rule Matrix Filter & Search
@@ -48,31 +43,9 @@ const Result = () => {
   const [expandedRuleIds, setExpandedRuleIds] = useState(new Set());
   const [evidenceCount, setEvidenceCount] = useState(null);
 
-  // Physical Verification & Manual Input State
-  const [manualData, setManualData] = useState({
-    actual_measured_weight: '',
-    actual_weight_unit: 'g',
-    measurement_source: 'CERTIFIED_DIGITAL_SCALE',
-    inspector_notes: '',
-    field_overrides: {},
-  });
-  const [savingManual, setSavingManual] = useState(false);
-  const [manualSuccessMsg, setManualSuccessMsg] = useState(null);
-
   // Report Generation State
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportUrl, setReportUrl] = useState(null);
-
-  // Inspector / User profile from localStorage
-  const [profile] = useState(() => {
-    try {
-      const saved = localStorage.getItem('lmai_inspector_profile');
-      if (saved) return JSON.parse(saved);
-    } catch (_) {
-      // fallback to default profile
-    }
-    return { name: 'Workspace User', badge: 'Not configured', station: 'Demo / Local Workspace' };
-  });
 
   useEffect(() => {
     fetchInspection();
@@ -83,15 +56,6 @@ const Result = () => {
       setLoading(true);
       const data = await apiService.getInspection(id);
       setInspection(data);
-
-      if (data.product?.actual_measured_weight) {
-        setManualData((prev) => ({
-          ...prev,
-          actual_measured_weight: data.product.actual_measured_weight,
-          actual_weight_unit: data.product.actual_weight_unit || 'g',
-          measurement_source: data.product.measurement_source || 'CERTIFIED_DIGITAL_SCALE',
-        }));
-      }
 
       if (data.report?.file_name) {
         const initialReportUrl = data.report.file_url || `/reports/${data.report.file_name}`;
@@ -105,50 +69,6 @@ const Result = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleManualSave = async (e) => {
-    e?.preventDefault();
-    try {
-      setSavingManual(true);
-      setManualSuccessMsg(null);
-
-      const payload = {
-        inspection_id: parseInt(id),
-        actual_measured_weight: manualData.actual_measured_weight
-          ? parseFloat(manualData.actual_measured_weight)
-          : null,
-        actual_weight_unit: manualData.actual_weight_unit || null,
-        measurement_source: manualData.measurement_source || null,
-        inspector_notes: manualData.inspector_notes || null,
-        field_overrides: manualData.field_overrides,
-      };
-
-      await apiService.submitManualInput(payload);
-      setManualSuccessMsg('Measurements saved. Compliance rules re-evaluated successfully.');
-      await fetchInspection();
-    } catch (err) {
-      console.error('Manual input submission error:', err);
-      alert('Failed to save manual input: ' + (err.response?.data?.detail || err.message));
-    } finally {
-      setSavingManual(false);
-    }
-  };
-
-  /**
-   * Submit inspector review overrides from the InspectorReview component.
-   * fieldOverrides: { [parameter]: verifiedValue }
-   * notes: optional string appended to inspector_notes
-   */
-  const handleReviewSubmit = async (fieldOverrides, notes) => {
-    const payload = {
-      inspection_id: parseInt(id),
-      field_overrides: fieldOverrides,
-      inspector_notes: notes || null,
-    };
-    await apiService.submitManualInput(payload);
-    // Re-fetch so rule matrix and summary update
-    await fetchInspection();
   };
 
   const handleGenerateReport = async () => {
@@ -243,11 +163,6 @@ const Result = () => {
     ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
 
   const rawOverall = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_');
-  const isReviewRequired =
-    rawOverall === 'NOT_VERIFIABLE' ||
-    rawOverall === 'NEEDS_REVIEW' ||
-    rawOverall === 'REQUIRES_REVIEW';
-
   // Filtered Rules for Matrix Table
   const filteredRules = ruleResults.filter((r) => {
     if (ruleFilter === 'FAIL' && r.status !== 'FAIL') return false;
@@ -271,32 +186,6 @@ const Result = () => {
     }
     return true;
   });
-
-  // Extract conflicting fields if any
-  const conflictFields = (inspection.extracted_fields || []).filter(
-    (f) =>
-      String(f.field_value).startsWith('CONFLICT:') ||
-      f.source === 'MULTI_IMAGE_CONFLICT' ||
-      f.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
-      f.candidate_classification === 'TRUE_CONFLICT' ||
-      f.status === 'AMBIGUOUS' ||
-      f.is_ambiguous
-  );
-
-  // Identify review reasons breakdown
-  const missingRules = ruleResults.filter(
-    (r) =>
-      r.status === 'NOT_VERIFIABLE' &&
-      (r.reason || r.message || '').toLowerCase().includes('not detected')
-  );
-
-  const physicalRules = ruleResults.filter(
-    (r) =>
-      r.status === 'NOT_VERIFIABLE' &&
-      (r.parameter === 'ACTUAL_NET_CONTENT' ||
-        r.parameter === 'FONT_SIZE_COMPLIANCE' ||
-        (r.reason || r.message || '').toLowerCase().includes('physical verification'))
-  );
 
   // Sub-renderer for the Compliance Rule Matrix (Section 15 strictly)
   const renderComplianceMatrix = () => (
@@ -327,7 +216,7 @@ const Result = () => {
             {[
               { id: 'ALL', label: 'All', count: ruleResults.length },
               { id: 'FAIL', label: 'Fail', count: failCount },
-              { id: 'REVIEW', label: 'Review', count: reviewCount },
+              { id: 'REVIEW', label: 'Not Detected', count: reviewCount },
               { id: 'PASS', label: 'Pass', count: passCount },
               { id: 'NA', label: 'N/A', count: naCount },
             ].map((f) => (
@@ -457,13 +346,13 @@ const Result = () => {
                                 </div>
                               </div>
                               <div>
-                                <span className="dossier-label">Inspector Action Guidance:</span>
+                                <span className="dossier-label">Automatic Result:</span>
                                 <div className="dossier-val text-muted text-xs">
                                   {rule.action_guidance ||
                                     (rule.status === 'FAIL'
-                                      ? 'Review non-compliant declaration against applicable rules.'
+                                      ? 'Declaration failed automatic validation.'
                                       : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
-                                      ? 'Screening cannot confirm this declaration. Review required.'
+                                      ? 'This package detail was not detected.'
                                       : 'Declaration satisfies verified rule criteria.')}
                                 </div>
                               </div>
@@ -486,131 +375,6 @@ const Result = () => {
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  );
-
-  // Sub-renderer for Physical Verification Form (Tab 2)
-  const renderPhysicalVerification = () => (
-    <div className="card physical-verification-card">
-      <div className="card-header flex-between">
-        <span className="font-semibold text-sm">Legal Metrology Net Content & Physical Verification</span>
-        <span className="badge badge-warning font-mono text-xs">Direct Physical Inspection</span>
-      </div>
-
-      <div className="card-body">
-        <div className="physical-intro-alert mb-4">
-          <ShieldCheck size={22} className="text-teal flex-shrink-0" />
-          <div className="text-xs leading-relaxed">
-            <strong>Physical Verification Notice:</strong> Screening cannot confirm this requirement. Physical verification required according to the inspection configuration.
-          </div>
-        </div>
-
-        {manualSuccessMsg && (
-          <div className="badge badge-success mb-4 p-2 full-width flex items-center gap-1.5">
-            <CheckCircle2 size={14} /> {manualSuccessMsg}
-          </div>
-        )}
-
-        <form onSubmit={handleManualSave} className="physical-form-grid">
-          <div className="physical-form-left">
-            <h4 className="font-semibold text-sm mb-3">Physical Scale Measurement</h4>
-
-            <div className="form-group mb-3">
-              <label className="form-label">
-                <span>Actual Measured Weight</span>
-                <span className="text-xs text-muted">Physical Scale Reading</span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  className="form-control font-mono text-sm"
-                  placeholder="e.g. 298.50"
-                  value={manualData.actual_measured_weight}
-                  onChange={(e) =>
-                    setManualData({ ...manualData, actual_measured_weight: e.target.value })
-                  }
-                />
-                <select
-                  className="form-control"
-                  style={{ width: '90px' }}
-                  value={manualData.actual_weight_unit}
-                  onChange={(e) =>
-                    setManualData({ ...manualData, actual_weight_unit: e.target.value })
-                  }
-                >
-                  <option value="g">g</option>
-                  <option value="kg">kg</option>
-                  <option value="ml">ml</option>
-                  <option value="L">L</option>
-                </select>
-              </div>
-              <span className="form-help text-xs text-muted mt-1 block">
-                Declared net quantity: {inspection.product?.declared_net_quantity_value || '—'}{' '}
-                {inspection.product?.declared_net_quantity_unit || ''}
-              </span>
-            </div>
-
-            <div className="form-group mb-3">
-              <label className="form-label">
-                <span>Measurement Instrument</span>
-                <span className="text-xs text-muted">Calibration Traceability</span>
-              </label>
-              <select
-                className="form-control text-sm"
-                value={manualData.measurement_source}
-                onChange={(e) =>
-                  setManualData({ ...manualData, measurement_source: e.target.value })
-                }
-              >
-                <option value="CERTIFIED_DIGITAL_SCALE">
-                  Certified Inspector Digital Scale (Class II/III)
-                </option>
-                <option value="STAMPED_LEGAL_METROLOGY_BALANCE">
-                  Stamped Standard Metrological Balance
-                </option>
-                <option value="VERNIER_CALIPER_NUMERAL">
-                  Vernier Caliper (Numeral Height Check)
-                </option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                <span>Inspector Verification Notes</span>
-              </label>
-              <textarea
-                rows={3}
-                className="form-control text-sm"
-                placeholder="Enter physical findings, tamper-seal status, font height inspection details..."
-                value={manualData.inspector_notes}
-                onChange={(e) =>
-                  setManualData({ ...manualData, inspector_notes: e.target.value })
-                }
-              />
-            </div>
-          </div>
-
-          <div className="physical-form-right">
-            <h4 className="font-semibold text-sm mb-3">Declaration Overrides</h4>
-            <div className="physical-intro-alert" style={{ marginBottom: '1rem' }}>
-              <Info size={14} className="flex-shrink-0" />
-              <p className="text-xs">
-                Declaration review items (MRP, Net Quantity, Manufacturer Name, etc.) are
-                handled in the <strong>Inspector Review</strong> tab above, where detected
-                candidates are listed for selection. This preserves full OCR audit history.
-              </p>
-            </div>
-
-            <div className="mt-4 text-right">
-              <button type="submit" className="btn btn-primary btn-sm" disabled={savingManual}>
-                <Save size={14} />{' '}
-                {savingManual ? 'Re-evaluating...' : 'Record Measurements & Re-Evaluate'}
-              </button>
-            </div>
-          </div>
-        </form>
       </div>
     </div>
   );
@@ -706,26 +470,6 @@ const Result = () => {
             </ul>
           </div>
 
-          <div className="report-signature-block mt-4">
-            <div className="signature-box">
-              <div className="signature-line" />
-              <span className="signature-title">Reviewing Operator / Inspector</span>
-              <span className="signature-sub">
-                {profile.name || 'Workspace User'}{' '}
-                {profile.badge && profile.badge !== 'Not configured'
-                  ? `(${profile.badge})`
-                  : ''}
-              </span>
-            </div>
-            <div className="signature-box">
-              <div className="signature-line" />
-              <span className="signature-title">Workstation / Facility</span>
-              <span className="signature-sub">
-                {profile.station || 'Local Workstation'} • {formatISTDate(new Date())}
-              </span>
-            </div>
-          </div>
-
           <div className="report-actions-row mt-4">
             <button
               type="button"
@@ -788,34 +532,6 @@ const Result = () => {
         <button
           type="button"
           role="tab"
-          aria-selected={activeTab === 'physical'}
-          className={`workstation-tab ${activeTab === 'physical' ? 'workstation-tab--active' : ''}`}
-          onClick={() => setActiveTab('physical')}
-        >
-          <Scale size={15} />
-          <span>Physical Verification & Scale</span>
-          {physicalRules.length > 0 && (
-            <span className="tab-badge tab-badge--review">{physicalRules.length}</span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'review'}
-          className={`workstation-tab ${activeTab === 'review' ? 'workstation-tab--active' : ''}`}
-          onClick={() => setActiveTab('review')}
-        >
-          <Eye size={15} />
-          <span>Inspector Review</span>
-          {inspection.review_items?.length > 0 && (
-            <span className="tab-badge tab-badge--review">{inspection.review_items.length}</span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          role="tab"
           aria-selected={activeTab === 'report'}
           className={`workstation-tab ${activeTab === 'report' ? 'workstation-tab--active' : ''}`}
           onClick={() => setActiveTab('report')}
@@ -846,24 +562,6 @@ const Result = () => {
 
       {/* Dedicated Matrix Tab */}
       {activeTab === 'matrix' && renderComplianceMatrix()}
-
-      {/* Dedicated Physical Verification Tab */}
-      {activeTab === 'physical' && renderPhysicalVerification()}
-
-      {/* Inspector Review Tab — dynamic declaration review workflow */}
-      {activeTab === 'review' && (
-        <div className="card">
-          <div className="card-body">
-            <InspectorReview
-              reviewItems={inspection.review_items || []}
-              ruleResults={ruleResults}
-              extractedFields={inspection.extracted_fields || []}
-              registryMatch={inspection.registry_match}
-              onSubmitReview={handleReviewSubmit}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Dedicated Report Tab */}
       {activeTab === 'report' && renderReportDossier()}

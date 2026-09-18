@@ -66,8 +66,8 @@ def get_history(
                 inspection_date=created_dt,
                 product_name=str(i.product_name) if i.product_name is not None else None,
                 category=str(i.category) if i.category is not None else None,
-                package_type=str(i.package_type) if i.package_type is not None else "RETAIL",
-                import_status=str(i.import_status) if i.import_status is not None else "DOMESTIC",
+                package_type=str(i.package_type) if i.package_type is not None else "NOT_DETECTED",
+                import_status=str(i.import_status) if i.import_status is not None else "NOT_DETECTED",
                 overall_result=str(normalize_status(str(i.overall_result)) if i.overall_result is not None else None),
                 priority=str(i.priority or "MEDIUM"),
                 inspector_name=str(i.inspector_name) if i.inspector_name is not None else None,
@@ -114,8 +114,8 @@ def get_dashboard(db: Session = Depends(get_db)):
             "id": i.id,
             "product_name": i.product_name,
             "category": i.category,
-            "package_type": i.package_type or "RETAIL",
-            "import_status": i.import_status or "DOMESTIC",
+            "package_type": i.package_type or "NOT_DETECTED",
+            "import_status": i.import_status or "NOT_DETECTED",
             "result": str(normalize_status(str(i.overall_result) if i.overall_result is not None else None) or i.overall_result or ""),
             "date": created_dt.isoformat() if created_dt else None
         })
@@ -204,7 +204,7 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
 
     # -----------------------------------------------------------------------
     # Enrich extracted_fields with candidate / evidence data from rule_results
-    # so the frontend Inspector Review panel can display actual candidates
+    # so the frontend can display actual package-image candidates
     # without fabrication. No DB schema change needed — rule_results already
     # carry evidence_data.candidates / competing_evidence from the validators.
     # -----------------------------------------------------------------------
@@ -228,7 +228,7 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
             )
             if candidates:
                 ef["candidates"] = candidates
-            # Expose evidence_state for user-facing review language
+            # Expose evidence state for automatic result context
             ev_state = rr.get("evidence_state") or ed.get("evidence_state")
             if ev_state:
                 ef["evidence_state"] = ev_state
@@ -243,68 +243,6 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
             ef["rule_status"] = rr.get("status")
             ef["rule_reason"] = rr.get("reason") or rr.get("message")
             ef["rule_id"] = rr.get("rule_id")
-
-    # Build review_items — structured list for the Inspector Review tab
-    # Excludes physical-verification-only parameters that cannot be resolved
-    # from image evidence alone.
-    PHYSICAL_ONLY_PARAMS = frozenset({
-        "ACTUAL_NET_CONTENT",
-        "FONT_SIZE_COMPLIANCE",
-        "PHYSICAL_NET_CONTENT",
-        "NET_CONTENT_MEASUREMENT",
-    })
-
-    review_statuses = frozenset({"NOT_VERIFIABLE", "REVIEW", "NEEDS_REVIEW", "MANUAL_CHECK"})
-
-    # Build a fast lookup from extracted_fields by field_name
-    ef_by_name: dict = {}
-    for ef in extracted_fields:
-        fname = ef.get("field_name")
-        if fname:
-            ef_by_name[fname] = ef
-
-    review_items = []
-    for rr in rule_results:
-        status = rr.get("status")
-        param = rr.get("parameter", "")
-        if status not in review_statuses:
-            continue
-        if param in PHYSICAL_ONLY_PARAMS:
-            continue
-
-        ed = rr.get("evidence_data") or {}
-        ev_state = rr.get("evidence_state") or ed.get("evidence_state") or ""
-
-        # Also skip if evidence_state is PHYSICAL_VERIFICATION_REQUIRED and
-        # no candidates are present (truly physical-only scenario)
-        candidates_raw = (
-            ed.get("candidates")
-            or rr.get("competing_evidence")
-            or ed.get("competing_candidates")
-            or ed.get("values")
-        )
-        if ev_state == "PHYSICAL_VERIFICATION_REQUIRED" and not candidates_raw:
-            continue
-
-        # Pull the corresponding extracted field record if present
-        ef_record = ef_by_name.get(param, {})
-
-        review_items.append({
-            "parameter": param,
-            "rule_id": rr.get("rule_id"),
-            "status": status,
-            "evidence_state": ev_state,
-            "reason": rr.get("reason") or rr.get("message") or "",
-            "extracted_value": ef_record.get("field_value") or ed.get("value") or rr.get("raw_value"),
-            "confidence": ef_record.get("confidence") or ed.get("confidence"),
-            "source": ef_record.get("source") or ed.get("source"),
-            "source_image_index": ef_record.get("source_image_id"),
-            "candidates": candidates_raw or [],
-            "candidate_classification": rr.get("candidate_classification") or ed.get("candidate_classification"),
-            "has_conflict": ed.get("has_conflict", False),
-            "regulatory_source": rr.get("regulatory_source"),
-            "rule_reference": rr.get("rule_reference"),
-        })
 
     # -----------------------------------------------------------------------
     # Product Familiarity / Reference Product Registry
@@ -365,134 +303,8 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         "evidence": evidence,
         "report": report,
         "findings": build_inspection_findings(rule_results),
-        "review_items": review_items,
         "registry_match": registry_match,
     }
-
-
-
-@router.post("/manual-input", response_model=schemas.MessageResponse)
-def add_manual_input(input_data: schemas.ManualInputRequest, db: Session = Depends(get_db)):
-    """Add manual measurement data and re-evaluate rules."""
-    inspection: Any = db.query(models.Inspection).filter(models.Inspection.id == input_data.inspection_id).first()
-    if not inspection:
-        raise HTTPException(status_code=404, detail="Inspection not found")
-        
-    product: Any = inspection.product
-    if product:
-        product.actual_measured_weight = input_data.actual_measured_weight
-        product.actual_weight_unit = input_data.actual_weight_unit
-        product.measurement_source = input_data.measurement_source
-        product.measurement_timestamp = func.now()
-        
-    if input_data.inspector_notes:
-        existing_notes = str(inspection.notes) if inspection.notes is not None else ""
-        inspection.notes = (existing_notes + "\n" + str(input_data.inspector_notes)).strip()
-
-    for field_name, raw_value in input_data.field_overrides.items():
-        value = (raw_value or '').strip()
-        if not value:
-            continue
-        field: Any = next((item for item in inspection.extracted_fields if item.field_name == field_name), None)
-        if field:
-            # Preserve the previous OCR value as evidence before applying the
-            # inspector's correction.
-            db.add(models.Evidence(inspection_id=inspection.id, parameter=field_name, evidence_type='OCR_SUPERSEDED', text_content=field.field_value, bbox=field.bbox, confidence=field.confidence))
-            field.field_value, field.confidence, field.source = value, 1.0, 'MANUAL'
-        else:
-            db.add(models.ExtractedField(inspection_id=inspection.id, field_name=field_name, field_value=value, confidence=1.0, source='MANUAL'))
-        db.add(models.Evidence(inspection_id=inspection.id, parameter=field_name, evidence_type='MANUAL_OVERRIDE', text_content=value, confidence=1.0))
-
-        if product:
-            mapping = {'PRODUCT_NAME': 'product_name', 'BRAND': 'brand', 'GENERIC_NAME': 'generic_name', 'MRP': 'mrp', 'MANUFACTURER_NAME': 'manufacturer', 'MANUFACTURER_ADDRESS': 'address', 'BATCH_NUMBER': None, 'CONSUMER_CARE': 'consumer_care', 'INGREDIENTS_LIST': 'ingredients', 'FSSAI_LICENSE': None}
-            attr = mapping.get(field_name)
-            if attr:
-                setattr(product, attr, value)
-        if field_name == 'PRODUCT_NAME':
-            inspection.product_name = value
-        elif field_name == 'BRAND':
-            inspection.brand = value
-        
-    # Re-evaluate rules
-    # 1. Gather all existing extracted fields
-    extracted_fields = {f.field_name: {"value": f.field_value, "confidence": f.confidence, "source": f.source} for f in inspection.extracted_fields}
-    
-    # 2. Add manual input to extracted fields for evaluation
-    if input_data.actual_measured_weight is not None:
-        val = f"{input_data.actual_measured_weight} {input_data.actual_weight_unit or ''}".strip()
-        extracted_fields["ACTUAL_NET_CONTENT"] = {
-            "value": val,
-            "confidence": 1.0,
-            "source": "MANUAL"
-        }
-    
-    # 3. Get rules and applicability
-    db_rules = db.query(models.Rule).filter(models.Rule.is_active == True).all()
-    all_rules_dict = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in db_rules]
-    
-    has_physical = input_data.actual_measured_weight is not None
-    inspect_dt = inspection.created_at.strftime('%Y-%m-%d') if inspection.created_at else None
-    applicable_rules = get_applicable_rules(
-        all_rules=all_rules_dict,
-        category=str(inspection.category or "UNKNOWN"),
-        product_type=str(inspection.product_type or "UNKNOWN"),
-        package_type=str(inspection.package_type or "RETAIL"),
-        import_status=str(inspection.import_status or "DOMESTIC"),
-        has_physical_data=has_physical,
-        inspection_date=inspect_dt,
-    )
-
-    if not getattr(inspection, 'regulatory_snapshot', None):
-        from app.rules.status_safety import derive_dynamic_regulatory_snapshot
-        snapshot_meta = derive_dynamic_regulatory_snapshot(applicable_rules, inspect_dt)
-        inspection.regulatory_snapshot = snapshot_meta['snapshot_id']
-    
-    # 4. Evaluate
-    rule_results, overall_result = evaluate_rules(applicable_rules, extracted_fields)
-    
-    # Update inspection
-    inspection.overall_result = str(overall_result)
-    
-    # Update rule results in DB - simple approach: delete old, insert new
-    db.query(models.RuleResult).filter(models.RuleResult.inspection_id == inspection.id).delete()
-    
-    for res in rule_results:
-        ev_data = dict(res.get("evidence_data") or {})
-        ev_data["binary"] = res.get("binary")
-        ev_data["reason"] = res.get("reason") or res.get("message")
-        ev_data["validation_result"] = res.get("validation_result")
-        ev_data["raw_value"] = res.get("raw_value")
-        ev_data["value"] = res.get("value")
-        ev_data["unit"] = res.get("unit")
-        ev_data["quantity_present"] = res.get("quantity_present")
-        ev_data["unit_present"] = res.get("unit_present")
-        ev_data["quantity_unit_valid"] = res.get("quantity_unit_valid")
-        ev_data["verification_type"] = res.get("verification_type")
-        ev_data["evidence_state"] = res.get("evidence_state")
-
-        db.add(models.RuleResult(
-            inspection_id=inspection.id,
-            rule_id=res.get("rule_id"),
-            parameter=res.get("parameter"),
-            status=res.get("status"),
-            message=res.get("message"),
-            evidence_data=ev_data,
-            rule_version=res.get("rule_version"),
-            regulatory_source=res.get("regulatory_source"),
-            rule_reference=res.get("rule_reference"),
-            rule_reference_status=res.get("rule_reference_status"),
-            citation=res.get("citation"),
-            verification_status=res.get("verification_status"),
-            review_required=res.get("review_required")
-        ))
-
-    db.commit()
-    
-    return schemas.MessageResponse(
-        message="Manual input saved and rules re-evaluated successfully",
-        data={"overall_result": overall_result}
-    )
-
 
 @router.post("/report/{inspection_id}", response_model=schemas.MessageResponse)
 def generate_report(inspection_id: int, db: Session = Depends(get_db)):

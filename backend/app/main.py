@@ -62,7 +62,7 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description=(
         "LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, "
-        "computer vision, structured evidence extraction, deterministic rule evaluation, and inspector verification."
+        "computer vision, structured evidence extraction, and deterministic rule evaluation."
     ),
     lifespan=lifespan,
 )
@@ -111,7 +111,7 @@ def health_check():
         "version": settings.APP_VERSION,
         "disclaimer": (
             "LMAI Inspector is an automated Legal Metrology inspection-support system using OCR, "
-            "computer vision, structured evidence extraction, deterministic rule evaluation, and inspector verification. "
-            "Final statutory verification must be performed by the authorized inspector."
+            "computer vision, structured evidence extraction, and deterministic rule evaluation. "
+            "Results are generated automatically from submitted package images."
         ),
     }

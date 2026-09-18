@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -8,7 +8,6 @@ import {
   Scale,
   Settings,
   ShieldCheck,
-  UserCheck,
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import { useSystemHealth } from '../context/SystemHealthContext';
@@ -25,30 +24,6 @@ const NAV_ITEMS = [
 
 const Sidebar = ({ onCloseMobile }) => {
   const { healthState } = useSystemHealth();
-  const [profile, setProfile] = useState(() => {
-    try {
-      const saved = localStorage.getItem('lmai_inspector_profile');
-      if (saved) return JSON.parse(saved);
-    } catch (_) {
-      // fallback to default profile
-    }
-    return { name: 'Workspace User', badge: 'Not configured', station: 'Local Workstation' };
-  });
-
-  // Listen for profile updates in localStorage if modified in Settings
-  useEffect(() => {
-    const handleStorage = () => {
-      try {
-        const saved = localStorage.getItem('lmai_inspector_profile');
-        if (saved) setProfile(JSON.parse(saved));
-      } catch (_) {
-        // ignore storage parse errors
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
   const getStatusDisplay = () => {
     switch (healthState) {
       case 'ONLINE':
@@ -106,20 +81,8 @@ const Sidebar = ({ onCloseMobile }) => {
         })}
       </nav>
 
-      {/* Footer / Identity Area */}
+      {/* Footer / System Status */}
       <div className="sidebar-footer">
-        <div className="inspector-identity">
-          <div className="inspector-identity__avatar">
-            <UserCheck size={16} />
-          </div>
-          <div className="inspector-identity__meta">
-            <span className="inspector-name">{profile.name || 'Workspace User'}</span>
-            <span className="inspector-role">
-              {profile.badge && profile.badge !== 'Not configured' ? `ID: ${profile.badge}` : 'ID: Not configured'} • {profile.station || 'Local'}
-            </span>
-          </div>
-        </div>
-
         <div className="system-status-indicator">
           <div className={`status-dot ${status.dotClass}`} />
           <span className="status-text">{status.text}</span>

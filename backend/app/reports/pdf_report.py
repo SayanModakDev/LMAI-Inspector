@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Mandatory statutory disclaimer
 STATUTORY_DISCLAIMER = (
-    "This software is an automated screening aid and not itself a government authority. Final statutory verification must be performed by an authorized inspector."
+    "This software generates automatic package-image screening results. It is not itself a government authority or a statutory certificate."
 )
 
 
@@ -248,7 +248,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         deduped_results.append(r)
     results_list = deduped_results
 
-    # Collect all evidence items including superseded OCR and manual overrides
+    # Collect package-image evidence items.
     all_evidences = []
     if hasattr(inspection, 'evidence_items') and inspection.evidence_items:
         all_evidences.extend(inspection.evidence_items)
@@ -262,21 +262,6 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                     all_evidences.append(ev)
         except Exception as e:
             logger.warning("Could not query DB evidences: %s", e)
-
-    superseded_ocr: Dict[str, str] = {}
-    manual_overrides: Dict[str, Dict[str, Any]] = {}
-    for ev in all_evidences:
-        etype = getattr(ev, 'evidence_type', None)
-        param = getattr(ev, 'parameter', None)
-        text = getattr(ev, 'text_content', None)
-        if etype == 'OCR_SUPERSEDED' and param:
-            if param not in superseded_ocr:
-                superseded_ocr[param] = text
-        elif etype == 'MANUAL_OVERRIDE' and param:
-            manual_overrides[param] = {
-                'value': text,
-                'created_at': getattr(ev, 'created_at', None),
-            }
 
     # Compute summary counters and overall status using shared rule_engine methods
     from app.rules.rule_engine import calculate_rule_summary, derive_overall_result
@@ -297,23 +282,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_bg = colors.HexColor('#E8F5E9')
         overall_border = colors.HexColor('#2E7D32')
         overall_color = '#1B5E20'
-        from app.rules.rule_engine import _is_physical_verification_rule
-        physical_outstanding = [
-            r for r in results_list
-            if (getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)) in ('NOT_VERIFIABLE', 'NEEDS_REVIEW')
-            and _is_physical_verification_rule(r)
-        ]
-        if physical_outstanding:
-            param_names = ", ".join(
-                str(getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else '')).replace('_', ' ').title()
-                for r in physical_outstanding
-            )
-            overall_desc = (
-                f"All image-verifiable declarations passed automated screening. "
-                f"Physical inspection ({len(physical_outstanding)} checks: {param_names}) requires in-person measurement."
-            )
-        else:
-            overall_desc = "All applicable statutory declarations under Legal Metrology Rules passed deterministic verification."
+        overall_desc = "All detected package declarations passed the applicable automatic checks."
     elif canonical_result == InspectionStatus.NON_COMPLIANT:
         overall_label = "NON-COMPLIANT"
         overall_bg = colors.HexColor('#FFEBEE')
@@ -321,20 +290,15 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_color = '#B71C1C'
         overall_desc = "One or more mandatory statutory declarations failed deterministic validation requirements."
     else:
-        overall_label = "REQUIRES REVIEW"
+        overall_label = "NOT DETECTED"
         overall_bg = colors.HexColor('#FFF8E1')
         overall_border = colors.HexColor('#F57F17')
         overall_color = '#B45309'
-        overall_desc = "One or more declarations have unverified or conflicting evidence. Manual inspector review is required."
+        overall_desc = "Some package details could not be read clearly from the submitted images."
 
-    # Package Type & Import Status with Inspector Default indicators
-    pkg_type_str = inspection.package_type or "RETAIL"
-    pkg_tag = " (Inspector Default)" if pkg_type_str == "RETAIL" else " (Inspector Selected)"
-    pkg_display = f"{pkg_type_str}{pkg_tag}"
-
-    import_status_str = inspection.import_status or "DOMESTIC"
-    import_tag = " (Inspector Default)" if import_status_str == "DOMESTIC" else " (Inspector Selected)"
-    import_display = f"{import_status_str}{import_tag}"
+    # Context is detected from package evidence; unknown values remain explicit.
+    pkg_display = inspection.package_type or "NOT_DETECTED"
+    import_display = inspection.import_status or "NOT_DETECTED"
 
     ist_tz = timezone(timedelta(hours=5, minutes=30), name="IST")
     if inspection.created_at:
@@ -367,7 +331,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                     subtitle_style,
                 ),
                 _safe_html_p(
-                    f"<b>Inspector:</b> {inspection.inspector_name or 'Default Inspector'}<br/>"
+                    "<b>Processing:</b> Automatic package-image analysis<br/>"
                     f"<b>Priority:</b> {inspection.priority or 'MEDIUM'}",
                     ParagraphStyle('RightHdr2', parent=subtitle_style, alignment=2),
                 ),
@@ -456,12 +420,12 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(banner_table)
     story.append(Spacer(1, 4 * mm))
 
-    # 4. Summary Metrics Cards (Passed, Failed, Require Review, Not Applicable)
+    # 4. Summary Metrics Cards (Passed, Failed, Not Detected, Not Applicable)
     summary_cards = [
         [
             _safe_html_p(f"<font size='13' color='#1B5E20'><b>{passed_count}</b></font><br/><font size='7.5' color='#1B5E20'><b>PASSED</b></font>", ParagraphStyle('Card1', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#B71C1C'><b>{failed_count}</b></font><br/><font size='7.5' color='#B71C1C'><b>FAILED</b></font>", ParagraphStyle('Card2', parent=body_style, alignment=1)),
-            _safe_html_p(f"<font size='13' color='#B45309'><b>{review_count}</b></font><br/><font size='7.5' color='#B45309'><b>REVIEW REQUIRED</b></font>", ParagraphStyle('Card3', parent=body_style, alignment=1)),
+            _safe_html_p(f"<font size='13' color='#B45309'><b>{review_count}</b></font><br/><font size='7.5' color='#B45309'><b>NOT DETECTED</b></font>", ParagraphStyle('Card3', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#475569'><b>{na_count}</b></font><br/><font size='7.5' color='#475569'><b>NOT APPLICABLE</b></font>", ParagraphStyle('Card4', parent=body_style, alignment=1)),
         ]
     ]
@@ -482,7 +446,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(summary_table)
     story.append(Spacer(1, 4 * mm))
 
-    # 5. Key Findings Breakdown & Inspector Notes
+    # 5. Key Findings Breakdown & Automatic Observations
     story.append(Paragraph("Inspection Findings & Field Observations", heading_style))
     findings = build_inspection_findings([
         {'parameter': r.parameter, 'status': r.status, 'message': r.message}
@@ -496,7 +460,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         ])
     if findings['needs_review']:
         findings_rows.append([
-            _safe_html_p(f"<b><font color='#B45309'>Requires Review ({len(findings['needs_review'])}):</font></b>", small_bold),
+            _safe_html_p(f"<b><font color='#B45309'>Not Detected ({len(findings['needs_review'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['needs_review']), small_style),
         ])
     if findings['verified']:
@@ -510,18 +474,6 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     findings_table = _table(findings_rows, [55 * mm, 218 * mm], header=False)
     story.append(findings_table)
 
-    if inspection.notes:
-        story.append(Spacer(1, 2 * mm))
-        notes_table = Table(
-            [[_safe_html_p(f"<b>Inspector Notes:</b> {inspection.notes}", small_style)]],
-            colWidths=[273 * mm],
-        )
-        notes_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-            ('PADDING', (0, 0), (-1, -1), 5),
-        ]))
-        story.append(notes_table)
 
     # =========================================================================
     # PAGE 2: COMPLIANCE RULE MATRIX TABLE
@@ -591,20 +543,8 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                 extracted_text = ", ".join(str(v) for v in extracted_text)
             extracted_val_p = _paragraph(extracted_text, small_style)
 
-        is_param_overridden = param_name in superseded_ocr or param_name in manual_overrides
-
-        # 1. Extracted Value handling (special net quantity decomposition or override indication)
-        if is_param_overridden:
-            orig_txt = superseded_ocr.get(param_name, "Not detected initially")
-            curr_val = ed.get("value") or ed.get("raw_value") or r.message or "—"
-            if isinstance(curr_val, list):
-                curr_val = ", ".join(str(v) for v in curr_val)
-            val_display = (
-                f"<b>Verified:</b> {curr_val}<br/>"
-                f"<font color='#64748B'>Orig OCR: \"{orig_txt}\"</font>"
-            )
-            extracted_val_p = _safe_html_p(val_display, small_style)
-        elif param_name in ("DECLARED_NET_QUANTITY", "NET_QUANTITY") or r.rule_id == "PC-ALL-002":
+        # 1. Extracted value handling, including printed multipack decomposition.
+        if param_name in ("DECLARED_NET_QUANTITY", "NET_QUANTITY") or r.rule_id == "PC-ALL-002":
             val = ed.get("value") or getattr(r, "value", None)
             unit = ed.get("unit") or getattr(r, "unit", None)
             raw = ed.get("raw_value") or getattr(r, "raw_value", None) or ed.get("value_text")
@@ -634,10 +574,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
 
         # 2. Validation method
         val_method = ed.get("validation_method") or (rule_def.validation_method if rule_def else "STATUTORY_CHECK")
-        if is_param_overridden:
-            val_display = f"<b>Method:</b> {val_method}<br/><font color='#047857'><b>Inspector Verified</b></font>"
-        else:
-            val_display = f"<b>Method:</b> {val_method}"
+        val_display = f"<b>Method:</b> {val_method}"
         if param_name in ("DECLARED_NET_QUANTITY", "NET_QUANTITY") or r.rule_id == "PC-ALL-002":
             q_valid = ed.get("quantity_unit_valid")
             if q_valid is not None:
@@ -659,7 +596,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         elif binary_val == 0 or r.status == "FAIL":
             binary_p = _safe_html_p("<b><font color='#B71C1C'>0</font></b>", small_bold)
         elif r.status in ("NOT_VERIFIABLE", "NEEDS_REVIEW"):
-            binary_p = _safe_html_p("<b><font color='#B45309'>REVIEW</font></b>", small_bold)
+            binary_p = _safe_html_p("<b><font color='#B45309'>NOT DETECTED</font></b>", small_bold)
         else:
             binary_p = _safe_html_p("<b><font color='#64748B'>N/A</font></b>", small_bold)
 
@@ -669,7 +606,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         elif r.status == "FAIL":
             status_p = _safe_html_p("<b><font color='#B71C1C'>FAIL</font></b>", small_bold)
         elif r.status in ("NOT_VERIFIABLE", "NEEDS_REVIEW"):
-            status_p = _safe_html_p("<b><font color='#B45309'>REVIEW REQUIRED</font></b>", small_bold)
+            status_p = _safe_html_p("<b><font color='#B45309'>NOT DETECTED</font></b>", small_bold)
         else:
             status_p = _safe_html_p("<b><font color='#64748B'>NOT_APPLICABLE</font></b>", small_bold)
 
@@ -777,7 +714,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(Spacer(1, 3 * mm))
     story.append(Paragraph("Extracted Declaration Field Audit", heading_style))
     story.append(Paragraph(
-        "Traceable audit chain comparing initial machine-extracted OCR declarations against inspector-verified entries.",
+        "Traceable audit of declarations detected from package images.",
         subtitle_style,
     ))
     story.append(Spacer(1, 1.5 * mm))
@@ -785,31 +722,18 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     extracted_headers = [
         _paragraph("Statutory Declaration", th_style),
         _paragraph("Original Extracted Value (OCR)", th_style),
-        _paragraph("Inspector Verified Value", th_style),
-        _paragraph("Verification Method", th_style),
+        _paragraph("Detected Value", th_style),
+        _paragraph("Source", th_style),
         _paragraph("Audit Status", th_style),
     ]
     extracted_rows = [extracted_headers]
     for field in (inspection.extracted_fields or []):
         param = field.field_name
-        is_overridden = param in superseded_ocr or field.source == 'MANUAL' or param in manual_overrides
-
-        orig_val = superseded_ocr.get(param)
-        if not orig_val and not is_overridden:
-            orig_val = field.field_value
-        elif not orig_val and is_overridden:
-            orig_val = "Not detected initially"
-
-        if is_overridden:
-            verified_val = field.field_value or manual_overrides.get(param, {}).get('value', '—')
-            verified_display = f"<b><font color='#047857'>{verified_val}</font></b>"
-            method_display = "<b>INSPECTOR_VERIFIED</b><br/><font color='#64748B'>Manual review correction</font>"
-            status_display = "<b><font color='#047857'>VERIFIED</font></b><br/><font color='#64748B'>OCR superseded</font>"
-        else:
-            verified_display = "<font color='#64748B'>As extracted</font>"
-            conf_pct = f"{int(field.confidence * 100)}%" if field.confidence is not None else "—"
-            method_display = f"<b>{field.source or 'OCR'}</b> (Conf: {conf_pct})"
-            status_display = "<font color='#334155'>UNMODIFIED</font>"
+        orig_val = field.field_value
+        verified_display = "<font color='#64748B'>As detected</font>"
+        conf_pct = f"{int(field.confidence * 100)}%" if field.confidence is not None else "—"
+        method_display = f"<b>{field.source or 'OCR'}</b> (Conf: {conf_pct})"
+        status_display = "<font color='#334155'>IMAGE EVIDENCE</font>"
 
         extracted_rows.append([
             _paragraph(param, small_bold),
@@ -832,12 +756,12 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(extracted_table)
 
     # =========================================================================
-    # PAGE 4: REGULATORY TRACEABILITY, LIMITATIONS & SIGN-OFF
+    # PAGE 4: REGULATORY TRACEABILITY & SYSTEM LIMITATIONS
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("REGULATORY TRACEABILITY & STATUTORY SIGN-OFF", heading_style))
+    story.append(Paragraph("REGULATORY TRACEABILITY & SYSTEM LIMITATIONS", heading_style))
     story.append(Paragraph(
-        "Legal framework references, system operating limitations, and mandatory authorized officer sign-off.",
+        "Legal framework references and system operating limitations.",
         subtitle_style,
     ))
     story.append(Spacer(1, 2 * mm))
@@ -878,18 +802,11 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(trace_table)
     story.append(Spacer(1, 3 * mm))
 
-    # Physical Verification & System Limitations callout
+    # Image-reading limitations only.
     limitations_text = (
-        "<b>Physical Verification Requirements (Legal Metrology Act, 2009 Section 18 & LMPC Rules Rule 19 / Third Schedule):</b><br/>"
-        "The Legal Metrology (Packaged Commodities) Rules, 2011 and Section 18 of the Legal Metrology Act, 2009 require physical verification of net content "
-        "using calibrated, certified standard weights and balances in accordance with Rule 19 and the Third Schedule testing procedure. Permissible tolerances are governed by the Second Schedule (Maximum Permissible Error). Principal display panel dimensions, "
-        "font heights, and container volumes require direct measurement using certified calipers, gauges, and laboratory apparatus under Rule 7. "
-        "OCR and computer vision screen optical label declarations on package graphics only; automated screening does not and cannot "
-        "measure actual physical commodity weight, density, gravimetric net fill, or physical font height in millimeters. "
-        "Physical verification procedure referenced separately.<br/><br/>"
-        "<b>System Limitations:</b> Visual screening is subject to camera sensor resolution, specular packaging reflection, "
-        "cylindrical/curved surface warping, creasing, and optical character error rates. Ambiguous or conflicting declarations "
-        "require direct physical inspection before any statutory enforcement action is initiated."
+        "<b>Image reading note:</b> The report shows only information read from the package images. "
+        "Unreadable or missing text is marked NOT DETECTED. Results may be limited by blur, glare, "
+        "curved surfaces, or low image quality."
     )
     limitations_box = Table(
         [[_safe_html_p(limitations_text, small_style)]],
@@ -903,46 +820,33 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(limitations_box)
     story.append(Spacer(1, 3 * mm))
 
-    # Inspector Review & Sign-Off Block
+    # Automatic result summary.
     review_summary_text = ""
-    if manual_overrides or superseded_ocr:
-        rev_count = len(manual_overrides) or len(superseded_ocr)
-        review_summary_text = (
-            f"<br/><br/><b>Inspector Review Actions:</b> {rev_count} declaration(s) verified/corrected "
-            f"via manual review. Compliance rules re-evaluated. Original machine OCR preserved in audit log."
-        )
 
-    inspector_block = [
+    automatic_result_block = [
         [
             _safe_html_p(
-                "<b>Inspector Review & Verification Details:</b><br/>"
-                f"<b>Name:</b> {inspection.inspector_name or '___________________________'}<br/>"
-                "<b>Designation:</b> Legal Metrology Inspector<br/>"
-                "<b>Jurisdiction / Zone:</b> ___________________________<br/>"
+                "<b>Automatic inspection:</b><br/>"
+                f"<b>Inspection ID:</b> #{inspection.id}<br/>"
                 f"<b>Inspection Date:</b> {date_str[:10]}"
                 f"{review_summary_text}",
                 small_style,
             ),
             _safe_html_p(
-                "<b>Action Taken / Disposition:</b><br/>"
-                f"[{'X' if canonical_result == InspectionStatus.COMPLIANT and (manual_overrides or superseded_ocr) else '  '}] Verified Compliant on Label & Physical Check<br/>"
-                f"[{'X' if canonical_result == InspectionStatus.NON_COMPLIANT else '  '}] Notice Issued under Section 39 / Rule 32<br/>"
-                f"[{'X' if canonical_result == InspectionStatus.NOT_VERIFIABLE else '  '}] Review Required / Physical Verification Mandated<br/>"
-                "[  ] Product Seized / Detained<br/>"
-                "[  ] Sample Sent for Physical / Laboratory Analysis<br/><br/>"
-                "<b>Inspector Signature:</b> ___________________________",
+                f"<b>Overall result:</b> {canonical_result}<br/>"
+                "The result was generated automatically from the submitted package images.",
                 small_style,
             ),
         ]
     ]
-    inspector_table = Table(inspector_block, colWidths=[136 * mm, 137 * mm])
-    inspector_table.setStyle(TableStyle([
+    automatic_result_table = Table(automatic_result_block, colWidths=[136 * mm, 137 * mm])
+    automatic_result_table.setStyle(TableStyle([
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFFFFF')),
         ('PADDING', (0, 0), (-1, -1), 6),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]))
-    story.append(inspector_table)
+    story.append(automatic_result_table)
     story.append(Spacer(1, 2 * mm))
 
     # Statutory Disclaimer Box

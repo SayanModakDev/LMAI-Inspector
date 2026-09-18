@@ -11,7 +11,7 @@ variants are generated on-demand one at a time.
 import os
 import cv2
 import numpy as np
-from PIL import Image, ExifTags
+from PIL import Image, ImageOps
 from typing import Tuple, List, Generator
 
 from app.utils.helpers import ensure_directory
@@ -42,31 +42,8 @@ def validate_image_file(input_path: str) -> bool:
 
 
 def fix_orientation(image: Image.Image) -> Image.Image:
-    """Fix image orientation using EXIF data when the camera/phone stores it there."""
-    try:
-        exif = image._getexif()
-        if exif is None:
-            return image
-
-        orientation_key = None
-        for key, val in ExifTags.TAGS.items():
-            if val == "Orientation":
-                orientation_key = key
-                break
-
-        if orientation_key is None or orientation_key not in exif:
-            return image
-
-        orientation = exif[orientation_key]
-        if orientation == 3:
-            image = image.rotate(180, expand=True)
-        elif orientation == 6:
-            image = image.rotate(270, expand=True)
-        elif orientation == 8:
-            image = image.rotate(90, expand=True)
-    except (AttributeError, KeyError, TypeError):
-        pass
-    return image
+    """Apply the complete EXIF orientation transform, including mirrored cases."""
+    return ImageOps.exif_transpose(image)
 
 
 def resize_image(image: np.ndarray, max_dim: int = None) -> np.ndarray:
@@ -165,6 +142,33 @@ def generate_single_variant(input_path: str, variant_name: str, output_dir: str)
     del cv_base
     output_path = _save_variant(output_dir, f"ocr_{variant_name}_{base_name}.jpg", var_img)
     del var_img
+    force_garbage_collection()
+    return output_path
+
+
+def generate_rotated_variant(input_path: str, angle: int, output_dir: str) -> str:
+    """Create one rotated OCR candidate without changing the stored original image."""
+    ensure_directory(output_dir)
+    base_name = os.path.splitext(os.path.basename(input_path))[0]
+    max_dim = get_max_dimension()
+
+    with Image.open(input_path) as pil_image:
+        pil_image = fix_orientation(pil_image)
+        if max(pil_image.size) > max_dim:
+            scale = max_dim / max(pil_image.size)
+            pil_image = pil_image.resize(
+                (int(pil_image.width * scale), int(pil_image.height * scale)),
+                Image.Resampling.BILINEAR,
+            )
+        if pil_image.mode not in ("RGB", "L"):
+            pil_image = pil_image.convert("RGB")
+        rotated_pil = pil_image.rotate(-angle, expand=True, resample=Image.Resampling.BICUBIC)
+        rotated = np.array(rotated_pil)
+        if len(rotated.shape) == 3:
+            rotated = cv2.cvtColor(rotated, cv2.COLOR_RGB2BGR)
+
+    output_path = _save_variant(output_dir, f"ocr_rotate_{angle}_{base_name}.jpg", rotated)
+    del rotated
     force_garbage_collection()
     return output_path
 

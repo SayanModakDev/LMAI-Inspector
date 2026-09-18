@@ -104,14 +104,14 @@ def test_legal_metrology_commencement_date_is_accurate(rule_matrix_data):
 
 
 def test_regulatory_sources_and_authorities_are_correctly_classified(rule_matrix_data):
-    """Verify proper classification between Legal Metrology, FSSAI, Cosmetics, and Internal sources."""
+    """Verify proper classification between automatic, Legal Metrology, FSSAI, and Cosmetics sources."""
     rules = rule_matrix_data.get('rules', [])
 
     for rule in rules:
         rule_id = rule['rule_id']
         if rule_id == 'PC-ALL-001':
-            assert rule['regulatory_source'] == 'INTERNAL_INSPECTION'
-            assert rule['rule_reference_status'] == 'NON_STATUTORY'
+            assert rule['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
+            assert rule['rule_reference_status'] == 'SOURCE_IDENTIFIED'
         elif rule_id.startswith('PC-ALL'):
             assert rule['regulatory_source'] == 'LEGAL_METROLOGY'
             assert 'Consumer Affairs' in rule['source_authority']
@@ -157,7 +157,7 @@ def test_sync_rules_to_db_preserves_new_metadata():
         assert rule_001.source_authority == "Internal Inspection Screening Specification"
         assert rule_001.effective_from == "2011-04-01"
         assert rule_001.rule_reference_status == "NON_STATUTORY"
-        assert rule_001.regulatory_source == "INTERNAL_INSPECTION"
+        assert rule_001.regulatory_source == "AUTOMATIC_IMAGE_SCREENING"
         assert rule_001.source_url is not None
 
         rule_002 = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-ALL-002').first()
@@ -179,24 +179,6 @@ def test_sync_rules_to_db_preserves_new_metadata():
         db.close()
 
 
-def test_physical_verification_rules_visible_in_applicability_without_physical_data(rule_matrix_data):
-    """Verify physical verification rules (PC-ALL-012, PC-ALL-013) remain visible in applicability."""
-    all_rules = rule_matrix_data.get('rules', [])
-    applicable = get_applicable_rules(
-        all_rules=all_rules,
-        category='FOOD',
-        package_type='RETAIL',
-        import_status='DOMESTIC',
-        product_type='OTHER_FOOD',
-        has_physical_data=False,  # Image-only scan
-    )
-    app_ids = {r['rule_id'] for r in applicable}
-
-    # Physical verification rules must remain visible in applicability
-    assert 'PC-ALL-012' in app_ids
-    assert 'PC-ALL-013' in app_ids
-
-
 def test_rules_api_endpoint_exposes_standardized_metadata():
     """Verify GET /api/rules endpoint returns all standardized metadata fields."""
     client = TestClient(app)
@@ -208,9 +190,9 @@ def test_rules_api_endpoint_exposes_standardized_metadata():
     first_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-001')
     assert first_rule['source_authority'] is not None
     assert first_rule['source_url'] is not None
-    assert first_rule['rule_reference_status'] == 'NON_STATUTORY'
+    assert first_rule['rule_reference_status'] == 'SOURCE_IDENTIFIED'
     assert first_rule['effective_from'] == '2011-04-01'
-    assert first_rule['regulatory_source'] == 'INTERNAL_INSPECTION'
+    assert first_rule['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
 
     statutory_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-002')
     assert statutory_rule['rule_reference_status'] == 'VERIFIED'

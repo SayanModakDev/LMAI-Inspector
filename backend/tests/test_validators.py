@@ -18,8 +18,6 @@ from app.rules.validators import (
     validate_fssai_number_present,
     validate_batch_number_present,
     validate_ingredients_present,
-    validate_physical_weight_check,
-    validate_font_size_check,
     validate_veg_nonveg_present,
     ValidationResult,
 )
@@ -342,61 +340,6 @@ def test_ingredients_present_valid():
 
     assert res.status == "PASS"
     assert res.binary == 1
-
-
-# ---------------------------------------------------------------------------
-# PHYSICAL VERIFICATION HANDLING
-# ---------------------------------------------------------------------------
-def test_physical_weight_check_without_physical_data_is_not_verifiable():
-    rule = {"rule_id": "PC-ALL-012", "parameter": "ACTUAL_NET_CONTENT", "required": True}
-    res = validate_physical_weight_check(None, rule, {})
-
-    assert res.status == "NOT_VERIFIABLE"
-    assert res.binary == 0
-    assert "physical measurement data has not been provided" in res.reason.lower()
-
-
-def test_physical_weight_check_with_physical_data_evaluates_against_declared():
-    rule = {"rule_id": "PC-ALL-012", "parameter": "ACTUAL_NET_CONTENT", "required": True}
-    all_fields = {
-        "DECLARED_NET_QUANTITY": {"quantity_value": "500", "quantity_unit": "g"},
-    }
-
-    # Pass case (502g actual >= 500g declared)
-    res_pass = validate_physical_weight_check(
-        {"value": "502 g", "source": "PHYSICAL_MEASUREMENT"},
-        rule,
-        all_fields,
-    )
-    assert res_pass.status == "PASS"
-    assert res_pass.binary == 1
-
-    # Fail case (450g actual < 500g declared beyond permissible error)
-    res_fail = validate_physical_weight_check(
-        {"value": "450 g", "source": "PHYSICAL_MEASUREMENT"},
-        rule,
-        all_fields,
-    )
-    assert res_fail.status == "FAIL"
-    assert res_fail.binary == 0
-
-
-def test_font_size_check_without_data_is_not_verifiable():
-    rule = {"rule_id": "PC-ALL-013", "parameter": "FONT_SIZE_COMPLIANCE", "required": True}
-    res = validate_font_size_check(None, rule, {})
-
-    assert res.status == "NOT_VERIFIABLE"
-    assert res.binary == 0
-
-
-def test_font_size_check_with_data_passes_or_fails():
-    rule = {"rule_id": "PC-ALL-013", "parameter": "FONT_SIZE_COMPLIANCE", "min_font_height_mm": 2.0}
-
-    res_pass = validate_font_size_check({"value": "2.5 mm", "source": "MANUAL_MEASUREMENT"}, rule, {})
-    assert res_pass.status == "PASS"
-
-    res_fail = validate_font_size_check({"value": "1.2 mm", "source": "MANUAL_MEASUREMENT"}, rule, {})
-    assert res_fail.status == "FAIL"
 
 
 # ---------------------------------------------------------------------------

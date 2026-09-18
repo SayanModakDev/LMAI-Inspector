@@ -365,9 +365,6 @@ const EvidenceViewer = ({
       const key = (rule.parameter || '').toUpperCase();
       if (!key) return;
 
-      // Skip physical verification parameters in the visual OCR evidence panel
-      if (key === 'ACTUAL_NET_CONTENT' || key === 'FONT_SIZE_COMPLIANCE') return;
-
       if (!itemsMap.has(key)) {
         const isNa = rule.status === 'NOT_APPLICABLE';
         itemsMap.set(key, {
@@ -469,7 +466,7 @@ const EvidenceViewer = ({
 
     return {
       parameter: 'PRODUCT_NAME',
-      status: 'REQUIRES MANUAL REVIEW',
+      status: 'NOT_DETECTED',
       candidates,
     };
   }, [allEvidenceItems]);
@@ -861,7 +858,7 @@ const EvidenceViewer = ({
                   </div>
                 </div>
                 <span className="badge badge-warning font-mono text-2xs font-bold">
-                  REVIEW REQUIRED
+                  NOT DETECTED
                 </span>
               </div>
 
@@ -890,7 +887,7 @@ const EvidenceViewer = ({
               </div>
 
               <div className="conflict-resolution-note text-2xs text-amber-900 bg-amber-100 p-1.5 rounded">
-                Conflicting information. The system does not select an official value. The inspector must verify the official product identity during review.
+                Conflicting information. The strongest supported package-image evidence is used; otherwise the product identity is marked NOT DETECTED.
               </div>
             </div>
           )}
@@ -1094,7 +1091,7 @@ const EvidenceViewer = ({
             <div className="evidence-empty-state text-center p-6 text-muted">
               <Info size={24} className="mx-auto mb-2 text-muted" />
               <p className="font-semibold text-sm">No declarations match the selected filter</p>
-              <p className="text-xs">Adjust search query or filter pills to review all evidence items.</p>
+              <p className="text-xs">Adjust the search query or filter pills to view all evidence items.</p>
             </div>
           )}
         </div>

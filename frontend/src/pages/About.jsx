@@ -11,7 +11,7 @@ const About = () => {
         <div className="card-body">
           <p className="mb-4">
             This application is an inspection support tool designed to assist Legal Metrology 
-            inspectors in verifying packaged commodity declarations.
+            automatic screening of packaged commodity declarations.
           </p>
           
           <h3 className="mt-3 mb-2">How it works</h3>
@@ -20,7 +20,7 @@ const About = () => {
             <li className="mb-2"><strong>Extract:</strong> PaddleOCR extracts text, and the system identifies declarations (MRP, Declared Net Quantity, Dates).</li>
             <li className="mb-2"><strong>Classify:</strong> The product is automatically classified into categories (e.g., FOOD, COSMETIC).</li>
             <li className="mb-2"><strong>Evaluate:</strong> A flexible rules engine validates the extracted declarations against the Legal Metrology (Packaged Commodities) Rules, 2011.</li>
-            <li><strong>Report:</strong> The user can review extracted values, re-evaluate, and generate an inspection report PDF.</li>
+            <li><strong>Report:</strong> The system generates a PDF from extracted package declarations and automatic rule results.</li>
           </ol>
           
           <div className="warning-banner" style={{ marginTop: '2rem' }}>

@@ -1,12 +1,12 @@
 import React from 'react';
-import { AlertTriangle, Layers, UserCheck } from 'lucide-react';
+import { AlertTriangle, Layers } from 'lucide-react';
 import './ConflictCard.css';
 
 /**
  * ConflictCard Component
  * Displays explicit candidate comparisons across multiple panels or evidence sources.
  * Adheres strictly to LMAI Inspector data integrity:
- * Never silently chooses a candidate; explicit "Resolution: Manual Review Required".
+ * Shows competing package evidence without creating an approval step.
  */
 const ConflictCard = ({
   parameter,
@@ -23,11 +23,11 @@ const ConflictCard = ({
             CONFLICTING EVIDENCE: {parameter?.replace(/_/g, ' ')}
           </span>
         </div>
-        <span className="status-pill status-pill--review font-mono text-xs">Manual Review Required</span>
+        <span className="status-pill status-pill--review font-mono text-xs">Automatic result</span>
       </div>
 
       <p className="conflict-card__description">
-        Multiple package views or evidence sources provided contradictory values. The system does not silently choose a winner or guess; manual inspector determination is required.
+        Multiple package views or evidence sources provided contradictory values. The strongest supported package-image evidence is used; otherwise the declaration is marked NOT DETECTED.
       </p>
 
       <div className="conflict-card__grid">
@@ -64,12 +64,12 @@ const ConflictCard = ({
 
       <div className="conflict-card__resolution-banner">
         <div className="flex items-center gap-2">
-          <UserCheck size={16} className="text-warning flex-shrink-0" />
+          <AlertTriangle size={16} className="text-warning flex-shrink-0" />
           <div>
             <span className="resolution-label font-semibold">Resolution: </span>
-            <span className="resolution-text font-bold text-amber-900">Manual Review Required</span>
+            <span className="resolution-text font-bold text-amber-900">Strongest readable evidence used</span>
             <p className="text-2xs text-muted mb-0 mt-0.5">
-              Inspector must verify physical package declaration and record certified override if necessary.
+              The system keeps the original evidence and continues with the automatic result.
             </p>
           </div>
         </div>
