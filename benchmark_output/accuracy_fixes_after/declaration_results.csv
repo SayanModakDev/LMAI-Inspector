@@ -1,0 +1,49 @@
+case_id,product_name,field,expected_value,expected_normalized,predicted_value,predicted_normalized,expected_present,predicted_present,exact_match,normalized_match,required,grounding_status,grounding_strategy,grounding_score,error_category,resolution_source
+PKG001,NutriOats Digestive Cookies,BATCH_NUMBER,NB-402,nb-402,NB-402,nb-402,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,BEST_BEFORE_USE_BY,6 months from manufacture,6 months,6 months from manufacture,6 months,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,BRAND,,,Nutrioats,nutrioats,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR_LAYOUT
+PKG001,NutriOats Digestive Cookies,CONSUMER_CARE,"Email: care@nutribake.in, Ph: 1800-222-1111","email: care@nutribake.in, ph: 1800-222-1111","care@nutribake.in, Ph: 1800-222-1111","care@nutribake.in, ph: 1800-222-1111",True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR
+PKG001,NutriOats Digestive Cookies,COUNTRY_OF_ORIGIN,,,India,india,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG001,NutriOats Digestive Cookies,DECLARED_NET_QUANTITY,250 g,250 g,250 g,250 g,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,FSSAI_LICENSE,10014011005544,10014011005544,10014011005544,10014011005544,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,GENERIC_NAME,Biscuits,biscuits,BISCUITS,biscuits,True,True,False,True,True,,,0.0,,OCR_LABEL
+PKG001,NutriOats Digestive Cookies,MANUFACTURER_ADDRESS,"Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018",plot 42 ind area sector 5 pune maharashtra 411018,"At: Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018",plot 42 ind area sector 5 pune maharashtra 411018,True,True,False,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,MANUFACTURER_NAME,NutriBake Foods India Pvt Ltd,nutribake foods india pvt ltd,NutriBake Foods India Pvt Ltd,nutribake foods india pvt ltd,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,MONTH_YEAR_MANUFACTURE,04/2024,04/2024,04/2024,04/2024,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,MRP,₹45.00,45.00,₹45.00,45.00,True,True,True,True,True,,,0.0,,OCR
+PKG001,NutriOats Digestive Cookies,PRODUCT_NAME,NutriOats Digestive Cookies,nutrioats digestive cookies,CONFLICT: Digestive Biscuit vs 100% Vegetarian Made in India,conflict digestive biscuit vs 100 vegetarian made in india,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,MULTI_IMAGE_CONFLICT
+PKG001,NutriOats Digestive Cookies,PRODUCT_TYPE,,,BISCUIT,biscuit,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG001,NutriOats Digestive Cookies,VEG_NONVEG_SYMBOL,VEGETARIAN,VEGETARIAN,Text mention detected,TEXT MENTION DETECTED,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR
+PKG002,AuraGlow Herbal Face Wash,BATCH_NUMBER,AG-881,ag-881,AG-881,ag-881,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,BRAND,,,Auraglow Herbal Face Wash,auraglow herbal face wash,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR_LAYOUT
+PKG002,AuraGlow Herbal Face Wash,CONSUMER_CARE,feedback@auraglow.in,feedback@auraglow.in,feedback@auraglow.in,feedback@auraglow.in,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,COUNTRY_OF_ORIGIN,,,India,india,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG002,AuraGlow Herbal Face Wash,DECLARED_NET_QUANTITY,150 ml,150 ml,150 ml,150 ml,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,EXPIRY_DATE,01/2026,01/2026,01/2026,01/2026,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,GENERIC_NAME,Face Wash,face wash,FACE WASH,face wash,True,True,False,True,True,,,0.0,,OCR_LABEL
+PKG002,AuraGlow Herbal Face Wash,MANUFACTURER_ADDRESS,"Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",survey 18 haridwar industrial estate haridwar uttarakhand 249403,"At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",survey 18 haridwar industrial estate haridwar uttarakhand 249403,True,True,False,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MANUFACTURER_NAME,Aura Wellness Cosmetics Pvt Ltd,aura wellness cosmetics pvt ltd,Aura Wellness Cosmetics Pvt Ltd,aura wellness cosmetics pvt ltd,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MONTH_YEAR_MANUFACTURE,02/2024,02/2024,02/2024,02/2024,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MRP,₹199.00,199.00,₹199.00,199.00,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,PRODUCT_NAME,AuraGlow Herbal Face Wash,auraglow herbal face wash,Cosmetic For external use only,cosmetic for external use only,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR
+PKG003,Himalayan Pink Rock Salt,BRAND,,,Himalayan Pink Rock Salt,himalayan pink rock salt,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR_LAYOUT
+PKG003,Himalayan Pink Rock Salt,COUNTRY_OF_ORIGIN,,,India,india,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG003,Himalayan Pink Rock Salt,DECLARED_NET_QUANTITY,1000,1000,1000,1000,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,FSSAI_LICENSE,10018022001122,10018022001122,10018022001122,10018022001122,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,GENERIC_NAME,Edible Salt,edible salt,EDIBLE SALT,edible salt,True,True,False,True,True,,,0.0,,OCR_LABEL
+PKG003,Himalayan Pink Rock Salt,MANUFACTURER_ADDRESS,"Plot 5, Ambala Road, Chandigarh 160002",plot 5 ambala road chandigarh 160002,"Plot 5, Ambala Road, Chandigarh 160002",plot 5 ambala road chandigarh 160002,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,MANUFACTURER_NAME,Pure Mineral Salt Works,pure mineral salt works,Pure Mineral Salt Works,pure mineral salt works,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,MONTH_YEAR_MANUFACTURE,03/2024,03/2024,03/2024,03/2024,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,MRP,₹120.00,120.00,₹120.00,120.00,True,True,True,True,True,,,0.0,,OCR
+PKG003,Himalayan Pink Rock Salt,PRODUCT_NAME,Himalayan Pink Rock Salt,himalayan pink rock salt,Himalayan Pink Salt,himalayan pink salt,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR_LAYOUT
+PKG003,Himalayan Pink Rock Salt,PRODUCT_TYPE,,,SALT,salt,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,BRAND,,,Crystal Sugar Grade M,crystal sugar grade m,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR_LAYOUT
+PKG004,Crystal Sugar Grade M Bulk Sack,COUNTRY_OF_ORIGIN,,,India,india,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,DECLARED_NET_QUANTITY,50 kg,50 kg,50 kg,50 kg,True,True,True,True,True,,,0.0,,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,FSSAI_LICENSE,,,10015021008899,10015021008899,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,GENERIC_NAME,Refined Sugar,refined sugar,REFINED SUGAR,refined sugar,True,True,False,True,True,,,0.0,,OCR_LABEL
+PKG004,Crystal Sugar Grade M Bulk Sack,MANUFACTURER_ADDRESS,"Factory Road, Kolhapur, Maharashtra 416001",road kolhapur maharashtra 416001,"Factory Road, Kolhapur, Maharashtra 416001",road kolhapur maharashtra 416001,True,True,True,True,True,,,0.0,,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,MANUFACTURER_NAME,Deccan Agro Sugar Mills Ltd,deccan agro sugar mills ltd,Deccan Agro Sugar Mills Ltd,deccan agro sugar mills ltd,True,True,True,True,True,,,0.0,,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,MONTH_YEAR_MANUFACTURE,05/2024,05/2024,05/2024,05/2024,True,True,True,True,True,,,0.0,,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,PRODUCT_NAME,Crystal Sugar Grade M,crystal sugar grade m,"Factory Road, Kolhapur, Maharashtra 416001",factory road kolhapur maharashtra 416001,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR
+PKG004,Crystal Sugar Grade M Bulk Sack,PRODUCT_TYPE,,,SUGAR,sugar,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR

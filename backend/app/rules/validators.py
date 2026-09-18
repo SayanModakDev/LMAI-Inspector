@@ -233,7 +233,7 @@ def _check_preconditions(
     parameter = rule.get("parameter", "UNKNOWN")
     required = rule.get("required", True)
 
-    # 0. Conflicting evidence across views/sources requires manual review, never silently PASS
+    # Conflicting evidence across views/sources cannot be treated as a pass.
     if evidence and (
         evidence.get("status") == "CONFLICTING_EVIDENCE"
         or evidence.get("has_conflict") is True
@@ -245,18 +245,18 @@ def _check_preconditions(
             binary=0,
             reason=(
                 f"Conflicting evidence detected across package views for '{parameter}': "
-                f"[{vals_str}]. Manual inspection and review required."
+                f"[{vals_str}]. Declaration not detected reliably from package images."
             ),
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
             evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value),
         )
 
-    # 0b. Ambiguous / OCR variation evidence also requires review
+    # 0b. Ambiguous / OCR variation evidence is not detected reliably
     if evidence and evidence.get("status") == "REVIEW":
         review_reason = evidence.get("reason") or (
-            f"Evidence detected for '{parameter}' requires review. "
-            "Manual verification recommended."
+            f"Evidence detected for '{parameter}' is ambiguous. "
+            "Declaration not detected reliably from package images."
         )
         return ValidationResult(
             status="NOT_VERIFIABLE",
@@ -264,7 +264,7 @@ def _check_preconditions(
             reason=review_reason,
             normalized_value=str(evidence.get("value", "")),
             evidence=evidence,
-            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value),
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value),
         )
 
     # 1. Missing evidence or empty value
@@ -327,7 +327,7 @@ def _check_preconditions(
                 reason=(
                     f"Suspected MRP/price value '{raw_value_str}' detected as declared net quantity. "
                     "This field requires a quantity with a legal unit (g, kg, ml, L, pcs). "
-                    "Manual review required."
+                    "Declaration not detected reliably from package images."
                 ),
                 normalized_value=raw_value_str,
                 evidence=evidence,
@@ -341,7 +341,7 @@ def _check_preconditions(
                 binary=0,
                 reason=(
                     f"A date-like value '{raw_value_str}' was detected in the declared net quantity field. "
-                    "A date cannot represent a net quantity. Manual review required."
+                    "A date cannot represent a net quantity. Declaration not detected reliably from package images."
                 ),
                 normalized_value=raw_value_str,
                 evidence=evidence,
@@ -356,7 +356,7 @@ def _check_preconditions(
                 binary=0,
                 reason=(
                     f"A numeric code '{raw_value_str}' that resembles a barcode or identifier was detected "
-                    f"as '{parameter}'. Declaration values must not be bare numeric codes. Manual review required."
+                    f"as '{parameter}'. Declaration values must not be bare numeric codes. Declaration not detected reliably from package images."
                 ),
                 normalized_value=raw_value_str,
                 evidence=evidence,
@@ -370,7 +370,7 @@ def _check_preconditions(
                 binary=0,
                 reason=(
                     f"Value '{raw_value_str}' appears to originate from a nutritional or serving-size "
-                    "context, not a package net quantity declaration. Manual review required."
+                    "context, not a package net quantity declaration. Declaration not detected reliably from package images."
                 ),
                 normalized_value=raw_value_str,
                 evidence=evidence,
@@ -443,7 +443,7 @@ def validate_value_and_unit_present(
             binary=0,
             reason=(
                 f"Conflicting evidence detected across package views for '{parameter}': "
-                f"[{vals_str}]. Manual inspection and review required."
+                f"[{vals_str}]. Declaration not detected reliably from package images."
             ),
             raw_value=str(evidence.get("value", "")),
             value=None,
@@ -880,7 +880,7 @@ def validate_mrp_present(
         return ValidationResult(
             status="NOT_VERIFIABLE",
             binary=0,
-            reason=evidence.get("reason") or f"MRP declaration contains corrupted or unverified currency symbol: '{raw_val}'. Manual review required.",
+            reason=evidence.get("reason") or f"MRP declaration contains corrupted or unverified currency symbol: '{raw_val}'. Declaration not detected reliably from package images.",
             normalized_value=raw_val,
             evidence=evidence,
         )
@@ -889,7 +889,7 @@ def validate_mrp_present(
         return ValidationResult(
             status="NOT_VERIFIABLE",
             binary=0,
-            reason=evidence.get("reason") or f"Currency symbol is missing from MRP declaration: '{raw_val}'. Manual review required.",
+            reason=evidence.get("reason") or f"Currency symbol is missing from MRP declaration: '{raw_val}'. Declaration not detected reliably from package images.",
             normalized_value=raw_val,
             evidence=evidence,
         )
@@ -1391,7 +1391,7 @@ def validate_veg_nonveg_present(
         return ValidationResult(
             status="NOT_VERIFIABLE",
             binary=0,
-            reason=f"Visual candidate detected: {symbol_type} ({det_method}); requires inspector confirmation to verify compliance.",
+            reason=f"Visual candidate detected: {symbol_type} ({det_method}); declaration not detected reliably from package images.",
             normalized_value=str(symbol_type),
             evidence=evidence,
         )
@@ -1413,119 +1413,6 @@ def validate_veg_nonveg_present(
         normalized_value=raw_val,
         evidence=evidence,
     )
-
-
-@register_validator("PHYSICAL_WEIGHT_CHECK")
-def validate_physical_weight_check(
-    evidence: Optional[Dict[str, Any]],
-    rule: Dict[str, Any],
-    all_fields: Dict[str, Any],
-) -> ValidationResult:
-    """Validate actual net content against declared net quantity (physical inspection required)."""
-    # Physical-only requirement remains NOT_VERIFIABLE until physical measurement is supplied
-    physical_value = None
-    if evidence and evidence.get("physical_measured_value") is not None:
-        physical_value = evidence.get("physical_measured_value")
-    elif evidence and evidence.get("value") is not None:
-        # Check if caller supplied explicit physical verification measurement
-        source = evidence.get("source", "")
-        if "PHYSICAL" in str(source).upper() or "MANUAL" in str(source).upper():
-            physical_value = evidence.get("value")
-
-    if physical_value is None:
-        return ValidationResult(
-            status="NOT_VERIFIABLE",
-            binary=0,
-            reason="Physical verification is required before this requirement can be confirmed. Physical measurement data has not been provided.",
-            evidence=None,
-        )
-
-    # If physical measurement data is supplied, validate it against declared quantity
-    declared_net = all_fields.get("DECLARED_NET_QUANTITY", {})
-    declared_val = declared_net.get("quantity_value")
-
-    if declared_val is not None:
-        try:
-            declared_num = float(declared_val)
-            actual_num = float(re.sub(r'[^\d.]', '', str(physical_value)))
-            # Maximum Permissible Error tolerance: standard ~2% or within nominal declared
-            if actual_num >= declared_num * 0.98:
-                return ValidationResult(
-                    status="PASS",
-                    binary=1,
-                    reason=f"Physical verification passed: actual weight ({actual_num}) satisfies declared quantity ({declared_num}).",
-                    normalized_value=str(physical_value),
-                    evidence=evidence,
-                )
-            return ValidationResult(
-                status="FAIL",
-                binary=0,
-                reason=f"Physical verification failed: actual weight ({actual_num}) is below declared quantity ({declared_num}).",
-                normalized_value=str(physical_value),
-                evidence=evidence,
-            )
-        except (ValueError, TypeError):
-            pass
-
-    return ValidationResult(
-        status="PASS",
-        binary=1,
-        reason=f"Physical verification available: {physical_value}",
-        normalized_value=str(physical_value),
-        evidence=evidence,
-    )
-
-
-@register_validator("FONT_SIZE_CHECK")
-def validate_font_size_check(
-    evidence: Optional[Dict[str, Any]],
-    rule: Dict[str, Any],
-    all_fields: Dict[str, Any],
-) -> ValidationResult:
-    """Validate numeral and letter font height compliance (Rule 7, physical verification required)."""
-    physical_height = None
-    if evidence and evidence.get("physical_font_height_mm") is not None:
-        physical_height = evidence.get("physical_font_height_mm")
-    elif evidence and evidence.get("value") is not None:
-        source = evidence.get("source", "")
-        if "PHYSICAL" in str(source).upper() or "MANUAL" in str(source).upper():
-            physical_height = evidence.get("value")
-
-    if physical_height is None:
-        return ValidationResult(
-            status="NOT_VERIFIABLE",
-            binary=0,
-            reason="VISUAL SCREENING CANNOT CONFIRM PHYSICAL MILLIMETRE HEIGHT: Physical measurement using calibrated gauge or caliper under Rule 7 Table-I/II is required.",
-            evidence=None,
-        )
-
-    try:
-        height_mm = float(re.sub(r'[^\d.]', '', str(physical_height)))
-        # Minimum font height under Rule 7 table is typically 1.0mm - 4.0mm depending on package size
-        min_required_mm = float(rule.get("min_font_height_mm", 1.0))
-        if height_mm >= min_required_mm:
-            return ValidationResult(
-                status="PASS",
-                binary=1,
-                reason=f"Font height measurement ({height_mm}mm) meets minimum required ({min_required_mm}mm).",
-                normalized_value=f"{height_mm}mm",
-                evidence=evidence,
-            )
-        return ValidationResult(
-            status="FAIL",
-            binary=0,
-            reason=f"Font height measurement ({height_mm}mm) is below minimum required ({min_required_mm}mm).",
-            normalized_value=f"{height_mm}mm",
-            evidence=evidence,
-        )
-    except (ValueError, TypeError):
-        return ValidationResult(
-            status="PASS",
-            binary=1,
-            reason=f"Physical verification available: {physical_height}",
-            normalized_value=str(physical_height),
-            evidence=evidence,
-        )
 
 
 # Fallback mapping from rule parameter to validation method if omitted in rule dict
@@ -1550,8 +1437,6 @@ DEFAULT_PARAMETER_VALIDATION_METHODS: Dict[str, str] = {
     "VEG_NONVEG_SYMBOL": "VEG_NONVEG_PRESENT",
     "BATCH_NUMBER": "BATCH_NUMBER_PRESENT",
     "USE_BEFORE_DATE": "EXPIRY_DATE_PRESENT",
-    "ACTUAL_NET_CONTENT": "PHYSICAL_WEIGHT_CHECK",
-    "FONT_SIZE_COMPLIANCE": "FONT_SIZE_CHECK",
 }
 
 
@@ -1622,7 +1507,7 @@ def dispatch_validator(
                     reason=msg,
                     normalized_value=str(evidence.get("value", "")),
                     evidence=evidence,
-                    evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value),
+                    evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value),
                 )
             # Otherwise, clear false ambiguity flag and let validator evaluate the single candidate!
             if evidence.get("status") in ("AMBIGUOUS", "REVIEW"):
@@ -1634,9 +1519,9 @@ def dispatch_validator(
             is_amb = evidence.get("status") in ("AMBIGUOUS", "REVIEW") or evidence.get("is_ambiguous")
             msg = (
                 f"Ambiguous or competing candidate declarations detected for '{parameter}': "
-                f"[{cand_str}]. Manual inspector review required."
+                f"[{cand_str}]. Declaration not detected reliably from package images."
                 if is_amb
-                else f"Conflicting evidence detected across package views for '{parameter}': [{cand_str}]. Manual inspection and review required."
+                else f"Conflicting evidence detected across package views for '{parameter}': [{cand_str}]. Declaration not detected reliably from package images."
             )
             return ValidationResult(
                 status="NOT_VERIFIABLE",
@@ -1660,7 +1545,7 @@ def dispatch_validator(
             binary=0,
             reason=f"Rule '{rule.get('rule_id')}' has no validation method specified and cannot be evaluated deterministically.",
             evidence=evidence,
-            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     validator_func = VALIDATOR_REGISTRY.get(method)
@@ -1675,7 +1560,7 @@ def dispatch_validator(
             binary=0,
             reason=f"Unknown validation method '{method}'. Cannot determine compliance deterministically.",
             evidence=evidence,
-            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.PHYSICAL_VERIFICATION_REQUIRED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+            evidence_state=evidence.get("evidence_state", EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value) if evidence else EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
         )
 
     # Execute the deterministic validator

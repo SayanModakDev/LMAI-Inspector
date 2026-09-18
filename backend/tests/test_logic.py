@@ -1,6 +1,7 @@
 import pytest
 from app.extraction.declaration_extractor import extract_declarations, merge_product_evidence, merge_extracted_fields
 from app.classification.category_classifier import classify_category
+from app.classification.package_context import detect_package_context
 from app.rules.applicability import get_applicable_rules
 from app.rules.rule_engine import evaluate_rules, build_inspection_findings
 from app.barcode_decoder import decode_barcodes
@@ -27,12 +28,124 @@ def test_declaration_extractor_handles_common_packaged_commmodity_labels():
     assert fields.get('FSSAI_LICENSE', {}).get('value') == '12345678901234'
 
 
+def test_general_brand_selection_prefers_prominent_ocr_over_brand_sentence_fragment():
+    ocr_items = [
+        {
+            'text': 'TATA',
+            'bbox': [40, 20, 500, 160],
+            'confidence': 0.97,
+            'image_index': 0,
+        },
+        {
+            'text': 'SIS ONLY A BRAND NAME AND DOES',
+            'bbox': [25, 900, 700, 930],
+            'confidence': 0.98,
+            'image_index': 0,
+        },
+    ]
+
+    fields = extract_declarations(
+        'TATA\nSIS ONLY A BRAND NAME AND DOES',
+        ocr_items=ocr_items,
+    )
+
+    brand = fields.get('BRAND')
+    assert brand is not None
+    assert brand['value'] == 'Tata'
+    assert brand['confidence'] == 0.97
+    assert brand['bbox'] == [40, 20, 500, 160]
+    assert brand['source_image_index'] == 0
+
+    sentence_only = extract_declarations('SIS ONLY A BRAND NAME AND DOES')
+    assert sentence_only.get('BRAND', {}).get('value') in (None, 'NOT_DETECTED')
+
+
+def test_product_name_selection_prefers_front_identity_over_back_panel_fragment():
+    ocr_items = [
+        {'text': 'TATA', 'bbox': [40, 20, 500, 160], 'confidence': 0.97, 'image_index': 0},
+        {'text': 'Salt', 'bbox': [70, 170, 470, 300], 'confidence': 0.96, 'image_index': 0},
+        {'text': 'LANKA SRI Salt', 'bbox': [20, 850, 260, 880], 'confidence': 0.96, 'image_index': 0},
+        {'text': 'SIS ONLY A BRAND NAME AND DOES', 'bbox': [20, 900, 700, 930], 'confidence': 0.98, 'image_index': 0},
+    ]
+
+    fields = extract_declarations(
+        'TATA\nSalt\nLANKA SRI Salt\nSIS ONLY A BRAND NAME AND DOES',
+        ocr_items=ocr_items,
+    )
+
+    product = fields.get('PRODUCT_NAME')
+    assert product is not None
+    assert product['value'] == 'Tata Salt'
+    assert product['confidence'] == 0.96
+    assert product['bbox'] == [40, 20, 500, 300]
+    assert product['source_image_index'] == 0
+    assert 'Lanka' not in product['value']
+
+
+def test_sensodyne_product_name_uses_identity_not_benefit_sentence():
+    fields = extract_declarations(
+        'Sensodyne Fresh Mint Toothpaste\n'
+        'DENTIST RECOMMENDED BRAND\n'
+        'MRP Rs 135\n'
+        'Net quantity 75 g'
+    )
+
+    product = fields.get('PRODUCT_NAME')
+    assert product is not None
+    assert product['value'] == 'Sensodyne Fresh Mint Toothpaste'
+    assert 'DENTIST' not in product['value']
+
+
 def test_category_classifier_detects_food_from_fssai_plus_ingredients():
     text_food = "Ingredients: Sugar, Milk, Cocoa butter. FSSAI Lic No: 12345678901234"
     result = classify_category(text_food)
 
     assert result.get('category') == 'FOOD'
     assert result.get('confidence', 0) >= 0.6
+
+
+def test_sensodyne_style_declarations_stay_separate_and_clean():
+    fields = extract_declarations(
+        'Sensodyne Fresh Mint Toothpaste\n'
+        'DENTIST RECOMMENDED BRAND\n'
+        'MRP ₹135.00\n'
+        'Unit sale price ₹1.80/g\n'
+        'Batch BGM260315\n'
+        'MFD 05/26\n'
+        'Manufactured by:\n'
+        'GlaxoSmithKline Consumer Healthcare Pvt Ltd\n'
+        'Plot 12, Industrial Area, Kolkata, West Bengal\n'
+        'Net quantity 75 g'
+    )
+
+    assert fields['MRP']['value'] == '₹135.00'
+    assert fields['UNIT_SALE_PRICE']['value'] == '₹1.80/g'
+    assert fields['BATCH_NUMBER']['value'] == 'BGM260315'
+    assert fields['MANUFACTURER_NAME']['value'] == 'GlaxoSmithKline Consumer Healthcare Pvt Ltd'
+    assert 'Kolkata' in fields['MANUFACTURER_ADDRESS']['value']
+    assert fields['MONTH_YEAR_MANUFACTURE']['value'] == '05/2026'
+
+
+def test_package_context_is_derived_from_explicit_package_evidence():
+    context = detect_package_context(
+        'MRP Rs 220 For Retail Sale Made in India'
+    )
+    assert context['package_type'] == 'RETAIL'
+    assert context['import_status'] == 'DOMESTIC'
+
+
+def test_package_context_does_not_match_retail_inside_not_for_retail_sale():
+    context = detect_package_context(
+        'Not for Retail Sale Bulk Pack Imported by ABC Ltd Country of Origin: China'
+    )
+    assert context['package_type'] == 'WHOLESALE'
+    assert context['import_status'] == 'IMPORTED'
+
+
+def test_package_context_keeps_missing_evidence_unknown():
+    context = detect_package_context('Brand Chocolate 500 g')
+    assert context['package_type'] == 'NOT_DETECTED'
+    assert context['import_status'] == 'NOT_DETECTED'
 
 
 def test_product_classifier_identifies_sugar_and_common_name():

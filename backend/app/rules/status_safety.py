@@ -9,7 +9,7 @@ Ensures that:
    - effective_date / effective_from
    - applicability
    - rule_version
-2. Internal inspection fields (e.g. PRODUCT_NAME) are strictly classified as NON_STATUTORY.
+2. Automatic package-image identity fields are classified using their available source metadata.
 3. Exemption-contingent statutory requirements are classified as APPLICABILITY_DEPENDENT.
 4. Human-readable regulatory snapshots are dynamically derived for each inspection date.
 5. The software explicitly disclaims government authority.
@@ -43,7 +43,7 @@ def validate_and_enforce_verification_status(rule: Dict[str, Any]) -> str:
     Enforce verification status safety based on evidentiary completeness.
 
     Returns one of:
-    - NON_STATUTORY: for internal inspection fields.
+    - NON_STATUTORY: for explicitly non-statutory source metadata.
     - APPLICABILITY_DEPENDENT: for verified rules whose mandate is contingent on exemptions.
     - VERIFIED: for statutory rules with complete, audited evidentiary metadata.
     - SOURCE_IDENTIFIED: if authority and URL exist but citation/dates are incomplete.
@@ -52,11 +52,7 @@ def validate_and_enforce_verification_status(rule: Dict[str, Any]) -> str:
     rule_id = str(rule.get("rule_id", "")).upper()
     regulatory_source = str(rule.get("regulatory_source", "")).upper()
 
-    # 1. Internal inspection fields are strictly non-statutory
-    if rule_id == "PC-ALL-001" or regulatory_source == "INTERNAL_INSPECTION":
-        return "NON_STATUTORY"
-
-    # 2. Check presence of mandatory evidentiary fields
+    # Check presence of mandatory evidentiary fields.
     missing_fields = []
     for f in REQUIRED_VERIFIED_FIELDS:
         val = rule.get(f)
@@ -68,20 +64,20 @@ def validate_and_enforce_verification_status(rule: Dict[str, Any]) -> str:
                 continue
             missing_fields.append(f)
 
-    # 3. If mandatory fields are missing, status CANNOT be VERIFIED
+    # If mandatory fields are missing, status CANNOT be VERIFIED.
     if missing_fields:
         if rule.get("source_authority") and (rule.get("source_url") or rule.get("source_document")):
             return "SOURCE_IDENTIFIED"
         return "PENDING_REVIEW"
 
-    # 4. Check whether statutory application is conditional / exemption-dependent
+    # Check whether application is conditional / exemption-dependent.
     requested_status = rule.get("verification_status") or rule.get("rule_reference_status")
     if requested_status == "APPLICABILITY_DEPENDENT":
         return "APPLICABILITY_DEPENDENT"
 
     condition = str(rule.get("condition", "")).upper()
     parameter = str(rule.get("parameter", "")).upper()
-    if condition in ("IMPORTED_ONLY", "PHYSICAL_ONLY") or parameter in (
+    if condition == "IMPORTED_ONLY" or parameter in (
         "UNIT_SALE_PRICE",
         "INGREDIENTS_LIST",
         "NUTRITIONAL_INFO",
@@ -121,7 +117,7 @@ def derive_dynamic_regulatory_snapshot(
     if applicable_rules:
         for r in applicable_rules:
             ver = r.get("rule_version")
-            if ver and ver not in ("PENDING_VERIFICATION", "INTERNAL_INSPECTION_V1"):
+            if ver and ver != "PENDING_VERIFICATION":
                 versions.add(str(ver))
 
     if versions:

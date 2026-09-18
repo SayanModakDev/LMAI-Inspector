@@ -1,0 +1,2 @@
+case_id,product_name,image_count,expected_category,predicted_category,expected_package_type,predicted_package_type,expected_overall,predicted_overall,overall_match,clean_inspection,review_required,total_ms
+PKG002,AuraGlow Herbal Face Wash,2,COSMETIC,COSMETIC,RETAIL,RETAIL,COMPLIANT,NOT_VERIFIABLE,False,False,True,45

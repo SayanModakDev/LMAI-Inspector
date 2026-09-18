@@ -1,0 +1,2824 @@
+{
+  "meta": {
+    "dataset_name": "LMAI Inspector Reference Benchmark Suite",
+    "mode": "MODE_A_OFFLINE",
+    "timestamp": "2026-09-19T04:12:03.268789+00:00",
+    "total_cases": 1
+  },
+  "metrics": {
+    "dataset_summary": {
+      "total_packages": 1,
+      "total_images": 2,
+      "avg_images_per_package": 2.0,
+      "tag_distribution": {
+        "clean": 1,
+        "cosmetic": 1,
+        "retail": 1,
+        "domestic": 1,
+        "compliant": 1
+      }
+    },
+    "declaration_metrics": {
+      "total_evaluated_declarations": 12,
+      "total_expected_declarations": 10,
+      "presence_precision": 83.33,
+      "presence_recall": 100.0,
+      "presence_f1_score": 90.91,
+      "exact_match_accuracy": 70.0,
+      "value_accuracy": 90.0,
+      "required_field_recall": 100.0,
+      "required_field_value_accuracy": 90.0,
+      "confusion_counts": {
+        "tp": 10,
+        "fp": 2,
+        "fn": 0,
+        "tn": 0
+      },
+      "per_field_breakdown": {
+        "BATCH_NUMBER": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "BRAND": {
+          "expected_count": 0,
+          "detected_count": 1,
+          "exact_matches": 0,
+          "normalized_matches": 0,
+          "value_accuracy": null
+        },
+        "CONSUMER_CARE": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "COUNTRY_OF_ORIGIN": {
+          "expected_count": 0,
+          "detected_count": 1,
+          "exact_matches": 0,
+          "normalized_matches": 0,
+          "value_accuracy": null
+        },
+        "DECLARED_NET_QUANTITY": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "EXPIRY_DATE": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "GENERIC_NAME": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 0,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "MANUFACTURER_ADDRESS": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 0,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "MANUFACTURER_NAME": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "MRP": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 1,
+          "normalized_matches": 1,
+          "value_accuracy": 100.0
+        },
+        "PRODUCT_NAME": {
+          "expected_count": 1,
+          "detected_count": 1,
+          "exact_matches": 0,
+          "normalized_matches": 0,
+          "value_accuracy": 0.0
+        }
+      }
+    },
+    "context_metrics": {
+      "total_cases": 1,
+      "category_accuracy": 100.0,
+      "package_type_accuracy": 100.0,
+      "import_status_accuracy": 100.0,
+      "confusion_matrices": {
+        "category": {
+          "COSMETIC -> COSMETIC": 1
+        },
+        "package_type": {
+          "RETAIL -> RETAIL": 1
+        },
+        "import_status": {
+          "DOMESTIC -> DOMESTIC": 1
+        }
+      }
+    },
+    "grounding_metrics": {
+      "total_assessments": 0,
+      "grounded_declarations": 0,
+      "rejected_declarations": 0,
+      "acceptance_rate": 0.0,
+      "rejection_rate": 0.0,
+      "false_grounding_rejections": 0,
+      "unsafe_grounding_acceptances": 0,
+      "strategy_breakdown": {}
+    },
+    "review_metrics": {
+      "total_cases": 1,
+      "clean_inspections_count": 0,
+      "clean_inspections_rate": 0.0,
+      "requiring_review_count": 1,
+      "requiring_review_rate": 100.0,
+      "fields_resolved_count": 12,
+      "fields_not_found_count": 0,
+      "blocking_not_verifiable_rules_count": 3
+    },
+    "rule_metrics": {
+      "total_evaluated_rules": 6,
+      "overall_rule_agreement_rate": 100.0,
+      "status_agreement": {
+        "PASS": {
+          "expected": 5,
+          "predicted": 5,
+          "matched": 5,
+          "agreement_rate": 100.0
+        },
+        "NOT_APPLICABLE": {
+          "expected": 1,
+          "predicted": 1,
+          "matched": 1,
+          "agreement_rate": 100.0
+        }
+      },
+      "mismatch_count": 0,
+      "mismatches": []
+    },
+    "overall_compliance_metrics": {
+      "total_cases_evaluated": 1,
+      "overall_result_agreement_rate": 0.0,
+      "confusion_counts": {
+        "COMPLIANT -> NOT_VERIFIABLE": 1
+      }
+    },
+    "gemini_metrics": {
+      "total_cases": 1,
+      "success_rate": 0.0,
+      "fallback_rate": 0.0,
+      "error_rate": 0.0,
+      "disabled_rate": 100.0,
+      "models_used": {}
+    },
+    "performance_metrics": {
+      "total_ms": {
+        "mean": 45,
+        "median": 45,
+        "min": 45,
+        "max": 45,
+        "p95": 45
+      },
+      "ocr_ms": {
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "max": 0,
+        "p95": 0
+      },
+      "declaration_extraction_ms": {
+        "mean": 36,
+        "median": 36,
+        "min": 36,
+        "max": 36,
+        "p95": 36
+      },
+      "gemini_total_ms": {
+        "mean": 0,
+        "median": 0,
+        "min": 0,
+        "max": 0,
+        "p95": 0
+      },
+      "rule_evaluation_ms": {
+        "mean": 4,
+        "median": 4,
+        "min": 4,
+        "max": 4,
+        "p95": 4
+      }
+    },
+    "error_taxonomy": {
+      "GROUNDING_FALSE_ACCEPT": 2,
+      "DETERMINISTIC_EXTRACTION_ERROR": 1
+    },
+    "tag_breakdown": {
+      "clean": {
+        "case_count": 1,
+        "declaration_accuracy": 90.0,
+        "rule_agreement": 100.0,
+        "clean_inspection_rate": 0.0
+      },
+      "cosmetic": {
+        "case_count": 1,
+        "declaration_accuracy": 90.0,
+        "rule_agreement": 100.0,
+        "clean_inspection_rate": 0.0
+      },
+      "retail": {
+        "case_count": 1,
+        "declaration_accuracy": 90.0,
+        "rule_agreement": 100.0,
+        "clean_inspection_rate": 0.0
+      },
+      "domestic": {
+        "case_count": 1,
+        "declaration_accuracy": 90.0,
+        "rule_agreement": 100.0,
+        "clean_inspection_rate": 0.0
+      },
+      "compliant": {
+        "case_count": 1,
+        "declaration_accuracy": 90.0,
+        "rule_agreement": 100.0,
+        "clean_inspection_rate": 0.0
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "PKG002",
+      "product_name": "AuraGlow Herbal Face Wash",
+      "tags": [
+        "clean",
+        "cosmetic",
+        "retail",
+        "domestic",
+        "compliant"
+      ],
+      "image_count": 2,
+      "context_evaluation": {
+        "expected_category": "COSMETIC",
+        "predicted_category": "COSMETIC",
+        "category_match": true,
+        "category_confidence": 0.95,
+        "expected_package_type": "RETAIL",
+        "predicted_package_type": "RETAIL",
+        "package_type_match": true,
+        "expected_import_status": "DOMESTIC",
+        "predicted_import_status": "DOMESTIC",
+        "import_status_match": true
+      },
+      "declaration_evaluations": {
+        "BATCH_NUMBER": {
+          "field": "BATCH_NUMBER",
+          "expected_value": "AG-881",
+          "expected_normalized": "ag-881",
+          "predicted_value": "AG-881",
+          "predicted_normalized": "ag-881",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "BRAND": {
+          "field": "BRAND",
+          "expected_value": null,
+          "expected_normalized": null,
+          "predicted_value": "Auraglow Herbal Face Wash",
+          "predicted_normalized": "auraglow herbal face wash",
+          "expected_present": false,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": false,
+          "normalized_match": false,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": "GROUNDING_FALSE_ACCEPT",
+          "resolution_source": "OCR_LAYOUT",
+          "notes": null
+        },
+        "CONSUMER_CARE": {
+          "field": "CONSUMER_CARE",
+          "expected_value": "feedback@auraglow.in",
+          "expected_normalized": "feedback@auraglow.in",
+          "predicted_value": "feedback@auraglow.in",
+          "predicted_normalized": "feedback@auraglow.in",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "COUNTRY_OF_ORIGIN": {
+          "field": "COUNTRY_OF_ORIGIN",
+          "expected_value": null,
+          "expected_normalized": null,
+          "predicted_value": "India",
+          "predicted_normalized": "india",
+          "expected_present": false,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": false,
+          "normalized_match": false,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": "GROUNDING_FALSE_ACCEPT",
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "DECLARED_NET_QUANTITY": {
+          "field": "DECLARED_NET_QUANTITY",
+          "expected_value": "150 ml",
+          "expected_normalized": "150 ml",
+          "predicted_value": "150 ml",
+          "predicted_normalized": "150 ml",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "EXPIRY_DATE": {
+          "field": "EXPIRY_DATE",
+          "expected_value": "01/2026",
+          "expected_normalized": "01/2026",
+          "predicted_value": "01/2026",
+          "predicted_normalized": "01/2026",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "GENERIC_NAME": {
+          "field": "GENERIC_NAME",
+          "expected_value": "Face Wash",
+          "expected_normalized": "face wash",
+          "predicted_value": "FACE WASH",
+          "predicted_normalized": "face wash",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": false,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR_LABEL",
+          "notes": null
+        },
+        "MANUFACTURER_ADDRESS": {
+          "field": "MANUFACTURER_ADDRESS",
+          "expected_value": "Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+          "expected_normalized": "survey 18 haridwar industrial estate haridwar uttarakhand 249403",
+          "predicted_value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+          "predicted_normalized": "survey 18 haridwar industrial estate haridwar uttarakhand 249403",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": false,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "MANUFACTURER_NAME": {
+          "field": "MANUFACTURER_NAME",
+          "expected_value": "Aura Wellness Cosmetics Pvt Ltd",
+          "expected_normalized": "aura wellness cosmetics pvt ltd",
+          "predicted_value": "Aura Wellness Cosmetics Pvt Ltd",
+          "predicted_normalized": "aura wellness cosmetics pvt ltd",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "field": "MONTH_YEAR_MANUFACTURE",
+          "expected_value": "02/2024",
+          "expected_normalized": "02/2024",
+          "predicted_value": "02/2024",
+          "predicted_normalized": "02/2024",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "MRP": {
+          "field": "MRP",
+          "expected_value": "₹199.00",
+          "expected_normalized": "199.00",
+          "predicted_value": "₹199.00",
+          "predicted_normalized": "199.00",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": true,
+          "normalized_match": true,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": null,
+          "resolution_source": "OCR",
+          "notes": null
+        },
+        "PRODUCT_NAME": {
+          "field": "PRODUCT_NAME",
+          "expected_value": "AuraGlow Herbal Face Wash",
+          "expected_normalized": "auraglow herbal face wash",
+          "predicted_value": "Cosmetic For external use only",
+          "predicted_normalized": "cosmetic for external use only",
+          "expected_present": true,
+          "predicted_present": true,
+          "required": true,
+          "exact_match": false,
+          "normalized_match": false,
+          "grounding_status": null,
+          "grounding_strategy": null,
+          "grounding_score": 0.0,
+          "error_category": "DETERMINISTIC_EXTRACTION_ERROR",
+          "resolution_source": "OCR",
+          "notes": null
+        }
+      },
+      "rule_evaluations": {
+        "PC-ALL-001": {
+          "rule_id": "PC-ALL-001",
+          "parameter": "PRODUCT_NAME",
+          "expected_status": "PASS",
+          "predicted_status": "PASS",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected in OCR evidence: Cosmetic For external use only",
+          "evidence": {
+            "value": "Cosmetic For external use only",
+            "raw_value": "Cosmetic For external use only",
+            "raw_text": "Cosmetic For external use only",
+            "status": "VALID",
+            "reconciliation_status": "CONFIRMED",
+            "is_ambiguous": false,
+            "competing_candidates": [],
+            "confidence": 0.85,
+            "source": "OCR",
+            "source_image_id": null,
+            "source_image_index": null,
+            "bbox": null,
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "Cosmetic For external use only",
+              "normalized_text": "Cosmetic For external use only",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.85,
+              "bounding_box": null,
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "PRODUCT_NAME",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "PRODUCT_NAME",
+              "normalized_value": "Cosmetic For external use only",
+              "raw_text": "Cosmetic For external use only",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": null,
+              "relevance_score": 0.85,
+              "confidence": 0.85,
+              "validation_state": "VALID",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "Cosmetic For external use only",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": {
+                  "line_index": null
+                },
+                "which_label": null,
+                "which_image": null,
+                "confidence": 0.85,
+                "validation": "VALID"
+              },
+              "metadata": {
+                "value": "Cosmetic For external use only",
+                "raw_value": "Cosmetic For external use only",
+                "raw_text": "Cosmetic For external use only",
+                "status": "VALID",
+                "reconciliation_status": "CONFIRMED",
+                "is_ambiguous": false,
+                "competing_candidates": [],
+                "confidence": 0.85,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "Cosmetic For external use only",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": {
+                "line_index": null
+              },
+              "which_label": null,
+              "which_image": null,
+              "confidence": 0.85,
+              "validation": "VALID"
+            },
+            "candidates": [
+              {
+                "value": "Cosmetic For external use only",
+                "raw_value": "Cosmetic For external use only",
+                "raw_text": "Cosmetic For external use only",
+                "status": "VALID",
+                "reconciliation_status": "CONFIRMED",
+                "is_ambiguous": false,
+                "competing_candidates": [],
+                "confidence": 0.85,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "Cosmetic For external use only",
+                  "normalized_text": "Cosmetic For external use only",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.85,
+                  "bounding_box": null,
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "PRODUCT_NAME",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "PRODUCT_NAME",
+                  "normalized_value": "Cosmetic For external use only",
+                  "raw_text": "Cosmetic For external use only",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": null,
+                  "relevance_score": 0.85,
+                  "confidence": 0.85,
+                  "validation_state": "VALID",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "Cosmetic For external use only",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": {
+                      "line_index": null
+                    },
+                    "which_label": null,
+                    "which_image": null,
+                    "confidence": 0.85,
+                    "validation": "VALID"
+                  },
+                  "metadata": {
+                    "value": "Cosmetic For external use only",
+                    "raw_value": "Cosmetic For external use only",
+                    "raw_text": "Cosmetic For external use only",
+                    "status": "VALID",
+                    "reconciliation_status": "CONFIRMED",
+                    "is_ambiguous": false,
+                    "competing_candidates": [],
+                    "confidence": 0.85,
+                    "source": "OCR",
+                    "source_image_id": null,
+                    "source_image_index": null,
+                    "bbox": null,
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "Cosmetic For external use only",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": {
+                    "line_index": null
+                  },
+                  "which_label": null,
+                  "which_image": null,
+                  "confidence": 0.85,
+                  "validation": "VALID"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-002": {
+          "rule_id": "PC-ALL-002",
+          "parameter": "DECLARED_NET_QUANTITY",
+          "expected_status": "PASS",
+          "predicted_status": "PASS",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Valid declared quantity and unit",
+          "evidence": {
+            "value": "150 ml",
+            "raw_value": "Net Volume: 150 ml",
+            "raw_text": "Net Volume: 150 ml",
+            "normalized_text": "150 ml",
+            "numeric_value": 150,
+            "normalized_value": 150,
+            "unit": "ml",
+            "normalized_unit": "ml",
+            "raw_unit": "ml",
+            "quantity_type": "VOLUME",
+            "source_panel": "OCR",
+            "bbox": null,
+            "ocr_confidence": 0.9,
+            "semantic_anchor": null,
+            "semantic_section": "DECLARED_QUANTITY",
+            "candidate_type": "PACKAGE_QUANTITY",
+            "association_score": 0.95,
+            "rejection_reason": null,
+            "quantity_value": "150",
+            "quantity_unit": "ml",
+            "quantity_present": true,
+            "unit_present": true,
+            "quantity_unit_valid": true,
+            "is_multipack": false,
+            "pack_count": null,
+            "unit_net_quantity": null,
+            "unit_quantity": null,
+            "declared_expression": null,
+            "derived_total_quantity": null,
+            "derived_total_provenance": null,
+            "declared_expression_source": {
+              "source": "OCR",
+              "raw_text": "Net Volume: 150 ml"
+            },
+            "packaging_level": "SINGLE_UNIT",
+            "confidence": 0.9,
+            "source": "OCR",
+            "relevance": "high",
+            "relevance_score": 0.95,
+            "source_context": "Net Volume: 150 ml",
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "source_image_index": 0,
+            "evidence_candidate": {
+              "raw_text": "Net Volume: 150 ml",
+              "normalized_text": 150,
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.9,
+              "bounding_box": null,
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "DECLARED_QUANTITY",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "DECLARED_NET_QUANTITY",
+              "relevance_score": 0.95,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "DECLARED_NET_QUANTITY",
+              "normalized_value": 150,
+              "raw_text": "Net Volume: 150 ml",
+              "anchor_label": null,
+              "semantic_section": "DECLARED_QUANTITY",
+              "source_image": "OCR",
+              "bbox": null,
+              "relevance_score": 0.95,
+              "confidence": 0.9,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "150 ml",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'DECLARED_QUANTITY'",
+                "where": {
+                  "line_index": null
+                },
+                "which_label": null,
+                "which_image": 0,
+                "confidence": 0.9,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "150 ml",
+                "raw_value": "Net Volume: 150 ml",
+                "raw_text": "Net Volume: 150 ml",
+                "normalized_text": "150 ml",
+                "numeric_value": 150,
+                "normalized_value": 150,
+                "unit": "ml",
+                "normalized_unit": "ml",
+                "raw_unit": "ml",
+                "quantity_type": "VOLUME",
+                "source_panel": "OCR",
+                "bbox": null,
+                "ocr_confidence": 0.9,
+                "semantic_anchor": null,
+                "semantic_section": "DECLARED_QUANTITY",
+                "candidate_type": "PACKAGE_QUANTITY",
+                "association_score": 0.95,
+                "rejection_reason": null,
+                "quantity_value": "150",
+                "quantity_unit": "ml",
+                "quantity_present": true,
+                "unit_present": true,
+                "quantity_unit_valid": true,
+                "is_multipack": false,
+                "pack_count": null,
+                "unit_net_quantity": null,
+                "unit_quantity": null,
+                "declared_expression": null,
+                "derived_total_quantity": null,
+                "derived_total_provenance": null,
+                "declared_expression_source": {
+                  "source": "OCR",
+                  "raw_text": "Net Volume: 150 ml"
+                },
+                "packaging_level": "SINGLE_UNIT",
+                "confidence": 0.9,
+                "source": "OCR",
+                "relevance": "high",
+                "relevance_score": 0.95,
+                "source_context": "Net Volume: 150 ml",
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "source_image_index": 0
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "150 ml",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'DECLARED_QUANTITY'",
+              "where": {
+                "line_index": null
+              },
+              "which_label": null,
+              "which_image": 0,
+              "confidence": 0.9,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "150 ml",
+                "raw_value": "Net Volume: 150 ml",
+                "raw_text": "Net Volume: 150 ml",
+                "normalized_text": "150 ml",
+                "numeric_value": 150,
+                "normalized_value": 150,
+                "unit": "ml",
+                "normalized_unit": "ml",
+                "raw_unit": "ml",
+                "quantity_type": "VOLUME",
+                "source_panel": "OCR",
+                "bbox": null,
+                "ocr_confidence": 0.9,
+                "semantic_anchor": null,
+                "semantic_section": "DECLARED_QUANTITY",
+                "candidate_type": "PACKAGE_QUANTITY",
+                "association_score": 0.95,
+                "rejection_reason": null,
+                "quantity_value": "150",
+                "quantity_unit": "ml",
+                "quantity_present": true,
+                "unit_present": true,
+                "quantity_unit_valid": true,
+                "is_multipack": false,
+                "pack_count": null,
+                "unit_net_quantity": null,
+                "unit_quantity": null,
+                "declared_expression": null,
+                "derived_total_quantity": null,
+                "derived_total_provenance": null,
+                "declared_expression_source": {
+                  "source": "OCR",
+                  "raw_text": "Net Volume: 150 ml"
+                },
+                "packaging_level": "SINGLE_UNIT",
+                "confidence": 0.9,
+                "source": "OCR",
+                "relevance": "high",
+                "relevance_score": 0.95,
+                "source_context": "Net Volume: 150 ml",
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "source_image_index": 0,
+                "evidence_candidate": {
+                  "raw_text": "Net Volume: 150 ml",
+                  "normalized_text": 150,
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.9,
+                  "bounding_box": null,
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "DECLARED_QUANTITY",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "DECLARED_NET_QUANTITY",
+                  "relevance_score": 0.95,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "DECLARED_NET_QUANTITY",
+                  "normalized_value": 150,
+                  "raw_text": "Net Volume: 150 ml",
+                  "anchor_label": null,
+                  "semantic_section": "DECLARED_QUANTITY",
+                  "source_image": "OCR",
+                  "bbox": null,
+                  "relevance_score": 0.95,
+                  "confidence": 0.9,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "150 ml",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'DECLARED_QUANTITY'",
+                    "where": {
+                      "line_index": null
+                    },
+                    "which_label": null,
+                    "which_image": 0,
+                    "confidence": 0.9,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "150 ml",
+                    "raw_value": "Net Volume: 150 ml",
+                    "raw_text": "Net Volume: 150 ml",
+                    "normalized_text": "150 ml",
+                    "numeric_value": 150,
+                    "normalized_value": 150,
+                    "unit": "ml",
+                    "normalized_unit": "ml",
+                    "raw_unit": "ml",
+                    "quantity_type": "VOLUME",
+                    "source_panel": "OCR",
+                    "bbox": null,
+                    "ocr_confidence": 0.9,
+                    "semantic_anchor": null,
+                    "semantic_section": "DECLARED_QUANTITY",
+                    "candidate_type": "PACKAGE_QUANTITY",
+                    "association_score": 0.95,
+                    "rejection_reason": null,
+                    "quantity_value": "150",
+                    "quantity_unit": "ml",
+                    "quantity_present": true,
+                    "unit_present": true,
+                    "quantity_unit_valid": true,
+                    "is_multipack": false,
+                    "pack_count": null,
+                    "unit_net_quantity": null,
+                    "unit_quantity": null,
+                    "declared_expression": null,
+                    "derived_total_quantity": null,
+                    "derived_total_provenance": null,
+                    "declared_expression_source": {
+                      "source": "OCR",
+                      "raw_text": "Net Volume: 150 ml"
+                    },
+                    "packaging_level": "SINGLE_UNIT",
+                    "confidence": 0.9,
+                    "source": "OCR",
+                    "relevance": "high",
+                    "relevance_score": 0.95,
+                    "source_context": "Net Volume: 150 ml",
+                    "evidence_state": "EVIDENCE_VERIFIED",
+                    "source_image_index": 0
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "150 ml",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'DECLARED_QUANTITY'",
+                  "where": {
+                    "line_index": null
+                  },
+                  "which_label": null,
+                  "which_image": 0,
+                  "confidence": 0.9,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-003": {
+          "rule_id": "PC-ALL-003",
+          "parameter": "MRP",
+          "expected_status": "PASS",
+          "predicted_status": "PASS",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected valid MRP declaration: ₹199.00",
+          "evidence": {
+            "raw_value": "Maximum Retail Price: ₹ 199.00",
+            "raw_text": "Maximum Retail Price: ₹ 199.00",
+            "value": "₹199.00",
+            "numeric_value": 199.0,
+            "currency_symbol": "₹",
+            "currency_status": "VERIFIED",
+            "status": "PASS",
+            "binary": 1,
+            "reason": "Detected valid MRP declaration: ₹199.00",
+            "confidence": 0.9,
+            "source": "OCR",
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "Maximum Retail Price: ₹ 199.00",
+              "normalized_text": "₹199.00",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.9,
+              "bounding_box": null,
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "MRP",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "MRP",
+              "normalized_value": "₹199.00",
+              "raw_text": "Maximum Retail Price: ₹ 199.00",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": null,
+              "relevance_score": 0.85,
+              "confidence": 0.9,
+              "validation_state": "PASS",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "₹199.00",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": {
+                  "line_index": null
+                },
+                "which_label": null,
+                "which_image": null,
+                "confidence": 0.9,
+                "validation": "PASS"
+              },
+              "metadata": {
+                "raw_value": "Maximum Retail Price: ₹ 199.00",
+                "raw_text": "Maximum Retail Price: ₹ 199.00",
+                "value": "₹199.00",
+                "numeric_value": 199.0,
+                "currency_symbol": "₹",
+                "currency_status": "VERIFIED",
+                "status": "PASS",
+                "binary": 1,
+                "reason": "Detected valid MRP declaration: ₹199.00",
+                "confidence": 0.9,
+                "source": "OCR",
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "₹199.00",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": {
+                "line_index": null
+              },
+              "which_label": null,
+              "which_image": null,
+              "confidence": 0.9,
+              "validation": "PASS"
+            },
+            "source_image_index": 0,
+            "candidates": [
+              {
+                "raw_value": "Maximum Retail Price: ₹ 199.00",
+                "raw_text": "Maximum Retail Price: ₹ 199.00",
+                "value": "₹199.00",
+                "numeric_value": 199.0,
+                "currency_symbol": "₹",
+                "currency_status": "VERIFIED",
+                "status": "PASS",
+                "binary": 1,
+                "reason": "Detected valid MRP declaration: ₹199.00",
+                "confidence": 0.9,
+                "source": "OCR",
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "Maximum Retail Price: ₹ 199.00",
+                  "normalized_text": "₹199.00",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.9,
+                  "bounding_box": null,
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "MRP",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "MRP",
+                  "normalized_value": "₹199.00",
+                  "raw_text": "Maximum Retail Price: ₹ 199.00",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": null,
+                  "relevance_score": 0.85,
+                  "confidence": 0.9,
+                  "validation_state": "PASS",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "₹199.00",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": {
+                      "line_index": null
+                    },
+                    "which_label": null,
+                    "which_image": null,
+                    "confidence": 0.9,
+                    "validation": "PASS"
+                  },
+                  "metadata": {
+                    "raw_value": "Maximum Retail Price: ₹ 199.00",
+                    "raw_text": "Maximum Retail Price: ₹ 199.00",
+                    "value": "₹199.00",
+                    "numeric_value": 199.0,
+                    "currency_symbol": "₹",
+                    "currency_status": "VERIFIED",
+                    "status": "PASS",
+                    "binary": 1,
+                    "reason": "Detected valid MRP declaration: ₹199.00",
+                    "confidence": 0.9,
+                    "source": "OCR",
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "₹199.00",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": {
+                    "line_index": null
+                  },
+                  "which_label": null,
+                  "which_image": null,
+                  "confidence": 0.9,
+                  "validation": "PASS"
+                },
+                "source_image_index": 0
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-004": {
+          "rule_id": "PC-ALL-004",
+          "parameter": "MANUFACTURER_NAME",
+          "expected_status": "PASS",
+          "predicted_status": "PASS",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected manufacturer declaration: Aura Wellness Cosmetics Pvt Ltd",
+          "evidence": {
+            "value": "Aura Wellness Cosmetics Pvt Ltd",
+            "confidence": 0.85,
+            "source": "OCR",
+            "role": "MANUFACTURER",
+            "source_image_index": 1,
+            "bbox": [
+              40,
+              30,
+              340,
+              50
+            ],
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "Aura Wellness Cosmetics Pvt Ltd",
+              "normalized_text": "Aura Wellness Cosmetics Pvt Ltd",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.85,
+              "bounding_box": [
+                40,
+                30,
+                340,
+                50
+              ],
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "MANUFACTURER_NAME",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "MANUFACTURER_NAME",
+              "normalized_value": "Aura Wellness Cosmetics Pvt Ltd",
+              "raw_text": "Aura Wellness Cosmetics Pvt Ltd",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": [
+                40,
+                30,
+                340,
+                50
+              ],
+              "relevance_score": 0.85,
+              "confidence": 0.85,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "Aura Wellness Cosmetics Pvt Ltd",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": [
+                  40,
+                  30,
+                  340,
+                  50
+                ],
+                "which_label": null,
+                "which_image": 1,
+                "confidence": 0.85,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "Aura Wellness Cosmetics Pvt Ltd",
+                "confidence": 0.85,
+                "source": "OCR",
+                "role": "MANUFACTURER",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  30,
+                  340,
+                  50
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "Aura Wellness Cosmetics Pvt Ltd",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": [
+                40,
+                30,
+                340,
+                50
+              ],
+              "which_label": null,
+              "which_image": 1,
+              "confidence": 0.85,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "Aura Wellness Cosmetics Pvt Ltd",
+                "confidence": 0.85,
+                "source": "OCR",
+                "role": "MANUFACTURER",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  30,
+                  340,
+                  50
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "Aura Wellness Cosmetics Pvt Ltd",
+                  "normalized_text": "Aura Wellness Cosmetics Pvt Ltd",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.85,
+                  "bounding_box": [
+                    40,
+                    30,
+                    340,
+                    50
+                  ],
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "MANUFACTURER_NAME",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "MANUFACTURER_NAME",
+                  "normalized_value": "Aura Wellness Cosmetics Pvt Ltd",
+                  "raw_text": "Aura Wellness Cosmetics Pvt Ltd",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": [
+                    40,
+                    30,
+                    340,
+                    50
+                  ],
+                  "relevance_score": 0.85,
+                  "confidence": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "Aura Wellness Cosmetics Pvt Ltd",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": [
+                      40,
+                      30,
+                      340,
+                      50
+                    ],
+                    "which_label": null,
+                    "which_image": 1,
+                    "confidence": 0.85,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "Aura Wellness Cosmetics Pvt Ltd",
+                    "confidence": 0.85,
+                    "source": "OCR",
+                    "role": "MANUFACTURER",
+                    "source_image_index": 1,
+                    "bbox": [
+                      40,
+                      30,
+                      340,
+                      50
+                    ],
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "Aura Wellness Cosmetics Pvt Ltd",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": [
+                    40,
+                    30,
+                    340,
+                    50
+                  ],
+                  "which_label": null,
+                  "which_image": 1,
+                  "confidence": 0.85,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-005": {
+          "rule_id": "PC-ALL-005",
+          "parameter": "MANUFACTURER_ADDRESS",
+          "expected_status": "PASS",
+          "predicted_status": "PASS",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected address declaration: At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+          "evidence": {
+            "value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+            "confidence": 0.8,
+            "source": "OCR",
+            "role": "MANUFACTURER",
+            "source_image_index": 1,
+            "bbox": [
+              40,
+              60,
+              480,
+              80
+            ],
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+              "normalized_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.8,
+              "bounding_box": [
+                40,
+                60,
+                480,
+                80
+              ],
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "MANUFACTURER_ADDRESS",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "MANUFACTURER_ADDRESS",
+              "normalized_value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+              "raw_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": [
+                40,
+                60,
+                480,
+                80
+              ],
+              "relevance_score": 0.85,
+              "confidence": 0.8,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": [
+                  40,
+                  60,
+                  480,
+                  80
+                ],
+                "which_label": null,
+                "which_image": 1,
+                "confidence": 0.8,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                "confidence": 0.8,
+                "source": "OCR",
+                "role": "MANUFACTURER",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  60,
+                  480,
+                  80
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": [
+                40,
+                60,
+                480,
+                80
+              ],
+              "which_label": null,
+              "which_image": 1,
+              "confidence": 0.8,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                "confidence": 0.8,
+                "source": "OCR",
+                "role": "MANUFACTURER",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  60,
+                  480,
+                  80
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                  "normalized_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.8,
+                  "bounding_box": [
+                    40,
+                    60,
+                    480,
+                    80
+                  ],
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "MANUFACTURER_ADDRESS",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "MANUFACTURER_ADDRESS",
+                  "normalized_value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                  "raw_text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": [
+                    40,
+                    60,
+                    480,
+                    80
+                  ],
+                  "relevance_score": 0.85,
+                  "confidence": 0.8,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": [
+                      40,
+                      60,
+                      480,
+                      80
+                    ],
+                    "which_label": null,
+                    "which_image": 1,
+                    "confidence": 0.8,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                    "confidence": 0.8,
+                    "source": "OCR",
+                    "role": "MANUFACTURER",
+                    "source_image_index": 1,
+                    "bbox": [
+                      40,
+                      60,
+                      480,
+                      80
+                    ],
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": [
+                    40,
+                    60,
+                    480,
+                    80
+                  ],
+                  "which_label": null,
+                  "which_image": 1,
+                  "confidence": 0.8,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-008": {
+          "rule_id": "PC-ALL-008",
+          "parameter": "CONSUMER_CARE",
+          "expected_status": null,
+          "predicted_status": "PASS",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected consumer care contact details (email (feedback@auraglow.in)): feedback@auraglow.in",
+          "evidence": {
+            "value": "feedback@auraglow.in",
+            "raw_value": "feedback@auraglow.in",
+            "raw_text": "feedback@auraglow.in",
+            "contact_type": "EMAIL",
+            "contact_value": "feedback@auraglow.in",
+            "primary_contact_type": "EMAIL",
+            "primary_contact_value": "feedback@auraglow.in",
+            "contacts": [
+              {
+                "contact_type": "EMAIL",
+                "contact_value": "feedback@auraglow.in"
+              }
+            ],
+            "confidence": 0.8,
+            "source": "OCR",
+            "source_image_id": null,
+            "source_image_index": null,
+            "bbox": null,
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "feedback@auraglow.in",
+              "normalized_text": "feedback@auraglow.in",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.8,
+              "bounding_box": null,
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "CONSUMER_CARE",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "CONSUMER_CARE",
+              "normalized_value": "feedback@auraglow.in",
+              "raw_text": "feedback@auraglow.in",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": null,
+              "relevance_score": 0.85,
+              "confidence": 0.8,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "feedback@auraglow.in",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": {
+                  "line_index": null
+                },
+                "which_label": null,
+                "which_image": null,
+                "confidence": 0.8,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "feedback@auraglow.in",
+                "raw_value": "feedback@auraglow.in",
+                "raw_text": "feedback@auraglow.in",
+                "contact_type": "EMAIL",
+                "contact_value": "feedback@auraglow.in",
+                "primary_contact_type": "EMAIL",
+                "primary_contact_value": "feedback@auraglow.in",
+                "contacts": [
+                  {
+                    "contact_type": "EMAIL",
+                    "contact_value": "feedback@auraglow.in"
+                  }
+                ],
+                "confidence": 0.8,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "feedback@auraglow.in",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": {
+                "line_index": null
+              },
+              "which_label": null,
+              "which_image": null,
+              "confidence": 0.8,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "feedback@auraglow.in",
+                "raw_value": "feedback@auraglow.in",
+                "raw_text": "feedback@auraglow.in",
+                "contact_type": "EMAIL",
+                "contact_value": "feedback@auraglow.in",
+                "primary_contact_type": "EMAIL",
+                "primary_contact_value": "feedback@auraglow.in",
+                "contacts": [
+                  {
+                    "contact_type": "EMAIL",
+                    "contact_value": "feedback@auraglow.in"
+                  }
+                ],
+                "confidence": 0.8,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "feedback@auraglow.in",
+                  "normalized_text": "feedback@auraglow.in",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.8,
+                  "bounding_box": null,
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "CONSUMER_CARE",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "CONSUMER_CARE",
+                  "normalized_value": "feedback@auraglow.in",
+                  "raw_text": "feedback@auraglow.in",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": null,
+                  "relevance_score": 0.85,
+                  "confidence": 0.8,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "feedback@auraglow.in",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": {
+                      "line_index": null
+                    },
+                    "which_label": null,
+                    "which_image": null,
+                    "confidence": 0.8,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "feedback@auraglow.in",
+                    "raw_value": "feedback@auraglow.in",
+                    "raw_text": "feedback@auraglow.in",
+                    "contact_type": "EMAIL",
+                    "contact_value": "feedback@auraglow.in",
+                    "primary_contact_type": "EMAIL",
+                    "primary_contact_value": "feedback@auraglow.in",
+                    "contacts": [
+                      {
+                        "contact_type": "EMAIL",
+                        "contact_value": "feedback@auraglow.in"
+                      }
+                    ],
+                    "confidence": 0.8,
+                    "source": "OCR",
+                    "source_image_id": null,
+                    "source_image_index": null,
+                    "bbox": null,
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "feedback@auraglow.in",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": {
+                    "line_index": null
+                  },
+                  "which_label": null,
+                  "which_image": null,
+                  "confidence": 0.8,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-009": {
+          "rule_id": "PC-ALL-009",
+          "parameter": "MONTH_YEAR_MANUFACTURE",
+          "expected_status": null,
+          "predicted_status": "PASS",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected valid manufacture/packing date: 02/2024",
+          "evidence": {
+            "value": "02/2024",
+            "raw_value": "02/2024",
+            "raw_date": "02/2024",
+            "normalized_value": "02/2024",
+            "normalized_date": "02/2024",
+            "precision": "MONTH_YEAR",
+            "parsed_components": {
+              "month": 2,
+              "year": 2024
+            },
+            "source_label": "MFD",
+            "semantic_type": "MONTH_YEAR_MANUFACTURE",
+            "evidence": {
+              "raw_text": "02/2024",
+              "label": "MFD",
+              "precision": "MONTH_YEAR"
+            },
+            "confidence": 0.75,
+            "source": "OCR",
+            "source_image_id": null,
+            "source_image_index": null,
+            "bbox": null,
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "02/2024",
+              "normalized_text": "02/2024",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.75,
+              "bounding_box": null,
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": "MFD",
+              "anchor_relation": "SAME_LINE",
+              "candidate_field": "MONTH_YEAR_MANUFACTURE",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "MONTH_YEAR_MANUFACTURE",
+              "normalized_value": "02/2024",
+              "raw_text": "02/2024",
+              "anchor_label": "MFD",
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": null,
+              "relevance_score": 0.85,
+              "confidence": 0.75,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "02/2024",
+                "why": "Associated with anchor label 'MFD' in section 'UNKNOWN'",
+                "where": {
+                  "line_index": null
+                },
+                "which_label": "MFD",
+                "which_image": null,
+                "confidence": 0.75,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "02/2024",
+                "raw_value": "02/2024",
+                "raw_date": "02/2024",
+                "normalized_value": "02/2024",
+                "normalized_date": "02/2024",
+                "precision": "MONTH_YEAR",
+                "parsed_components": {
+                  "month": 2,
+                  "year": 2024
+                },
+                "source_label": "MFD",
+                "semantic_type": "MONTH_YEAR_MANUFACTURE",
+                "evidence": {
+                  "raw_text": "02/2024",
+                  "label": "MFD",
+                  "precision": "MONTH_YEAR"
+                },
+                "confidence": 0.75,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "02/2024",
+              "why": "Associated with anchor label 'MFD' in section 'UNKNOWN'",
+              "where": {
+                "line_index": null
+              },
+              "which_label": "MFD",
+              "which_image": null,
+              "confidence": 0.75,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "02/2024",
+                "raw_value": "02/2024",
+                "raw_date": "02/2024",
+                "normalized_value": "02/2024",
+                "normalized_date": "02/2024",
+                "precision": "MONTH_YEAR",
+                "parsed_components": {
+                  "month": 2,
+                  "year": 2024
+                },
+                "source_label": "MFD",
+                "semantic_type": "MONTH_YEAR_MANUFACTURE",
+                "evidence": {
+                  "raw_text": "02/2024",
+                  "label": "MFD",
+                  "precision": "MONTH_YEAR"
+                },
+                "confidence": 0.75,
+                "source": "OCR",
+                "source_image_id": null,
+                "source_image_index": null,
+                "bbox": null,
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "02/2024",
+                  "normalized_text": "02/2024",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.75,
+                  "bounding_box": null,
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": "MFD",
+                  "anchor_relation": "SAME_LINE",
+                  "candidate_field": "MONTH_YEAR_MANUFACTURE",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "MONTH_YEAR_MANUFACTURE",
+                  "normalized_value": "02/2024",
+                  "raw_text": "02/2024",
+                  "anchor_label": "MFD",
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": null,
+                  "relevance_score": 0.85,
+                  "confidence": 0.75,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "02/2024",
+                    "why": "Associated with anchor label 'MFD' in section 'UNKNOWN'",
+                    "where": {
+                      "line_index": null
+                    },
+                    "which_label": "MFD",
+                    "which_image": null,
+                    "confidence": 0.75,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "02/2024",
+                    "raw_value": "02/2024",
+                    "raw_date": "02/2024",
+                    "normalized_value": "02/2024",
+                    "normalized_date": "02/2024",
+                    "precision": "MONTH_YEAR",
+                    "parsed_components": {
+                      "month": 2,
+                      "year": 2024
+                    },
+                    "source_label": "MFD",
+                    "semantic_type": "MONTH_YEAR_MANUFACTURE",
+                    "evidence": {
+                      "raw_text": "02/2024",
+                      "label": "MFD",
+                      "precision": "MONTH_YEAR"
+                    },
+                    "confidence": 0.75,
+                    "source": "OCR",
+                    "source_image_id": null,
+                    "source_image_index": null,
+                    "bbox": null,
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "02/2024",
+                  "why": "Associated with anchor label 'MFD' in section 'UNKNOWN'",
+                  "where": {
+                    "line_index": null
+                  },
+                  "which_label": "MFD",
+                  "which_image": null,
+                  "confidence": 0.75,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-010": {
+          "rule_id": "PC-ALL-010",
+          "parameter": "GENERIC_NAME",
+          "expected_status": null,
+          "predicted_status": "PASS",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected in OCR evidence: FACE WASH",
+          "evidence": {
+            "value": "FACE WASH",
+            "confidence": 0.9,
+            "source": "OCR_LABEL",
+            "source_image_index": 0,
+            "bbox": [
+              40,
+              30,
+              300,
+              60
+            ],
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "FACE WASH",
+              "normalized_text": "FACE WASH",
+              "source_image": "OCR_LABEL",
+              "source_type": "OCR",
+              "ocr_confidence": 0.9,
+              "bounding_box": [
+                40,
+                30,
+                300,
+                60
+              ],
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": null,
+              "anchor_relation": "UNANCHORED",
+              "candidate_field": "GENERIC_NAME",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "GENERIC_NAME",
+              "normalized_value": "FACE WASH",
+              "raw_text": "FACE WASH",
+              "anchor_label": null,
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR_LABEL",
+              "bbox": [
+                40,
+                30,
+                300,
+                60
+              ],
+              "relevance_score": 0.85,
+              "confidence": 0.9,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "FACE WASH",
+                "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                "where": [
+                  40,
+                  30,
+                  300,
+                  60
+                ],
+                "which_label": null,
+                "which_image": 0,
+                "confidence": 0.9,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "FACE WASH",
+                "confidence": 0.9,
+                "source": "OCR_LABEL",
+                "source_image_index": 0,
+                "bbox": [
+                  40,
+                  30,
+                  300,
+                  60
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "FACE WASH",
+              "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+              "where": [
+                40,
+                30,
+                300,
+                60
+              ],
+              "which_label": null,
+              "which_image": 0,
+              "confidence": 0.9,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "FACE WASH",
+                "confidence": 0.9,
+                "source": "OCR_LABEL",
+                "source_image_index": 0,
+                "bbox": [
+                  40,
+                  30,
+                  300,
+                  60
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "FACE WASH",
+                  "normalized_text": "FACE WASH",
+                  "source_image": "OCR_LABEL",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.9,
+                  "bounding_box": [
+                    40,
+                    30,
+                    300,
+                    60
+                  ],
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": null,
+                  "anchor_relation": "UNANCHORED",
+                  "candidate_field": "GENERIC_NAME",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "GENERIC_NAME",
+                  "normalized_value": "FACE WASH",
+                  "raw_text": "FACE WASH",
+                  "anchor_label": null,
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR_LABEL",
+                  "bbox": [
+                    40,
+                    30,
+                    300,
+                    60
+                  ],
+                  "relevance_score": 0.85,
+                  "confidence": 0.9,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "FACE WASH",
+                    "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                    "where": [
+                      40,
+                      30,
+                      300,
+                      60
+                    ],
+                    "which_label": null,
+                    "which_image": 0,
+                    "confidence": 0.9,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "FACE WASH",
+                    "confidence": 0.9,
+                    "source": "OCR_LABEL",
+                    "source_image_index": 0,
+                    "bbox": [
+                      40,
+                      30,
+                      300,
+                      60
+                    ],
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "FACE WASH",
+                  "why": "Associated with anchor label 'UNANCHORED' in section 'UNKNOWN'",
+                  "where": [
+                    40,
+                    30,
+                    300,
+                    60
+                  ],
+                  "which_label": null,
+                  "which_image": 0,
+                  "confidence": 0.9,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-ALL-011": {
+          "rule_id": "PC-ALL-011",
+          "parameter": "UNIT_SALE_PRICE",
+          "expected_status": null,
+          "predicted_status": "NOT_APPLICABLE",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Optional declaration 'UNIT_SALE_PRICE' not identified and not required for this context.",
+          "evidence": null
+        },
+        "PC-ALL-012": {
+          "rule_id": "PC-ALL-012",
+          "parameter": "ACTUAL_NET_CONTENT",
+          "expected_status": null,
+          "predicted_status": "NOT_VERIFIABLE",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": true,
+          "error_category": null,
+          "reason": "Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.",
+          "evidence": null
+        },
+        "PC-ALL-013": {
+          "rule_id": "PC-ALL-013",
+          "parameter": "FONT_SIZE_COMPLIANCE",
+          "expected_status": null,
+          "predicted_status": "NOT_VERIFIABLE",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": true,
+          "error_category": null,
+          "reason": "Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.",
+          "evidence": null
+        },
+        "PC-COSM-001": {
+          "rule_id": "PC-COSM-001",
+          "parameter": "BATCH_NUMBER",
+          "expected_status": null,
+          "predicted_status": "PASS",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected batch/lot number: AG-881",
+          "evidence": {
+            "value": "AG-881",
+            "raw_value": "Batch: AG-881",
+            "raw_text": "Batch: AG-881",
+            "normalized_value": "AG-881",
+            "source_label": "Batch",
+            "semantic_section": "BATCH",
+            "confidence": 0.85,
+            "source": "OCR",
+            "source_image_index": 1,
+            "bbox": [
+              40,
+              180,
+              150,
+              200
+            ],
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "Batch: AG-881",
+              "normalized_text": "AG-881",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.85,
+              "bounding_box": [
+                40,
+                180,
+                150,
+                200
+              ],
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "BATCH",
+              "anchor_label": "Batch",
+              "anchor_relation": "SAME_LINE",
+              "candidate_field": "BATCH_NUMBER",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "BATCH_NUMBER",
+              "normalized_value": "AG-881",
+              "raw_text": "Batch: AG-881",
+              "anchor_label": "Batch",
+              "semantic_section": "BATCH",
+              "source_image": "OCR",
+              "bbox": [
+                40,
+                180,
+                150,
+                200
+              ],
+              "relevance_score": 0.85,
+              "confidence": 0.85,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "AG-881",
+                "why": "Associated with anchor label 'Batch' in section 'BATCH'",
+                "where": [
+                  40,
+                  180,
+                  150,
+                  200
+                ],
+                "which_label": "Batch",
+                "which_image": 1,
+                "confidence": 0.85,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "AG-881",
+                "raw_value": "Batch: AG-881",
+                "raw_text": "Batch: AG-881",
+                "normalized_value": "AG-881",
+                "source_label": "Batch",
+                "semantic_section": "BATCH",
+                "confidence": 0.85,
+                "source": "OCR",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  180,
+                  150,
+                  200
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "AG-881",
+              "why": "Associated with anchor label 'Batch' in section 'BATCH'",
+              "where": [
+                40,
+                180,
+                150,
+                200
+              ],
+              "which_label": "Batch",
+              "which_image": 1,
+              "confidence": 0.85,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "AG-881",
+                "raw_value": "Batch: AG-881",
+                "raw_text": "Batch: AG-881",
+                "normalized_value": "AG-881",
+                "source_label": "Batch",
+                "semantic_section": "BATCH",
+                "confidence": 0.85,
+                "source": "OCR",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  180,
+                  150,
+                  200
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "Batch: AG-881",
+                  "normalized_text": "AG-881",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.85,
+                  "bounding_box": [
+                    40,
+                    180,
+                    150,
+                    200
+                  ],
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "BATCH",
+                  "anchor_label": "Batch",
+                  "anchor_relation": "SAME_LINE",
+                  "candidate_field": "BATCH_NUMBER",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "BATCH_NUMBER",
+                  "normalized_value": "AG-881",
+                  "raw_text": "Batch: AG-881",
+                  "anchor_label": "Batch",
+                  "semantic_section": "BATCH",
+                  "source_image": "OCR",
+                  "bbox": [
+                    40,
+                    180,
+                    150,
+                    200
+                  ],
+                  "relevance_score": 0.85,
+                  "confidence": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "AG-881",
+                    "why": "Associated with anchor label 'Batch' in section 'BATCH'",
+                    "where": [
+                      40,
+                      180,
+                      150,
+                      200
+                    ],
+                    "which_label": "Batch",
+                    "which_image": 1,
+                    "confidence": 0.85,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "AG-881",
+                    "raw_value": "Batch: AG-881",
+                    "raw_text": "Batch: AG-881",
+                    "normalized_value": "AG-881",
+                    "source_label": "Batch",
+                    "semantic_section": "BATCH",
+                    "confidence": 0.85,
+                    "source": "OCR",
+                    "source_image_index": 1,
+                    "bbox": [
+                      40,
+                      180,
+                      150,
+                      200
+                    ],
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "AG-881",
+                  "why": "Associated with anchor label 'Batch' in section 'BATCH'",
+                  "where": [
+                    40,
+                    180,
+                    150,
+                    200
+                  ],
+                  "which_label": "Batch",
+                  "which_image": 1,
+                  "confidence": 0.85,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-COSM-002": {
+          "rule_id": "PC-COSM-002",
+          "parameter": "INGREDIENTS_LIST",
+          "expected_status": null,
+          "predicted_status": "NOT_VERIFIABLE",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": true,
+          "error_category": null,
+          "reason": "Required declaration 'INGREDIENTS_LIST' was not detected in the available OCR evidence.",
+          "evidence": null
+        },
+        "PC-COSM-003": {
+          "rule_id": "PC-COSM-003",
+          "parameter": "USE_BEFORE_DATE",
+          "expected_status": null,
+          "predicted_status": "PASS",
+          "match": false,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": "Detected valid expiry / use-before date: 01/2026",
+          "evidence": {
+            "value": "01/2026",
+            "raw_value": "01/2026",
+            "raw_date": "01/2026",
+            "normalized_value": "01/2026",
+            "normalized_date": "01/2026",
+            "source_label": "EXPIRY",
+            "semantic_type": "EXPIRY_DATE",
+            "evidence": {
+              "raw_text": "01/2026",
+              "label": "EXPIRY"
+            },
+            "confidence": 0.75,
+            "source": "OCR",
+            "source_image_index": 1,
+            "bbox": [
+              40,
+              150,
+              180,
+              170
+            ],
+            "evidence_state": "EVIDENCE_VERIFIED",
+            "evidence_candidate": {
+              "raw_text": "01/2026",
+              "normalized_text": "01/2026",
+              "source_image": "OCR",
+              "source_type": "OCR",
+              "ocr_confidence": 0.75,
+              "bounding_box": [
+                40,
+                150,
+                180,
+                170
+              ],
+              "line_id": null,
+              "region_id": null,
+              "semantic_section": "UNKNOWN",
+              "anchor_label": "EXPIRY",
+              "anchor_relation": "SAME_LINE",
+              "candidate_field": "EXPIRY_DATE",
+              "relevance_score": 0.85,
+              "validation_state": "UNASSESSED",
+              "evidence_state": "EVIDENCE_VERIFIED",
+              "metadata": {}
+            },
+            "canonical_field_candidate": {
+              "field": "EXPIRY_DATE",
+              "normalized_value": "01/2026",
+              "raw_text": "01/2026",
+              "anchor_label": "EXPIRY",
+              "semantic_section": "UNKNOWN",
+              "source_image": "OCR",
+              "bbox": [
+                40,
+                150,
+                180,
+                170
+              ],
+              "relevance_score": 0.85,
+              "confidence": 0.75,
+              "validation_state": "UNASSESSED",
+              "rejection_reason": null,
+              "provenance": {
+                "what": "01/2026",
+                "why": "Associated with anchor label 'EXPIRY' in section 'UNKNOWN'",
+                "where": [
+                  40,
+                  150,
+                  180,
+                  170
+                ],
+                "which_label": "EXPIRY",
+                "which_image": 1,
+                "confidence": 0.75,
+                "validation": "UNASSESSED"
+              },
+              "metadata": {
+                "value": "01/2026",
+                "raw_value": "01/2026",
+                "raw_date": "01/2026",
+                "normalized_value": "01/2026",
+                "normalized_date": "01/2026",
+                "source_label": "EXPIRY",
+                "semantic_type": "EXPIRY_DATE",
+                "evidence": {
+                  "raw_text": "01/2026",
+                  "label": "EXPIRY"
+                },
+                "confidence": 0.75,
+                "source": "OCR",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  150,
+                  180,
+                  170
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED"
+              },
+              "evidence_state": "EVIDENCE_VERIFIED"
+            },
+            "provenance": {
+              "what": "01/2026",
+              "why": "Associated with anchor label 'EXPIRY' in section 'UNKNOWN'",
+              "where": [
+                40,
+                150,
+                180,
+                170
+              ],
+              "which_label": "EXPIRY",
+              "which_image": 1,
+              "confidence": 0.75,
+              "validation": "UNASSESSED"
+            },
+            "candidates": [
+              {
+                "value": "01/2026",
+                "raw_value": "01/2026",
+                "raw_date": "01/2026",
+                "normalized_value": "01/2026",
+                "normalized_date": "01/2026",
+                "source_label": "EXPIRY",
+                "semantic_type": "EXPIRY_DATE",
+                "evidence": {
+                  "raw_text": "01/2026",
+                  "label": "EXPIRY"
+                },
+                "confidence": 0.75,
+                "source": "OCR",
+                "source_image_index": 1,
+                "bbox": [
+                  40,
+                  150,
+                  180,
+                  170
+                ],
+                "evidence_state": "EVIDENCE_VERIFIED",
+                "evidence_candidate": {
+                  "raw_text": "01/2026",
+                  "normalized_text": "01/2026",
+                  "source_image": "OCR",
+                  "source_type": "OCR",
+                  "ocr_confidence": 0.75,
+                  "bounding_box": [
+                    40,
+                    150,
+                    180,
+                    170
+                  ],
+                  "line_id": null,
+                  "region_id": null,
+                  "semantic_section": "UNKNOWN",
+                  "anchor_label": "EXPIRY",
+                  "anchor_relation": "SAME_LINE",
+                  "candidate_field": "EXPIRY_DATE",
+                  "relevance_score": 0.85,
+                  "validation_state": "UNASSESSED",
+                  "evidence_state": "EVIDENCE_VERIFIED",
+                  "metadata": {}
+                },
+                "canonical_field_candidate": {
+                  "field": "EXPIRY_DATE",
+                  "normalized_value": "01/2026",
+                  "raw_text": "01/2026",
+                  "anchor_label": "EXPIRY",
+                  "semantic_section": "UNKNOWN",
+                  "source_image": "OCR",
+                  "bbox": [
+                    40,
+                    150,
+                    180,
+                    170
+                  ],
+                  "relevance_score": 0.85,
+                  "confidence": 0.75,
+                  "validation_state": "UNASSESSED",
+                  "rejection_reason": null,
+                  "provenance": {
+                    "what": "01/2026",
+                    "why": "Associated with anchor label 'EXPIRY' in section 'UNKNOWN'",
+                    "where": [
+                      40,
+                      150,
+                      180,
+                      170
+                    ],
+                    "which_label": "EXPIRY",
+                    "which_image": 1,
+                    "confidence": 0.75,
+                    "validation": "UNASSESSED"
+                  },
+                  "metadata": {
+                    "value": "01/2026",
+                    "raw_value": "01/2026",
+                    "raw_date": "01/2026",
+                    "normalized_value": "01/2026",
+                    "normalized_date": "01/2026",
+                    "source_label": "EXPIRY",
+                    "semantic_type": "EXPIRY_DATE",
+                    "evidence": {
+                      "raw_text": "01/2026",
+                      "label": "EXPIRY"
+                    },
+                    "confidence": 0.75,
+                    "source": "OCR",
+                    "source_image_index": 1,
+                    "bbox": [
+                      40,
+                      150,
+                      180,
+                      170
+                    ],
+                    "evidence_state": "EVIDENCE_VERIFIED"
+                  },
+                  "evidence_state": "EVIDENCE_VERIFIED"
+                },
+                "provenance": {
+                  "what": "01/2026",
+                  "why": "Associated with anchor label 'EXPIRY' in section 'UNKNOWN'",
+                  "where": [
+                    40,
+                    150,
+                    180,
+                    170
+                  ],
+                  "which_label": "EXPIRY",
+                  "which_image": 1,
+                  "confidence": 0.75,
+                  "validation": "UNASSESSED"
+                }
+              }
+            ],
+            "has_conflict": false,
+            "is_ambiguous": false,
+            "candidate_classification": "SINGLE_PANEL",
+            "evidence_merge_type": "SINGLE_PANEL",
+            "verification_type": "IMAGE_VERIFIABLE"
+          }
+        },
+        "PC-FOOD-001": {
+          "rule_id": "PC-FOOD-001",
+          "parameter": null,
+          "expected_status": "NOT_APPLICABLE",
+          "predicted_status": "NOT_APPLICABLE",
+          "match": true,
+          "is_physical": false,
+          "is_blocking": false,
+          "error_category": null,
+          "reason": null,
+          "evidence": null
+        }
+      },
+      "expected_overall_result": "COMPLIANT",
+      "predicted_overall_result": "NOT_VERIFIABLE",
+      "overall_result_match": false,
+      "timings_ms": {
+        "ocr_ms": 0,
+        "declaration_extraction_ms": 36,
+        "gemini_total_ms": 0,
+        "classification_ms": 5,
+        "rule_evaluation_ms": 4,
+        "total_ms": 45
+      },
+      "llm_metadata": {
+        "mode": "MODE_A_OFFLINE",
+        "llm_enabled": false,
+        "llm_status": "DISABLED",
+        "model_requested": "gemini-3.8-flash",
+        "model_used": null,
+        "fallback_used": false,
+        "timestamp": "2026-09-19T04:12:03.256546+00:00"
+      },
+      "review_required": true,
+      "clean_inspection": false,
+      "errors": []
+    }
+  ]
+}

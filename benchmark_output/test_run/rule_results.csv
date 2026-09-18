@@ -1,0 +1,56 @@
+case_id,rule_id,parameter,expected_status,predicted_status,match,is_physical,is_blocking,error_category,reason
+PKG001,PC-ALL-001,PRODUCT_NAME,PASS,NOT_VERIFIABLE,False,False,True,RULE_VALIDATION_ERROR,"Conflicting evidence detected across package views for 'PRODUCT_NAME': [Digestive Biscuit, 100% Vegetarian Made in India]. Declaration not detected reliably from package images."
+PKG001,PC-ALL-002,DECLARED_NET_QUANTITY,PASS,PASS,True,False,False,,Valid declared quantity and unit
+PKG001,PC-ALL-003,MRP,PASS,PASS,True,False,False,,Detected valid MRP declaration: ₹45.00
+PKG001,PC-ALL-004,MANUFACTURER_NAME,PASS,PASS,True,False,False,,Detected manufacturer declaration: NutriBake Foods India Pvt Ltd
+PKG001,PC-ALL-005,MANUFACTURER_ADDRESS,PASS,PASS,True,False,False,,"Detected address declaration: At: Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018"
+PKG001,PC-ALL-006,,PASS,NOT_APPLICABLE,False,False,False,APPLICABILITY_ERROR,
+PKG001,PC-ALL-008,CONSUMER_CARE,,PASS,False,False,False,,"Detected consumer care contact details (toll-free phone, email (care@nutribake.in)): care@nutribake.in, Ph: 1800-222-1111"
+PKG001,PC-ALL-009,MONTH_YEAR_MANUFACTURE,,PASS,False,False,False,,Detected valid manufacture/packing date: 04/2024
+PKG001,PC-ALL-010,GENERIC_NAME,,PASS,False,False,False,,Detected in OCR evidence: BISCUITS
+PKG001,PC-ALL-011,UNIT_SALE_PRICE,,NOT_APPLICABLE,False,False,False,,Optional declaration 'UNIT_SALE_PRICE' not identified and not required for this context.
+PKG001,PC-ALL-012,ACTUAL_NET_CONTENT,NOT_VERIFIABLE,NOT_VERIFIABLE,True,False,True,,Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.
+PKG001,PC-ALL-013,FONT_SIZE_COMPLIANCE,,NOT_VERIFIABLE,False,False,True,,Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.
+PKG001,PC-FOOD-001,BEST_BEFORE_USE_BY,,PASS,False,False,False,,Detected shelf-life duration statement: '6 months from manufacture'
+PKG001,PC-FOOD-002,INGREDIENTS_LIST,,NOT_VERIFIABLE,False,False,True,,Required declaration 'INGREDIENTS_LIST' was not detected in the available OCR evidence.
+PKG001,PC-FOOD-003,NUTRITIONAL_INFO,,NOT_APPLICABLE,False,False,False,,Optional declaration 'NUTRITIONAL_INFO' not identified and not required for this context.
+PKG001,PC-FOOD-004,FSSAI_LICENSE,,PASS,False,False,False,,Detected valid FSSAI license number: 10014011005544
+PKG001,PC-FOOD-005,VEG_NONVEG_SYMBOL,,NOT_VERIFIABLE,False,False,True,,Evidence detected for 'VEG_NONVEG_SYMBOL' has low OCR confidence (0.50) below threshold 0.6; cannot confirm compliance legally.
+PKG002,PC-ALL-001,PRODUCT_NAME,PASS,PASS,True,False,False,,Detected in OCR evidence: Cosmetic For external use only
+PKG002,PC-ALL-002,DECLARED_NET_QUANTITY,PASS,PASS,True,False,False,,Valid declared quantity and unit
+PKG002,PC-ALL-003,MRP,PASS,PASS,True,False,False,,Detected valid MRP declaration: ₹199.00
+PKG002,PC-ALL-004,MANUFACTURER_NAME,PASS,PASS,True,False,False,,Detected manufacturer declaration: Aura Wellness Cosmetics Pvt Ltd
+PKG002,PC-ALL-005,MANUFACTURER_ADDRESS,PASS,PASS,True,False,False,,"Detected address declaration: At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403"
+PKG002,PC-ALL-008,CONSUMER_CARE,,PASS,False,False,False,,Detected consumer care contact details (email (feedback@auraglow.in)): feedback@auraglow.in
+PKG002,PC-ALL-009,MONTH_YEAR_MANUFACTURE,,PASS,False,False,False,,Detected valid manufacture/packing date: 02/2024
+PKG002,PC-ALL-010,GENERIC_NAME,,PASS,False,False,False,,Detected in OCR evidence: FACE WASH
+PKG002,PC-ALL-011,UNIT_SALE_PRICE,,NOT_APPLICABLE,False,False,False,,Optional declaration 'UNIT_SALE_PRICE' not identified and not required for this context.
+PKG002,PC-ALL-012,ACTUAL_NET_CONTENT,,NOT_VERIFIABLE,False,False,True,,Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.
+PKG002,PC-ALL-013,FONT_SIZE_COMPLIANCE,,NOT_VERIFIABLE,False,False,True,,Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.
+PKG002,PC-COSM-001,BATCH_NUMBER,,PASS,False,False,False,,Detected batch/lot number: AG-881
+PKG002,PC-COSM-002,INGREDIENTS_LIST,,NOT_VERIFIABLE,False,False,True,,Required declaration 'INGREDIENTS_LIST' was not detected in the available OCR evidence.
+PKG002,PC-COSM-003,USE_BEFORE_DATE,,PASS,False,False,False,,Detected valid expiry / use-before date: 01/2026
+PKG002,PC-FOOD-001,,NOT_APPLICABLE,NOT_APPLICABLE,True,False,False,,
+PKG003,PC-ALL-001,PRODUCT_NAME,PASS,PASS,True,False,False,,Detected in OCR evidence: Himalayan Pink Salt
+PKG003,PC-ALL-002,DECLARED_NET_QUANTITY,FAIL,FAIL,True,False,False,,"Declared quantity is missing a legal unit of measurement: 'Net Weight: 1000' (value=1000, unit=null)."
+PKG003,PC-ALL-003,MRP,PASS,PASS,True,False,False,,Detected valid MRP declaration: ₹120.00
+PKG003,PC-ALL-004,MANUFACTURER_NAME,,PASS,False,False,False,,Detected manufacturer declaration: Pure Mineral Salt Works
+PKG003,PC-ALL-005,MANUFACTURER_ADDRESS,,PASS,False,False,False,,"Detected address declaration: Plot 5, Ambala Road, Chandigarh 160002"
+PKG003,PC-ALL-008,CONSUMER_CARE,,NOT_VERIFIABLE,False,False,True,,Required declaration 'CONSUMER_CARE' was not detected in the available OCR evidence.
+PKG003,PC-ALL-009,MONTH_YEAR_MANUFACTURE,,PASS,False,False,False,,Detected valid manufacture/packing date: 03/2024
+PKG003,PC-ALL-010,GENERIC_NAME,,PASS,False,False,False,,Detected in OCR evidence: EDIBLE SALT
+PKG003,PC-ALL-011,UNIT_SALE_PRICE,,NOT_APPLICABLE,False,False,False,,Optional declaration 'UNIT_SALE_PRICE' not identified and not required for this context.
+PKG003,PC-ALL-012,ACTUAL_NET_CONTENT,,NOT_VERIFIABLE,False,False,True,,Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.
+PKG003,PC-ALL-013,FONT_SIZE_COMPLIANCE,,NOT_VERIFIABLE,False,False,True,,Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.
+PKG003,PC-FOOD-001,BEST_BEFORE_USE_BY,,NOT_VERIFIABLE,False,False,True,,Required declaration 'BEST_BEFORE_USE_BY' was not detected in the available OCR evidence.
+PKG003,PC-FOOD-004,FSSAI_LICENSE,,PASS,False,False,False,,Detected valid FSSAI license number: 10018022001122
+PKG003,PC-FOOD-005,VEG_NONVEG_SYMBOL,,NOT_VERIFIABLE,False,False,True,,Required declaration 'VEG_NONVEG_SYMBOL' was not detected in the available OCR evidence.
+PKG004,PC-ALL-001,PRODUCT_NAME,PASS,PASS,True,False,False,,"Detected in OCR evidence: Factory Road, Kolhapur, Maharashtra 416001"
+PKG004,PC-ALL-002,DECLARED_NET_QUANTITY,PASS,PASS,True,False,False,,Valid declared quantity and unit
+PKG004,PC-ALL-003,,NOT_APPLICABLE,NOT_APPLICABLE,True,False,False,,
+PKG004,PC-ALL-004,MANUFACTURER_NAME,,PASS,False,False,False,,Detected manufacturer declaration: Deccan Agro Sugar Mills Ltd
+PKG004,PC-ALL-005,MANUFACTURER_ADDRESS,,PASS,False,False,False,,"Detected address declaration: Factory Road, Kolhapur, Maharashtra 416001"
+PKG004,PC-ALL-010,GENERIC_NAME,,PASS,False,False,False,,Detected in OCR evidence: REFINED SUGAR
+PKG004,PC-ALL-012,ACTUAL_NET_CONTENT,,NOT_VERIFIABLE,False,False,True,,Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.
+PKG004,PC-ALL-013,FONT_SIZE_COMPLIANCE,,NOT_VERIFIABLE,False,False,True,,Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.
+PKG004,PC-FOOD-004,FSSAI_LICENSE,,PASS,False,False,False,,Detected valid FSSAI license number: 10015021008899

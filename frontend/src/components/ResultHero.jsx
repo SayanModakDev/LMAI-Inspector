@@ -25,7 +25,7 @@ import './ResultHero.css';
  * ResultHero Component
  * Primary inspection result header adhering strictly to backend source of truth:
  * - Summary counts derived directly from backend summary object
- * - Canonical overall status (COMPLIANT, NON-COMPLIANT, REQUIRES REVIEW)
+ * - Canonical overall status (COMPLIANT, NON-COMPLIANT, NOT DETECTED)
  * - Concise dynamic explanation based on backend findings
  * - Product Identity conflict handling (never picks an arbitrary winner)
  * - Metadata summary bar
@@ -73,7 +73,7 @@ const ResultHero = ({
 
   // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
   const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
-  let canonicalStatus = 'REVIEW REQUIRED';
+  let canonicalStatus = 'NOT DETECTED';
   let bannerModifier = 'review';
 
   if (rawStatus === 'COMPLIANT') {
@@ -83,7 +83,7 @@ const ResultHero = ({
     canonicalStatus = 'NON-COMPLIANT';
     bannerModifier = 'non-compliant';
   } else {
-    canonicalStatus = 'REVIEW REQUIRED';
+    canonicalStatus = 'NOT DETECTED';
     bannerModifier = 'review';
   }
 
@@ -107,8 +107,6 @@ const ResultHero = ({
       GENERIC_NAME: 'Generic Name',
       DECLARED_NET_QUANTITY: 'Declared Net Quantity',
       NET_QUANTITY: 'Declared Net Quantity',
-      ACTUAL_NET_CONTENT: 'Actual Net Content',
-      FONT_SIZE_COMPLIANCE: 'Font Size Compliance',
       MANUFACTURER_NAME: 'Manufacturer Name',
       MANUFACTURER_ADDRESS: 'Manufacturer Address',
       MARKETER_NAME: 'Marketer Name',
@@ -135,32 +133,13 @@ const ResultHero = ({
       };
     }
 
-    if (canonicalStatus === 'REVIEW REQUIRED') {
+    if (canonicalStatus === 'NOT DETECTED') {
       return {
-        secondary: `${reviewCount} declaration${reviewCount === 1 ? '' : 's'} require attention`,
-        main: 'Screening could not conclusively verify one or more declarations.',
+        secondary: `${reviewCount} declaration${reviewCount === 1 ? '' : 's'} not detected`,
+        main: 'Some package details were not detected in the image.',
         reasons: reviewRules
-          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} review required`)
+          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} not detected`)
           .filter(Boolean),
-      };
-    }
-
-    const physicalOutstanding = ruleResults.filter(
-      (r) =>
-        (r.status === 'NOT_VERIFIABLE' || r.status === 'NEEDS_REVIEW') &&
-        (r.parameter === 'ACTUAL_NET_CONTENT' ||
-          r.parameter === 'FONT_SIZE_COMPLIANCE' ||
-          r.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
-          (r.reason || r.message || '').toLowerCase().includes('physical verification'))
-    );
-
-    if (physicalOutstanding.length > 0) {
-      return {
-        secondary: `${physicalOutstanding.length} check${physicalOutstanding.length === 1 ? '' : 's'} require physical verification`,
-        main: 'All image-verifiable declarations passed automated screening.',
-        reasons: physicalOutstanding.map(
-          (r) => `${formatParamLabel(r.parameter)}: In-person measurement required`
-        ),
       };
     }
 
@@ -210,8 +189,8 @@ const ResultHero = ({
 
   const categoryName = inspection.category || inspection.product?.category || null;
   const productType = inspection.product_type || inspection.product?.product_type || null;
-  const packageType = inspection.package_type || inspection.product?.package_type || 'RETAIL';
-  const importStatus = inspection.import_status || inspection.product?.import_status || inspection.product?.country_of_origin || 'DOMESTIC';
+  const packageType = inspection.package_type || inspection.product?.package_type || 'NOT_DETECTED';
+  const importStatus = inspection.import_status || inspection.product?.import_status || 'NOT_DETECTED';
 
   const imageCount = Array.isArray(inspection.images) && inspection.images.length > 0
     ? inspection.images.length
@@ -238,7 +217,7 @@ const ResultHero = ({
 
   // Compact review reasons list derived dynamically from backend findings
   const compactReviewReasons = React.useMemo(() => {
-    if (canonicalStatus !== 'REVIEW REQUIRED') return [];
+    if (canonicalStatus !== 'NOT DETECTED') return [];
     const list = [];
     if (isProductNameConflict) {
       list.push('Conflicting information');
@@ -251,24 +230,14 @@ const ResultHero = ({
     if (hasGenericMissing) {
       list.push('Generic name not detected');
     }
-    const hasPhysical = reviewRules.some(
-      (r) =>
-        r.parameter === 'ACTUAL_NET_CONTENT' ||
-        r.parameter === 'FONT_SIZE_COMPLIANCE' ||
-        (r.reason || '').toLowerCase().includes('physical')
-    );
-    if (hasPhysical) {
-      list.push('Physical verification required');
-    }
     // Additional specific parameters that need review
     reviewRules.forEach((r) => {
       const p = r.parameter;
       if (p === 'PRODUCT_NAME' && isProductNameConflict) return;
       if (p === 'GENERIC_NAME' && hasGenericMissing) return;
-      if ((p === 'ACTUAL_NET_CONTENT' || p === 'FONT_SIZE_COMPLIANCE') && hasPhysical) return;
       const label = formatParamLabel(p);
       const isMissing = (r.reason || '').toLowerCase().includes('not detected');
-      const entry = isMissing ? `${label} not detected` : `${label} review required`;
+      const entry = `${label} not detected`;
       if (!list.includes(entry) && list.length < 5) {
         list.push(entry);
       }
@@ -383,11 +352,11 @@ const ResultHero = ({
 
             <div
               className={`count-pill count-pill--review ${reviewCount > 0 ? 'count-pill--active' : ''}`}
-              title={`${reviewCount} rules require manual verification or physical measurement`}
+              title={`${reviewCount} declarations were not detected`}
             >
               <AlertTriangle size={13} />
               <span className="count-num font-mono">{reviewCount}</span>
-              <span className="count-label">REVIEW</span>
+              <span className="count-label">NOT DETECTED</span>
             </div>
 
             <div

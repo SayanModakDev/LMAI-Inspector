@@ -586,6 +586,17 @@ def _line_has_other_date_label(line: str, keywords: List[str]) -> bool:
     return False
 
 
+def _is_instructional_label_line(line: str) -> bool:
+    """Reject package instructions that mention declaration labels as examples."""
+    lowered = str(line or '').strip().lower()
+    return bool(
+        re.search(r'^for\s+(?:mrp|manufactured\s+by|packed\s+by)', lowered)
+        or re.search(r'\b(?:mm/yy|expiry\s+date)\b', lowered)
+        or re.search(r'\b(?:batch\s+no\.?|mfd\.?\s*date)\b.*\b(?:see|below|and)\b', lowered)
+        or re.search(r'\b(?:m-him|m-dnh|license|licence|cos/)\b', lowered)
+    )
+
+
 def _extract_date_near_keyword(
     text: str,
     keywords: List[str],
@@ -618,6 +629,8 @@ def _extract_date_near_keyword(
         keyword_patterns.append((kw, pat))
 
     for index, line in enumerate(lines):
+        if _is_instructional_label_line(line):
+            continue
         matched_match = None
         matched_kw_str = None
         for kw_str, pat in keyword_patterns:
@@ -915,6 +928,13 @@ def _is_disallowed_product_name_line(line: str) -> bool:
 
     lower = line_clean.lower()
 
+    if re.search(r'\bdentist\s+recommended\s+brand\b', lower):
+        return True
+    if re.search(r'\btriple\s+cleaning\s+action\b', lower):
+        return True
+    if re.fullmatch(r'[a-z]{1,10}[a-z0-9-]*\d[a-z0-9-]*', lower):
+        return True
+
     # 1. Corporate entities / Manufacturers / Packers / Marketers
     if COMPANY_SUFFIX_RE.search(line_clean) or VENDOR_PREFIX_RE.search(line_clean):
         return True
@@ -934,6 +954,8 @@ def _is_disallowed_product_name_line(line: str) -> bool:
     if re.search(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?|fssai|lic\.?\s*(?:no\.?|number)?|regd?\s*no\.?)\b', lower):
         return True
     if re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|inr|exp(?:iry)?|mfd|pkd|use\s*by|best\s*before)\b', lower):
+        return True
+    if re.search(r'\bnet\s*(?:wt|weight|qty|quantity)\b', lower):
         return True
     if re.search(r'\b\d+\s*(?:g|kg|ml|l|ltr|gm|pieces?|tablets?)\b', lower):
         return True
@@ -1001,6 +1023,13 @@ def _is_disallowed_brand_candidate(val: str) -> bool:
         return True
     lower = clean_val.lower()
 
+    if re.search(r'\bdentist\s+recommended\s+brand\b', lower):
+        return True
+    if re.search(r'\btriple\s+cleaning\s+action\b', lower):
+        return True
+    if re.fullmatch(r'[a-z]{1,10}[a-z0-9-]*\d[a-z0-9-]*', lower):
+        return True
+
     for pattern in NON_BRAND_PATTERNS:
         if re.search(pattern, lower, re.IGNORECASE):
             return True
@@ -1021,10 +1050,13 @@ def _extract_brand_candidate(lines: List[str]) -> Optional[Dict[str, Any]]:
     for line in lines:
         m = re.search(r'\b(?:brand\s*(?:name)?|trade\s*mark|regd?\s*(?:brand|trade\s*mark))\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
         if m:
+            if line[:m.start()].strip(' :;,-'):
+                continue
             val = m.group(1).strip(' :;,-')
             cut_val = _cut_before_next_section(val, 'brand')
             val = cut_val or val
-            if not _is_disallowed_brand_candidate(val):
+            val_words = [word.lower() for word in re.findall(r'[A-Za-z]+', val)]
+            if not (val_words and all(word in BRAND_CONTEXT_STOPWORDS for word in val_words)) and not _is_disallowed_brand_candidate(val):
                 return {'value': val.title(), 'confidence': 0.92, 'source': 'OCR_LABEL', 'role': 'BRAND'}
 
     # 2. Trademarked tokens/lines (e.g. "BrandName™", "BrandName®")
@@ -1037,6 +1069,82 @@ def _extract_brand_candidate(lines: List[str]) -> Optional[Dict[str, Any]]:
             if 1 <= len(words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in words):
                 return {'value': val.title(), 'confidence': 0.88, 'source': 'OCR_TRADEMARK', 'role': 'BRAND'}
     return None
+
+
+BRAND_CONTEXT_STOPWORDS = {
+    'a', 'an', 'and', 'are', 'as', 'by', 'does', 'for', 'from', 'has', 'is',
+    'name', 'of', 'only', 'or', 'the', 'this', 'to', 'with',
+}
+
+
+def _select_general_brand_candidate(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Select an unanchored brand from standalone OCR evidence, not prose."""
+    candidates = []
+    evidence = ocr_items or []
+    if not evidence:
+        return None
+    for line_index, line in enumerate(lines[:25]):
+        clean_line = line.strip()
+        words = re.findall(r"[A-Za-z][A-Za-z0-9&'-]*", clean_line)
+        if not (1 <= len(words) <= 4) or _is_disallowed_brand_candidate(clean_line):
+            continue
+        lower = clean_line.lower()
+        if any(word in BRAND_CONTEXT_STOPWORDS for word in (word.lower() for word in words)):
+            continue
+        if re.search(r'[.!?,:;]', clean_line) or re.search(r'\b(?:brand\s+name|trademark|manufactur\w*|packed\s+by|marketed\s+by)\b', lower):
+            continue
+
+        matching_items = [
+            item for item in evidence
+            if str(item.get('text', '')).strip().lower() == clean_line.lower()
+        ]
+        item = max(matching_items, key=lambda value: float(value.get('confidence') or 0), default=None)
+        confidence = float(item.get('confidence') or 0.8) if item else 0.8
+        score = confidence
+        bbox = item.get('bbox') if item else None
+        if bbox and len(bbox) == 4:
+            width = max(0, float(bbox[2]) - float(bbox[0]))
+            height = max(0, float(bbox[3]) - float(bbox[1]))
+            area = width * height
+            all_areas = []
+            all_ys = []
+            for other in evidence:
+                other_box = other.get('bbox') or []
+                if len(other_box) == 4:
+                    all_areas.append(max(0, float(other_box[2]) - float(other_box[0])) * max(0, float(other_box[3]) - float(other_box[1])))
+                    all_ys.append(float(other_box[1]))
+            if all_areas and area >= max(all_areas) * 0.5:
+                score += 1.2
+            elif all_areas and area >= sorted(all_areas)[len(all_areas) // 2]:
+                score += 0.4
+            if all_ys and float(bbox[1]) <= min(all_ys) + (max(all_ys) - min(all_ys)) * 0.45:
+                score += 0.5
+
+        normalized = re.sub(r'[^a-z0-9]+', ' ', clean_line.lower()).strip()
+        repeat_count = sum(
+            1 for other in evidence
+            if re.sub(r'[^a-z0-9]+', ' ', str(other.get('text', '')).lower()).strip() == normalized
+        )
+        score += min(repeat_count - 1, 3) * 0.8
+        candidates.append((score, line_index, clean_line, item, confidence))
+
+    if not candidates:
+        return None
+    _, line_index, value, item, confidence = max(candidates, key=lambda candidate: candidate[0])
+    selected = {
+        'value': value.title(),
+        'confidence': round(min(0.99, max(0.5, confidence)), 2),
+        'source': 'OCR_LAYOUT',
+        'role': 'BRAND',
+        'line_index': line_index,
+    }
+    if item:
+        selected['bbox'] = item.get('bbox')
+        selected['source_image_index'] = item.get('image_index')
+    return selected
 
 
 def _extract_explicit_product_name(lines: List[str]) -> Optional[str]:
@@ -1094,6 +1202,8 @@ def _extract_product_name_candidates(
             continue
         if any(w in MARKETING_TERMS for w in lowered) and len(words) <= 3:
             continue
+        if len(words) > 5 and re.search(r'\b(?:brand\s+name|recommended|contains?|made\s+with|best\s+before|use\s+by|keep|store)\b', line, re.I):
+            continue
 
         clean_line = re.sub(r'[^\w\s]', '', line.lower()).strip()
         line_word_set = set(clean_line.split())
@@ -1128,6 +1238,10 @@ def _extract_product_name_candidates(
                 continue
 
         score = 1.0 + max(0, 8 - index) * 0.08
+        if clean_known and brand_words.intersection(line_word_set):
+            score += 3.0
+            if clean_line.startswith(clean_known):
+                score += 0.8
         if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice|toothpaste|noodles)\b', line, re.I):
             score += 4.0
 
@@ -1137,12 +1251,30 @@ def _extract_product_name_candidates(
                 score += float(item.get('confidence') or 0)
                 bbox = item.get('bbox') or []
                 if len(bbox) == 4:
+                    width = max(0, float(bbox[2]) - float(bbox[0]))
+                    height = max(0, float(bbox[3]) - float(bbox[1]))
+                    area = width * height
+                    all_areas = []
                     all_ys = [it.get('bbox')[1] for it in ocr_items if len(it.get('bbox') or []) == 4]
+                    for other in ocr_items:
+                        other_box = other.get('bbox') or []
+                        if len(other_box) == 4:
+                            all_areas.append(max(0, float(other_box[2]) - float(other_box[0])) * max(0, float(other_box[3]) - float(other_box[1])))
+                    if all_areas and area >= max(all_areas) * 0.5:
+                        score += 1.0
+                    elif all_areas and area >= sorted(all_areas)[len(all_areas) // 2]:
+                        score += 0.35
                     max_y = max(all_ys) if all_ys else 1
                     min_y = min(all_ys) if all_ys else 0
                     y_range = max_y - min_y if max_y > min_y else 1
                     if (bbox[1] - min_y) / y_range < 0.6:
                         score += 0.5
+        normalized = re.sub(r'[^a-z0-9]+', ' ', clean_line).strip()
+        repeat_count = sum(
+            1 for other in (ocr_items or [])
+            if re.sub(r'[^a-z0-9]+', ' ', str(other.get('text', '')).lower()).strip() == normalized
+        )
+        score += min(repeat_count - 1, 3) * 0.7
         scored.append((score, line))
 
     if not scored:
@@ -1167,6 +1299,54 @@ def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]
     """Score front-label candidates; do not let a marketing adjective become a product."""
     cand, _, _ = _extract_product_name_candidates(lines, ocr_items, known_brand=known_brand)
     return cand
+
+
+def _adjacent_brand_generic_product(
+    lines: List[str],
+    brand: Optional[str],
+    generic: Optional[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Join adjacent brand and generic lines only when package evidence supports it."""
+    if not brand or not generic:
+        return None
+    brand_clean = re.sub(r'[^a-z0-9\s]+', '', brand.lower()).strip()
+    generic_clean = re.sub(r'[^a-z0-9\s]+', '', generic.lower()).strip()
+    brand_words = set(brand_clean.split())
+    generic_words = set(generic_clean.split())
+    if generic_words and generic_words.issubset(brand_words):
+        return None
+
+    for index, line in enumerate(lines[:-1]):
+        next_line = lines[index + 1]
+        if re.sub(r'[^a-z0-9\s]+', '', line.lower()).strip() != brand_clean:
+            continue
+        if re.sub(r'[^a-z0-9\s]+', '', next_line.lower()).strip() != generic_clean:
+            continue
+        brand_item = next((item for item in (ocr_items or []) if str(item.get('text', '')).strip().lower() == line.lower()), None)
+        generic_item = next((item for item in (ocr_items or []) if str(item.get('text', '')).strip().lower() == next_line.lower()), None)
+        if brand_item and generic_item and brand_item.get('image_index') != generic_item.get('image_index'):
+            continue
+
+        evidence = [item for item in (brand_item, generic_item) if item]
+        bboxes = [item.get('bbox') for item in evidence if len(item.get('bbox') or []) == 4]
+        candidate = {
+            'value': f"{brand.strip()} {next_line.strip()}"[:200],
+            'raw_text': f"{line.strip()} {next_line.strip()}",
+            'confidence': min((float(item.get('confidence') or 0.8) for item in evidence), default=0.8),
+            'source': 'OCR_LAYOUT',
+            'role': 'PRODUCT_NAME',
+            'line_index': index,
+        }
+        if bboxes:
+            candidate['bbox'] = [
+                min(box[0] for box in bboxes), min(box[1] for box in bboxes),
+                max(box[2] for box in bboxes), max(box[3] for box in bboxes),
+            ]
+        if evidence:
+            candidate['source_image_index'] = evidence[0].get('image_index')
+        return candidate
+    return None
 
 
 def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[Dict[str, Any]]:
@@ -1337,6 +1517,12 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
         return False
     if s1.lower() == s2.lower():
         return False
+
+    if field_name == 'BRAND':
+        brand_words_1 = set(re.sub(r'[^a-z0-9\s]', '', s1.lower()).split())
+        brand_words_2 = set(re.sub(r'[^a-z0-9\s]', '', s2.lower()).split())
+        if brand_words_1.issubset(brand_words_2) or brand_words_2.issubset(brand_words_1):
+            return False
 
     # 1. Price / MRP comparison
     if field_name == 'MRP':
@@ -1890,12 +2076,12 @@ def _classify_multi_image_evidence(
                 'source': best.get('source', 'OCR'),
                 'source_image_index': best.get('source_image_index'),
                 'candidates': all_candidates,
-                'review_required': True,
+                'review_required': False,
                 'candidate_classification': 'OCR_VARIATION',
                 'evidence_merge_type': 'AMBIGUOUS',
                 'reason': (
                     f"Multiple plausible evidence candidates detected across package views for '{field_name}': "
-                    f"{distinct_values}. Likely OCR character variations. Manual verification recommended."
+                    f"{distinct_values}. Likely OCR character variations; additional package-image evidence is recommended."
                 ),
             }
 
@@ -1920,12 +2106,12 @@ def _classify_multi_image_evidence(
                 'source': best.get('source', 'OCR'),
                 'source_image_index': best.get('source_image_index'),
                 'candidates': all_candidates,
-                'review_required': True,
+                'review_required': False,
                 'candidate_classification': 'MULTI_PANEL_EVIDENCE',
                 'evidence_merge_type': 'COMPLEMENTARY',
                 'reason': (
                     f"Multiple product identification candidates detected across different package views for '{field_name}': "
-                    f"{distinct_values}. Manual verification recommended."
+                    f"{distinct_values}. Additional package-image evidence is recommended."
                 ),
             }
 
@@ -1938,13 +2124,13 @@ def _classify_multi_image_evidence(
         'confidence': round(highest_conf, 2),
         'source': 'MULTI_IMAGE_CONFLICT',
         'candidates': all_candidates,
-        'review_required': True,
+        'review_required': False,
         'candidate_classification': 'TRUE_CONFLICT',
         'evidence_merge_type': 'TRUE_CONFLICT',
         'conflict_reason': f"Conflicting declarations detected across package views for '{field_name}': {distinct_values}",
         'reason': (
             f"Conflicting evidence detected across package views for '{field_name}': "
-            f"{distinct_values}. Inspector review required."
+            f"{distinct_values}. Automatic result marked NOT DETECTED."
         ),
     }
 
@@ -2254,6 +2440,8 @@ def _extract_manufacturer_and_address(
     # Step 1: Look for explicit manufacturer keyword lines
     for idx, line in enumerate(lines):
         line_lower = line.lower()
+        if _is_instructional_label_line(line):
+            continue
         matched_kw = None
         for kw in MANUFACTURER_KEYWORDS:
             kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
@@ -2273,7 +2461,7 @@ def _extract_manufacturer_and_address(
             comp_res = _extract_company_entity_from_line(cleaned_after)
             if comp_res:
                 comp_name, comp_addr = comp_res
-                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                name = comp_name
                 addr_parts = [comp_addr] if comp_addr else []
                 addr_parts.extend(cont_lines)
                 address = _clean_address_text(', '.join(part for part in addr_parts if part))
@@ -2285,7 +2473,7 @@ def _extract_manufacturer_and_address(
                 comp_res_cont = _extract_company_entity_from_line(first_cont)
                 if comp_res_cont:
                     comp_name, comp_addr = comp_res_cont
-                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    name = comp_name
                     addr_parts = [comp_addr] if comp_addr else []
                     addr_parts.extend(cont_lines[1:])
                     address = _clean_address_text(', '.join(part for part in addr_parts if part))
@@ -2295,18 +2483,18 @@ def _extract_manufacturer_and_address(
             if cont_lines:
                 vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
                 if vendor['name'] and vendor['address']:
-                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    name = vendor['name']
                     address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
                 elif cleaned_after:
-                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    name = cleaned_after
                     address = _clean_address_text(', '.join(cont_lines))
                 else:
-                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    name = cont_lines[0]
                     address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
                 return name or None, address or None
             else:
                 vendor = _split_vendor_and_address(cleaned_after)
-                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                name = vendor['name'] or cleaned_after
                 address = _clean_address_text(vendor['address']) or None
                 return name or None, address
 
@@ -2354,7 +2542,7 @@ def _extract_marketer_and_address(
             comp_res = _extract_company_entity_from_line(cleaned_after)
             if comp_res:
                 comp_name, comp_addr = comp_res
-                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                name = comp_name
                 addr_parts = [comp_addr] if comp_addr else []
                 addr_parts.extend(cont_lines)
                 address = _clean_address_text(', '.join(part for part in addr_parts if part))
@@ -2365,7 +2553,7 @@ def _extract_marketer_and_address(
                 comp_res_cont = _extract_company_entity_from_line(first_cont)
                 if comp_res_cont:
                     comp_name, comp_addr = comp_res_cont
-                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    name = comp_name
                     addr_parts = [comp_addr] if comp_addr else []
                     addr_parts.extend(cont_lines[1:])
                     address = _clean_address_text(', '.join(part for part in addr_parts if part))
@@ -2374,18 +2562,18 @@ def _extract_marketer_and_address(
             if cont_lines:
                 vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
                 if vendor['name'] and vendor['address']:
-                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    name = vendor['name']
                     address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
                 elif cleaned_after:
-                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    name = cleaned_after
                     address = _clean_address_text(', '.join(cont_lines))
                 else:
-                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    name = cont_lines[0]
                     address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
                 return name or None, address or None
             else:
                 vendor = _split_vendor_and_address(cleaned_after)
-                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                name = vendor['name'] or cleaned_after
                 address = _clean_address_text(vendor['address']) or None
                 return name or None, address
 
@@ -2482,7 +2670,7 @@ def _extract_mrp_structured(
                 'currency_status': 'UNKNOWN',
                 'status': 'REVIEW',
                 'binary': 0,
-                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
+                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; NOT DETECTED reliably in package images.",
                 'confidence': 0.6,
                 'source': 'OCR',
                 'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
@@ -2560,7 +2748,7 @@ def _extract_mrp_structured(
                     'currency_status': 'INFERRED',
                     'status': 'REVIEW',
                     'binary': 0,
-                    'reason': f"Currency symbol missing; inferred from MRP prefix but requires review: '{raw_span}'.",
+                    'reason': f"Currency symbol missing; MRP declaration NOT DETECTED reliably in package images: '{raw_span}'.",
                     'confidence': 0.7,
                     'source': 'OCR',
                     'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
@@ -2585,7 +2773,7 @@ def _extract_mrp_structured(
             'currency_status': 'UNKNOWN',
             'status': 'REVIEW',
             'binary': 0,
-            'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; manual review required.",
+                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; NOT DETECTED reliably in package images.",
             'confidence': 0.6,
             'source': 'OCR',
             'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
@@ -2615,6 +2803,127 @@ def _extract_mrp_structured(
             }
 
     return None
+
+
+UNIT_SALE_PRICE_RE = re.compile(
+    r"\b(?:unit\s+sale\s+price|unit\s+price|sale\s+price)\b\s*[:.]?\s*"
+    r"(?:₹|rs\.?|inr)?\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*/\s*"
+    r"(g|kg|mg|ml|l|unit|piece|pc)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_unit_sale_price(
+    normalized: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract unit sale price separately from the maximum retail price."""
+    if lines is None:
+        lines = group_ocr_items_into_lines(ocr_items) if ocr_items else []
+        if not lines:
+            lines = [line.strip() for line in normalized.split('\n') if line.strip()]
+
+    for line in lines:
+        match = UNIT_SALE_PRICE_RE.search(line)
+        if not match:
+            continue
+        amount = match.group(1).replace(',', '')
+        unit = match.group(2).lower()
+        return {
+            'value': f"₹{amount}/{unit}",
+            'raw_value': match.group(0).strip(),
+            'raw_text': match.group(0).strip(),
+            'numeric_value': float(amount),
+            'unit': unit,
+            'source_label': 'UNIT_SALE_PRICE',
+            'semantic_section': 'MRP',
+            'confidence': 0.9,
+            'source': 'OCR',
+            'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+        }
+    return None
+
+
+def _extract_compact_declaration_panel(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Recover ordered declarations from a compact panel when OCR drops labels.
+
+    This is intentionally conservative: it requires a four-line sequence containing
+    a price, a second small numeric price, an alphanumeric batch token, and two
+    month/year dates. It does not assign arbitrary numbers from a full package OCR.
+    """
+    candidates = [line.strip() for line in lines if line.strip()]
+    if len(candidates) != 4:
+        return {}
+
+    first_price = re.fullmatch(r'(?:₹|rs\.?|inr)?\s*([0-9]+[.,][0-9]{1,2})', candidates[0], re.I)
+    second_price = re.fullmatch(r'(?:₹|rs\.?|inr)?\s*([0-9]+[.,][0-9]{1,4})(?:\s*/?\s*[a-z])?', candidates[1], re.I)
+    batch_match = re.fullmatch(r'[A-Za-z]{1,8}[A-Za-z0-9-]{3,30}', candidates[2])
+    date_matches = re.findall(r'(?<!\d)(\d{1,2}[/-]\d{2,4})(?!\d)', candidates[3])
+    if not (first_price and second_price and batch_match and len(date_matches) == 2):
+        return {}
+
+    result: Dict[str, Dict[str, Any]] = {}
+    result['MRP'] = {
+        'value': f"₹{first_price.group(1).replace(',', '')}",
+        'raw_value': candidates[0],
+        'raw_text': candidates[0],
+        'numeric_value': float(first_price.group(1).replace(',', '')),
+        'currency_symbol': '₹',
+        'currency_status': 'INFERRED_FROM_COMPACT_PANEL',
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_MRP,
+        'confidence': 0.72,
+        'source': 'OCR_LAYOUT',
+        'evidence_state': EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+    }
+    unit_number = second_price.group(1).replace(',', '')
+    unit_match = re.search(r'/\s*([a-z]+)', candidates[1], re.I)
+    unit = unit_match.group(1).lower() if unit_match else 'g'
+    result['UNIT_SALE_PRICE'] = {
+        'value': f"₹{unit_number[:unit_number.find('.') + 3] if '.' in unit_number else unit_number}/{unit}",
+        'raw_value': candidates[1],
+        'raw_text': candidates[1],
+        'numeric_value': float(unit_number),
+        'unit': unit,
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_MRP,
+        'confidence': 0.68,
+        'source': 'OCR_LAYOUT',
+        'evidence_state': EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+    }
+    result['BATCH_NUMBER'] = {
+        'value': batch_match.group(0),
+        'raw_value': candidates[2],
+        'raw_text': candidates[2],
+        'normalized_value': batch_match.group(0),
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_BATCH,
+        'confidence': 0.82,
+        'source': 'OCR_LAYOUT',
+    }
+    for field_name, token, label in (
+        ('MONTH_YEAR_MANUFACTURE', date_matches[0], 'MFD'),
+        ('USE_BEFORE_DATE', date_matches[1], 'USE_BY'),
+    ):
+        valid, normalized_date, metadata = parse_date_with_precision(token)
+        if valid and metadata:
+            result[field_name] = {
+                'value': normalized_date,
+                'raw_value': token,
+                'raw_date': token,
+                'normalized_value': normalized_date,
+                'normalized_date': normalized_date,
+                'parsed_components': metadata['parsed_components'],
+                'source_label': label,
+                'semantic_type': field_name,
+                'confidence': 0.7,
+                'source': 'OCR_LAYOUT',
+            }
+    return result
 
 
 NET_QTY_UNITS_MAP: Dict[str, str] = {
@@ -3357,18 +3666,22 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
         if cleaned_after:
             tokens = cleaned_after.split()
             first_token = tokens[0].strip(' ,;:')
-            if first_token.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 1:
+            if (first_token.lower() not in INVALID_BATCH_TOKENS
+                    and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', first_token, re.I)
+                    and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 4):
                 candidate = first_token
 
         # If not on same line, check immediate next line (e.g. Batch No:\nB104)
         if not candidate and index + 1 < len(lines):
             next_line = lines[index + 1].strip()
-            if not _is_section_boundary(next_line):
+            if not _is_section_boundary(next_line) and not re.search(r'\b(?:license|licence|read|see|below|alphabet|and)\b', next_line, re.I):
                 cleaned_next = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', next_line, flags=re.IGNORECASE).strip(' :;,-=#')
                 next_tokens = cleaned_next.split()
                 if next_tokens:
                     cand = next_tokens[0].strip(' ,;:')
-                    if cand.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 1:
+                    if (cand.lower() not in INVALID_BATCH_TOKENS
+                            and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', cand, re.I)
+                            and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 4):
                         candidate = cand
 
         if candidate:
@@ -3449,6 +3762,12 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if explicit_brand:
         fields['BRAND'] = explicit_brand
 
+    # Prefer standalone, visually supported OCR evidence over unanchored prose.
+    if 'BRAND' not in fields:
+        general_brand = _select_general_brand_candidate(lines, effective_items)
+        if general_brand:
+            fields['BRAND'] = general_brand
+
     if explicit_generic:
         fields['GENERIC_NAME'] = {'value': explicit_generic, 'confidence': 0.90, 'source': 'OCR_LABEL'}
 
@@ -3501,14 +3820,16 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 COMMODITY_DESCRIPTORS = {'refined', 'pure', 'fresh', 'natural', 'organic', 'raw', 'extra', 'virgin', 'cold', 'pressed', 'classic', 'premium'}
                 brand_tokens = [t for t in re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text) if t.lower() not in MARKETING_TERMS and t.lower() not in COMMODITY_DESCRIPTORS]
                 if len(brand_tokens) >= 1:
-                    cand_brand = ' '.join(brand_tokens).title()
+                    cand_brand = brand_tokens[0].title() if len(brand_tokens) > 1 else brand_tokens[0].title()
+                    product_prefix = ' '.join(re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text))
+                    product_value = f"{product_prefix} {gen_name.title()}".strip()
                     if not _is_disallowed_brand_candidate(cand_brand):
                         if 'BRAND' not in fields:
                             fields['BRAND'] = {'value': cand_brand, 'confidence': 0.84, 'source': 'OCR'}
                         if 'PRODUCT_NAME' not in fields:
                             fields['PRODUCT_NAME'] = build_product_name_candidate(
-                                value=f"{cand_brand} {gen_name.title()}",
-                                raw_text=f"{cand_brand} {gen_name.title()}",
+                                value=product_value,
+                                raw_text=product_value,
                                 status="VALID",
                                 confidence=0.85,
                                 source='OCR_LAYOUT',
@@ -3579,9 +3900,17 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
 
     # 5. Extract front-panel PRODUCT_NAME candidates (with known_brand scoping)
     known_brand_val = fields.get('BRAND', {}).get('value')
+    adjacent_identity = _adjacent_brand_generic_product(
+        lines,
+        known_brand_val,
+        matched_generic,
+        effective_items,
+    )
     p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, effective_items, known_brand=known_brand_val)
 
-    if 'PRODUCT_NAME' not in fields and p_cand:
+    if 'PRODUCT_NAME' not in fields and adjacent_identity:
+        fields['PRODUCT_NAME'] = adjacent_identity
+    elif 'PRODUCT_NAME' not in fields and p_cand:
         # Strict semantic validation: do not allow candidate identical to the brand to become PRODUCT_NAME
         cand_clean = re.sub(r'[^\w\s]', '', p_cand.lower()).strip()
         brand_clean = re.sub(r'[^\w\s]', '', str(known_brand_val or '').lower()).strip()
@@ -3595,9 +3924,13 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 source='OCR',
             )
 
-    mrp_field = _extract_mrp_structured(normalized, raw_text, lines)
+    mrp_field = _extract_mrp_structured(normalized, raw_text, lines, effective_items)
     if mrp_field:
         fields['MRP'] = mrp_field
+
+    unit_sale_price = _extract_unit_sale_price(normalized, lines, effective_items)
+    if unit_sale_price:
+        fields['UNIT_SALE_PRICE'] = unit_sale_price
 
     qty_field = _extract_net_quantity_field(normalized, lines)
     if qty_field:
@@ -3606,6 +3939,9 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     mfg_name, mfg_addr = _extract_manufacturer_and_address(lines, ocr_items=effective_items)
     mkt_name, mkt_addr = _extract_marketer_and_address(lines, ocr_items=effective_items)
     packer_name, packer_addr = _extract_packer_and_address(lines, ocr_items=effective_items)
+
+    if mfg_name and re.search(r'\b(?:address\s+and\s+manufacturing|manufacturing\s+address)\b', mfg_name, re.I):
+        mfg_name, mfg_addr = None, None
 
     if mfg_name:
         fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MANUFACTURER'}
@@ -3727,6 +4063,8 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                     confidence=0.75,
                     source='OCR',
                 )
+                if re.fullmatch(r'\d{1,2}[/-]\d{2}', mfg_date.strip()):
+                    fields['MONTH_YEAR_MANUFACTURE']['value'] = norm_date
         else:
             fields['MANUFACTURE_DATE'] = {
                 'value': mfg_date,
@@ -3737,6 +4075,39 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 'confidence': 0.75,
                 'source': 'OCR',
             }
+
+        # Some packages print compact paired dates such as "MFD 05/26;04/28".
+        # Treat the second date as use-before only when both dates are on the
+        # same manufacturing-label line; do not search unrelated package text.
+        if 'USE_BEFORE_DATE' not in fields:
+            for line in lines:
+                if not re.search(r'\b(?:mfd|mfg|manufactur\w*)\b', line, re.IGNORECASE):
+                    continue
+                date_tokens = []
+                for pattern in DATE_PATTERNS:
+                    for match in re.finditer(pattern, line, re.IGNORECASE):
+                        token = match.group(1)
+                        if _is_valid_date_token(token) and token not in date_tokens:
+                            date_tokens.append(token)
+                if len(date_tokens) != 2:
+                    continue
+                second_date = date_tokens[1]
+                second_valid, second_norm, second_meta = parse_date_with_precision(second_date)
+                if not second_valid or not second_meta:
+                    continue
+                fields['USE_BEFORE_DATE'] = {
+                    'value': second_norm,
+                    'raw_value': second_date,
+                    'raw_date': second_date,
+                    'normalized_value': second_norm,
+                    'normalized_date': second_norm,
+                    'source_label': 'DATE_PAIR',
+                    'semantic_type': 'USE_BY',
+                    'evidence': {'raw_text': line, 'label': 'DATE_PAIR'},
+                    'confidence': 0.65,
+                    'source': 'OCR',
+                }
+                break
 
     packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS, lines=lines, ocr_items=effective_items)
     if packing_date:
@@ -3754,6 +4125,8 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 confidence=0.75,
                 source='OCR',
             )
+            if re.fullmatch(r'\d{1,2}[/-]\d{2}', packing_date.strip()):
+                fields['PACKING_DATE']['value'] = norm_date
         else:
             fields['PACKING_DATE'] = {
                 'value': packing_date,
@@ -3885,6 +4258,10 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     batch_field = _extract_batch_number(lines, normalized, effective_items)
     if batch_field:
         fields['BATCH_NUMBER'] = batch_field
+
+    compact_fields = _extract_compact_declaration_panel(lines, effective_items)
+    for field_name, compact_field in compact_fields.items():
+        fields.setdefault(field_name, compact_field)
 
     for f_name, field_data in fields.items():
         val_str = str(field_data.get('value', ''))

@@ -46,7 +46,6 @@ def get_rules(db: Session = Depends(get_db)):
             publication_date=getattr(r, 'publication_date', None),
             applicability=getattr(r, 'applicability', None),
             screening_scope=getattr(r, 'screening_scope', None),
-            physical_scope=getattr(r, 'physical_scope', None),
             notes=getattr(r, 'notes', None) or r.exception,
         ) for r in rules
     ]

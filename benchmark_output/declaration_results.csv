@@ -1,0 +1,13 @@
+case_id,product_name,field,expected_value,expected_normalized,predicted_value,predicted_normalized,expected_present,predicted_present,exact_match,normalized_match,required,grounding_status,grounding_strategy,grounding_score,error_category,resolution_source
+PKG002,AuraGlow Herbal Face Wash,BATCH_NUMBER,AG-881,ag-881,AG-881,ag-881,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,BRAND,,,Auraglow Herbal Face Wash,auraglow herbal face wash,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR_LAYOUT
+PKG002,AuraGlow Herbal Face Wash,CONSUMER_CARE,feedback@auraglow.in,feedback@auraglow.in,feedback@auraglow.in,feedback@auraglow.in,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,COUNTRY_OF_ORIGIN,,,India,india,False,True,False,False,True,,,0.0,GROUNDING_FALSE_ACCEPT,OCR
+PKG002,AuraGlow Herbal Face Wash,DECLARED_NET_QUANTITY,150 ml,150 ml,150 ml,150 ml,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,EXPIRY_DATE,01/2026,01/2026,01/2026,01/2026,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,GENERIC_NAME,Face Wash,face wash,FACE WASH,face wash,True,True,False,True,True,,,0.0,,OCR_LABEL
+PKG002,AuraGlow Herbal Face Wash,MANUFACTURER_ADDRESS,"Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",survey 18 haridwar industrial estate haridwar uttarakhand 249403,"At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",survey 18 haridwar industrial estate haridwar uttarakhand 249403,True,True,False,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MANUFACTURER_NAME,Aura Wellness Cosmetics Pvt Ltd,aura wellness cosmetics pvt ltd,Aura Wellness Cosmetics Pvt Ltd,aura wellness cosmetics pvt ltd,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MONTH_YEAR_MANUFACTURE,02/2024,02/2024,02/2024,02/2024,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,MRP,₹199.00,199.00,₹199.00,199.00,True,True,True,True,True,,,0.0,,OCR
+PKG002,AuraGlow Herbal Face Wash,PRODUCT_NAME,AuraGlow Herbal Face Wash,auraglow herbal face wash,Cosmetic For external use only,cosmetic for external use only,True,True,False,False,True,,,0.0,DETERMINISTIC_EXTRACTION_ERROR,OCR

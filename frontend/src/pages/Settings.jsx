@@ -52,7 +52,7 @@ const Settings = () => {
       {/* Header */}
       <div className="settings-header">
         <div>
-          <h2 className="settings-title">Inspector Profile & Workstation Settings</h2>
+          <h2 className="settings-title">Workstation Settings</h2>
           <p className="settings-subtitle">
             Configure local workstation identity, examine backend engine diagnostics, and review regulatory parameters.
           </p>
@@ -60,12 +60,12 @@ const Settings = () => {
       </div>
 
       <div className="settings-grid">
-        {/* User / Inspector Profile Card */}
+        {/* Workspace Profile Card */}
         <div className="card settings-card">
           <div className="card-header flex-between">
             <div className="flex items-center gap-2">
               <User size={18} className="text-primary" />
-              <span>Inspector / Workstation Profile</span>
+              <span>Workspace Profile</span>
             </div>
             <button
               type="button"
@@ -82,7 +82,7 @@ const Settings = () => {
             {isEditingProfile ? (
               <form onSubmit={handleSaveProfile} className="profile-edit-form">
                 <div className="form-group mb-2">
-                  <label className="form-label text-xs">Inspector / User Name</label>
+                  <label className="form-label text-xs">Workspace User Name</label>
                   <input
                     type="text"
                     className="form-control"
@@ -132,7 +132,7 @@ const Settings = () => {
             ) : (
               <div className="profile-detail-rows">
                 <div className="profile-row">
-                  <span className="p-label">Inspector / User:</span>
+                  <span className="p-label">Workspace User:</span>
                   <span className="p-val font-semibold">{profile.name}</span>
                 </div>
                 <div className="profile-row">

@@ -13,9 +13,7 @@ Verifies all 18 required scenarios:
  10. Food vs non-food date marking statutory source
  11. FSSAI licence source & label presence vs FoSCoS lookup distinction
  12. Veg / non-veg symbol candidate vs legal compliance
- 13. Font size source (Rule 7) & screening limitation statement
- 14. Physical net-content source (Act Sec 18, Sched II/III, no Rule 24 weighing claim)
- 15. Internal / non-statutory field handling
+ 13. Internal / non-statutory field handling
  16. Verification-status handling across rule matrix
  17. Effective-date handling
  18. Historical regulatory version preservation
@@ -24,11 +22,7 @@ import json
 import pytest
 from app.rules.applicability import get_applicable_rules
 from app.rules.rule_engine import evaluate_rules
-from app.rules.validators import (
-    validate_font_size_check,
-    validate_physical_weight_check,
-    dispatch_validator,
-)
+from app.rules.validators import dispatch_validator
 from app.database.connection import SessionLocal, init_db
 from app.database import models
 
@@ -55,7 +49,6 @@ def test_01_retail_package_applicability(rules_list):
         package_type='RETAIL',
         import_status='DOMESTIC',
         product_type='OTHER_FOOD',
-        has_physical_data=False,
     )
     app_ids = {r['rule_id'] for r in applicable}
 
@@ -76,7 +69,6 @@ def test_02_wholesale_package_applicability(rules_list):
         package_type='WHOLESALE',
         import_status='DOMESTIC',
         product_type='ALL',
-        has_physical_data=False,
     )
     app_ids = {r['rule_id'] for r in applicable}
 
@@ -105,7 +97,6 @@ def test_03_industrial_institutional_package_applicability(rules_list):
             package_type=pkg_type,
             import_status='DOMESTIC',
             product_type='ALL',
-            has_physical_data=False,
         )
         app_ids = {r['rule_id'] for r in applicable}
         assert 'PC-ALL-003' not in app_ids, f"MRP must be excluded for {pkg_type} packages"
@@ -143,18 +134,18 @@ def test_05_unit_sale_price_wholesale_non_applicability(rules_list):
 
 
 # ==============================================================================
-# 6. Generic name (PC-ALL-010) vs Internal Product name (PC-ALL-001)
+# 6. Generic name (PC-ALL-010) vs automatic product name screening (PC-ALL-001)
 # ==============================================================================
 def test_06_generic_name_vs_internal_product_name(rules_list):
-    """Verify PRODUCT_NAME is non-statutory while GENERIC_NAME is statutory Rule 6(1)(b) / 24(b)."""
+    """Verify PRODUCT_NAME uses automatic image screening while GENERIC_NAME is statutory Rule 6(1)(b) / 24(b)."""
     p_name = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-001')
     g_name = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-010')
 
-    # PC-ALL-001: Internal / Non-Statutory
-    assert p_name['regulatory_source'] == 'INTERNAL_INSPECTION'
-    assert p_name['rule_reference_status'] == 'NON_STATUTORY'
-    assert p_name['verification_status'] == 'NON_STATUTORY'
-    assert 'INTERNAL' in p_name['rule_reference']
+    # PC-ALL-001: Automatic image screening
+    assert p_name['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
+    assert p_name['rule_reference_status'] == 'SOURCE_IDENTIFIED'
+    assert p_name['verification_status'] == 'SOURCE_IDENTIFIED'
+    assert 'AUTOMATIC_IMAGE_SCREENING' in p_name['rule_reference']
     assert 'Rule 6(1)(b)' not in p_name['rule_reference'], "PRODUCT_NAME must not cite Rule 6(1)(b)"
 
     # PC-ALL-010: Statutory Rule 6(1)(b) [Retail] & Rule 24(b) [Wholesale]
@@ -249,59 +240,18 @@ def test_12_veg_non_veg_symbol_statutory_source(rules_list):
 
 
 # ==============================================================================
-# 13. Font size source (Rule 7) & screening limitation statement
+# ===============================================================================
+# 13. Automatic product identity field handling
 # ==============================================================================
-def test_13_font_size_source_and_screening_limitation(rules_list):
-    """Verify Rule 7 font size rule and visual screening limitation phrase."""
-    font_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-013')
-    assert 'Rule 7(3)' in font_rule['rule_reference']
-    assert 'Table-I' in font_rule['rule_reference']
-    assert 'Table-II' in font_rule['rule_reference']
-
-    # Test validator without physical measurement
-    res = validate_font_size_check(evidence=None, rule=font_rule, all_fields={})
-    assert res.status == 'NOT_VERIFIABLE'
-    expected_statement = "VISUAL SCREENING CANNOT CONFIRM PHYSICAL MILLIMETRE HEIGHT: Physical measurement using calibrated gauge or caliper under Rule 7 Table-I/II is required."
-    assert res.reason == expected_statement
-
-
-# ==============================================================================
-# 14. Physical net-content source (Act Sec 18, Sched II/III, no Rule 24 weighing claim)
-# ==============================================================================
-def test_14_physical_net_content_source_no_rule_24(rules_list):
-    """Verify PC-ALL-012 cites Section 18, Rule 14 (Sched II), Rule 19 (Sched III), and NOT Rule 24."""
-    net_phys_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-012')
-    ref = net_phys_rule['rule_reference']
-    assert 'Section 18' in ref or 'Sec 18' in ref
-    assert 'Rule 14' in ref
-    assert 'Sched II' in ref or 'Second Schedule' in net_phys_rule['citation_text']
-    assert 'Rule 19' in ref
-    assert 'Sched III' in ref or 'Third Schedule' in net_phys_rule['citation_text']
-
-    # Crucial negative check: Rule 24 must NOT be cited as governing physical weighing
-    assert 'Rule 24' not in ref
-    assert 'Rule 24' not in net_phys_rule['citation']
-    assert 'Rule 24 does NOT govern physical weighing' in net_phys_rule['exception']
-
-    # Test validator without physical measurement
-    res = validate_physical_weight_check(evidence=None, rule=net_phys_rule, all_fields={})
-    assert res.status == 'NOT_VERIFIABLE'
-    assert 'Physical verification is required' in res.reason
-    assert 'Rule 24' not in res.reason
-
-
-# ==============================================================================
-# 15. Internal / non-statutory field handling
-# ==============================================================================
-def test_15_internal_non_statutory_field_handling(rules_list):
-    """Verify internal inspection fields are clearly identified with NON_STATUTORY verification status."""
-    internal_rules = [r for r in rules_list if r['rule_id'] == 'PC-ALL-001']
-    assert len(internal_rules) == 1
-    r = internal_rules[0]
-    assert r['verification_status'] == 'NON_STATUTORY'
-    assert r['rule_reference_status'] == 'NON_STATUTORY'
-    assert r['regulatory_source'] == 'INTERNAL_INSPECTION'
-    assert r['instrument'] == 'Internal Inspection Protocol'
+def test_15_automatic_product_identity_field_handling(rules_list):
+    """Verify product identity uses automatic package-image metadata."""
+    product_rules = [r for r in rules_list if r['rule_id'] == 'PC-ALL-001']
+    assert len(product_rules) == 1
+    r = product_rules[0]
+    assert r['verification_status'] == 'SOURCE_IDENTIFIED'
+    assert r['rule_reference_status'] == 'SOURCE_IDENTIFIED'
+    assert r['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
+    assert r['instrument'] == 'Automatic Package Image Screening'
 
 
 # ==============================================================================
@@ -320,7 +270,6 @@ def test_16_verification_status_handling_across_all_rules(rules_list):
         assert r.get('instrument') is not None, f"Rule {r['rule_id']} missing instrument"
         assert r.get('citation') is not None, f"Rule {r['rule_id']} missing citation"
         assert r.get('screening_scope') is not None, f"Rule {r['rule_id']} missing screening_scope"
-        assert r.get('physical_scope') is not None, f"Rule {r['rule_id']} missing physical_scope"
 
 
 # ==============================================================================
@@ -363,7 +312,6 @@ def test_18_historical_regulatory_version_preservation(rule_matrix_data, rules_l
         package_type='RETAIL',
         import_status='DOMESTIC',
         product_type='OTHER_FOOD',
-        has_physical_data=False,
     )
     # Run evaluate_rules and verify every result retains traceability metadata
     results, overall = evaluate_rules(
@@ -562,24 +510,4 @@ def test_21_status_safety_metadata_enforcement():
 
 
 # ==============================================================================
-# 22. Physical measurement source differentiation (Act Sec 18 vs Rule 24)
-# ==============================================================================
-def test_22_physical_measurement_source_differentiation(rules_list):
-    """
-    Verify DECLARED_NET_QUANTITY (visual label screening) and ACTUAL_NET_CONTENT (physical weighing)
-    have separate, accurate statutory citations, and Rule 24 is never cited for physical weighing.
-    """
-    decl_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-002')
-    actual_rule = next(r for r in rules_list if r['rule_id'] == 'PC-ALL-012')
-
-    # Visual declared quantity
-    assert 'Rule 6(1)(c)' in decl_rule['rule_reference']
-    assert decl_rule['screening_scope'] is not None and ('Optical' in decl_rule['screening_scope'] or 'VISUAL' in decl_rule['screening_scope'])
-
-    # Physical weighing
-    assert 'Sec 18' in actual_rule['citation'] or 'Section 18' in actual_rule['citation']
-    assert any(s in actual_rule['citation'] for s in ('Sched III', 'Third Schedule', 'Sched II', 'Second Schedule'))
-    assert actual_rule['physical_scope'] is not None and any(w in actual_rule['physical_scope'].lower() for w in ('gravimetric', 'calibrated', 'scale', 'physical'))
-    assert 'Rule 24' not in actual_rule['citation']
-    assert 'Rule 24' not in actual_rule['rule_reference']
 

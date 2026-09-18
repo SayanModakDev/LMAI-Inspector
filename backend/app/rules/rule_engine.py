@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.database.connection import SessionLocal
-from app.database.models import Rule
+from app.database.models import Rule, RuleResult
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -74,11 +74,25 @@ def sync_rules_to_db() -> None:
                 db_rule.publication_date = r_data.get('publication_date')
                 db_rule.applicability = r_data.get('applicability')
                 db_rule.screening_scope = r_data.get('screening_scope')
-                db_rule.physical_scope = r_data.get('physical_scope')
                 db_rule.notes = r_data.get('notes') or r_data.get('exception')
                 db_rule.detection_method = r_data.get('detection_method')
                 db_rule.visual_or_text = r_data.get('visual_or_text', 'TEXT')
                 db_rule.is_active = True
+
+            active_rule_ids = {r.get('rule_id') for r in json_rules if r.get('rule_id')}
+            stale_rule_ids = {
+                rule_id
+                for (rule_id,) in db.query(Rule.rule_id).filter(
+                    ~Rule.rule_id.in_(active_rule_ids)
+                ).all()
+            }
+            db.query(Rule).filter(~Rule.rule_id.in_(active_rule_ids)).update(
+                {Rule.is_active: False}, synchronize_session=False
+            )
+            if stale_rule_ids:
+                db.query(RuleResult).filter(
+                    RuleResult.rule_id.in_(stale_rule_ids)
+                ).delete(synchronize_session=False)
 
             db.commit()
             logger.info(f"Successfully synced {len(json_rules)} rules to database.")
@@ -141,26 +155,6 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
     }
 
 
-def _is_physical_verification_rule(r: Any) -> bool:
-    """Check if a rule represents physical inspection / caliper measurement rather than image-based declaration check."""
-    rule_id = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
-    parameter = getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else None)
-    v_type = getattr(r, 'verification_type', None) or (r.get('verification_type') if isinstance(r, dict) else None)
-    ev_data = getattr(r, 'evidence_data', None) or (r.get('evidence_data') if isinstance(r, dict) else None) or {}
-
-    if rule_id in ('PC-ALL-012', 'PC-ALL-013'):
-        return True
-    if parameter in ('ACTUAL_NET_CONTENT', 'FONT_SIZE_COMPLIANCE'):
-        return True
-    if v_type in ('PHYSICAL_VERIFICATION_REQUIRED', 'PHYSICAL_INSPECTION', 'MANUAL_MEASUREMENT'):
-        return True
-    if isinstance(ev_data, dict):
-        if ev_data.get('verification_type') in ('PHYSICAL_VERIFICATION_REQUIRED', 'PHYSICAL_INSPECTION', 'MANUAL_MEASUREMENT'):
-            return True
-
-    return False
-
-
 def _is_uncontradicted_visual_candidate(r: Any) -> bool:
     """Check if a rule is a visual candidate (e.g. VEG_NONVEG_SYMBOL) that was detected without contradiction."""
     rule_id = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
@@ -201,17 +195,12 @@ def _is_blocking_for_automated_screening(r: Any) -> bool:
     if status not in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
         return False
 
-    # 1. Physical-only requirements (e.g., actual gross/net weight on scale, physical font height in mm)
-    # do NOT block automated image screening from reaching COMPLIANT.
-    if _is_physical_verification_rule(r):
-        return False
-
-    # 2. Visual candidate detected without contradiction (e.g. FSSAI veg symbol identified on food panel)
-    # is a non-blocking visual observation pending physical verification.
+    # Visual candidate detected without contradiction (e.g. FSSAI veg symbol identified on food panel)
+    # is a non-blocking visual observation pending additional image evidence.
     if _is_uncontradicted_visual_candidate(r):
         return False
 
-    # 3. Optional rule not required
+    # Optional rule not required
     required = getattr(r, 'required', None)
     if required is None and isinstance(r, dict):
         required = r.get('required')
@@ -227,8 +216,8 @@ def derive_overall_result(rule_results: List[Any]) -> str:
 
     Priority Logic:
     1. Deterministic FAIL -> NON_COMPLIANT
-    2. Blocking unresolved critical conflict or missing mandatory declaration -> NOT_VERIFIABLE (REQUIRES REVIEW)
-    3. All image-verifiable requirements pass and remaining unresolved items are physical verification
+    2. Blocking unresolved critical conflict or missing mandatory declaration -> NOT_VERIFIABLE
+    3. All image-detectable requirements pass and remaining unresolved items are non-blocking observations
        or non-blocking visual candidates -> COMPLIANT
     """
     from app.core.constants import InspectionStatus
@@ -343,7 +332,6 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'source_document': rule.get('source_document'),
             'source_url': rule.get('source_url') or rule.get('source_link'),
             'screening_scope': rule.get('screening_scope'),
-            'physical_scope': rule.get('physical_scope'),
             'notes': rule.get('notes') or rule.get('exception'),
             'review_required': (
                 status in ['FAIL', 'NOT_VERIFIABLE']
@@ -393,7 +381,7 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
 
 
 def build_inspection_findings(rule_results: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-    """Create a concise, evidence-backed inspector summary for UI and PDF."""
+    """Create a concise, evidence-backed summary for UI and PDF."""
     verified, review, failed = [], [], []
     for result in rule_results:
         parameter = str(result.get('parameter', '')).replace('_', ' ').title()
@@ -402,7 +390,7 @@ def build_inspection_findings(rule_results: List[Dict[str, Any]]) -> Dict[str, L
         elif result.get('status') == 'FAIL':
             failed.append(f"{parameter}: {result.get('message', 'not satisfied')}")
         elif result.get('status') == 'NOT_VERIFIABLE':
-            review.append(f"{parameter}: {result.get('message', 'requires review')}")
+            review.append(f"{parameter}: {result.get('message', 'NOT DETECTED')}")
     return {'verified': verified, 'needs_review': review, 'failed': failed}
 
 

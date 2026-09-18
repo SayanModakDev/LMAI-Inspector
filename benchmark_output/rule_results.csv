@@ -1,0 +1,16 @@
+case_id,rule_id,parameter,expected_status,predicted_status,match,is_physical,is_blocking,error_category,reason
+PKG002,PC-ALL-001,PRODUCT_NAME,PASS,PASS,True,False,False,,Detected in OCR evidence: Cosmetic For external use only
+PKG002,PC-ALL-002,DECLARED_NET_QUANTITY,PASS,PASS,True,False,False,,Valid declared quantity and unit
+PKG002,PC-ALL-003,MRP,PASS,PASS,True,False,False,,Detected valid MRP declaration: ₹199.00
+PKG002,PC-ALL-004,MANUFACTURER_NAME,PASS,PASS,True,False,False,,Detected manufacturer declaration: Aura Wellness Cosmetics Pvt Ltd
+PKG002,PC-ALL-005,MANUFACTURER_ADDRESS,PASS,PASS,True,False,False,,"Detected address declaration: At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403"
+PKG002,PC-ALL-008,CONSUMER_CARE,,PASS,False,False,False,,Detected consumer care contact details (email (feedback@auraglow.in)): feedback@auraglow.in
+PKG002,PC-ALL-009,MONTH_YEAR_MANUFACTURE,,PASS,False,False,False,,Detected valid manufacture/packing date: 02/2024
+PKG002,PC-ALL-010,GENERIC_NAME,,PASS,False,False,False,,Detected in OCR evidence: FACE WASH
+PKG002,PC-ALL-011,UNIT_SALE_PRICE,,NOT_APPLICABLE,False,False,False,,Optional declaration 'UNIT_SALE_PRICE' not identified and not required for this context.
+PKG002,PC-ALL-012,ACTUAL_NET_CONTENT,,NOT_VERIFIABLE,False,False,True,,Physical net content verification requires direct gravimetric/volumetric measurement using calibrated apparatus under Rule 19 & Third Schedule. No physical measurement evidence provided.
+PKG002,PC-ALL-013,FONT_SIZE_COMPLIANCE,,NOT_VERIFIABLE,False,False,True,,Visual screening cannot confirm physical millimetre height without calibrated optics and physical scale reference. Physical measurement of numeral and letter height in millimeters using calibrated gauge or caliper under Rule 7 Table-I/II required.
+PKG002,PC-COSM-001,BATCH_NUMBER,,PASS,False,False,False,,Detected batch/lot number: AG-881
+PKG002,PC-COSM-002,INGREDIENTS_LIST,,NOT_VERIFIABLE,False,False,True,,Required declaration 'INGREDIENTS_LIST' was not detected in the available OCR evidence.
+PKG002,PC-COSM-003,USE_BEFORE_DATE,,PASS,False,False,False,,Detected valid expiry / use-before date: 01/2026
+PKG002,PC-FOOD-001,,NOT_APPLICABLE,NOT_APPLICABLE,True,False,False,,

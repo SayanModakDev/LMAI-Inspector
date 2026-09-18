@@ -6,7 +6,7 @@ manufacturer details) from national registries or previous verified inspections.
 
 CRITICAL STATUTORY BOUNDARY:
 A reference product match is supporting evidence ONLY. It must NEVER produce an
-automatic statutory PASS, waive mandatory declarations, or replace inspector physical verification.
+automatic statutory PASS, or waive mandatory declarations.
 """
 
 from dataclasses import dataclass, asdict

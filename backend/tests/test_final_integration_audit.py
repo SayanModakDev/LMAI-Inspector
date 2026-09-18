@@ -69,7 +69,6 @@ def test_acceptance_test_a_compliant_label(db_session):
         product_type="PREPACKAGED_FOOD",
         package_type="RETAIL",
         import_status="DOMESTIC",
-        has_physical_data=True,  # Providing physical measurement so all rules are verifiable
     )
 
     extracted_fields = {
@@ -87,8 +86,6 @@ def test_acceptance_test_a_compliant_label(db_session):
         "NUTRITIONAL_INFO": {"value": "Per 100g: Energy 400 kcal, Carbohydrates 99.8g", "confidence": 0.95, "source": "OCR"},
         "FSSAI_LICENSE": {"value": "10014011002345", "confidence": 0.95, "source": "OCR"},
         "VEG_NONVEG_SYMBOL": {"value": "100% Vegetarian", "confidence": 0.95, "source": "OCR"},
-        "ACTUAL_NET_CONTENT": {"value": "500 g", "confidence": 1.0, "source": "MANUAL"},
-        "FONT_SIZE_COMPLIANCE": {"value": "Pass - 4mm height", "confidence": 1.0, "source": "MANUAL"},
     }
 
     results, overall = evaluate_rules(applicable, extracted_fields)

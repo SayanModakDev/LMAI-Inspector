@@ -1,0 +1,5 @@
+case_id,product_name,image_count,expected_category,predicted_category,expected_package_type,predicted_package_type,expected_overall,predicted_overall,overall_match,clean_inspection,review_required,total_ms
+PKG001,NutriOats Digestive Cookies,2,FOOD,FOOD,RETAIL,RETAIL,COMPLIANT,NOT_VERIFIABLE,False,False,True,52
+PKG002,AuraGlow Herbal Face Wash,2,COSMETIC,COSMETIC,RETAIL,RETAIL,COMPLIANT,NOT_VERIFIABLE,False,False,True,45
+PKG003,Himalayan Pink Rock Salt,1,FOOD,FOOD,RETAIL,RETAIL,NON_COMPLIANT,NON_COMPLIANT,True,False,True,38
+PKG004,Crystal Sugar Grade M Bulk Sack,1,FOOD,FOOD,WHOLESALE,WHOLESALE,COMPLIANT,NOT_VERIFIABLE,False,False,True,37
