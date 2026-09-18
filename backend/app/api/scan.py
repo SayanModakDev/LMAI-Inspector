@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.classification.category_classifier import classify_category
+from app.classification.category_classifier import classify_category, CATEGORY_VOCABULARY
 from app.classification.package_context import detect_package_context
 from app.core.config import get_settings
 from app.database import models, schemas
@@ -28,6 +28,7 @@ from app.utils.helpers import (
 from app.barcode_decoder import decode_barcodes, lookup_barcode
 from app.visual_detection import detect_food_symbol
 from app.utils.memory import log_memory_checkpoint, force_garbage_collection
+from app.llm.evidence_resolver import resolve_evidence_with_gemini
 
 router = APIRouter()
 settings = get_settings()
@@ -229,18 +230,24 @@ async def perform_scan(
         log_memory_checkpoint("RSS after semantic extraction")
 
         # Gemini-powered LLM Semantic Evidence Extraction & Resolution Layer
-        from app.llm.evidence_resolver import resolve_evidence_with_gemini
         gemini_started = time.perf_counter()
         gemini_metadata = {}
         analysis_source = "OCR + Deterministic Extraction"
         llm_pkg_context = None
+        llm_pkg_context_data = {}
         try:
             extracted_fields, gemini_metadata, llm_pkg_context = resolve_evidence_with_gemini(
                 ocr_items=ocr_items,
                 raw_text=raw_text,
                 image_count=len(original_paths),
+                num_images=len(original_paths),
                 deterministic_fields=extracted_fields,
                 barcode_result=barcode_result,
+            )
+            llm_pkg_context_data = (
+                llm_pkg_context.model_dump(mode="json", exclude_none=True)
+                if llm_pkg_context is not None and hasattr(llm_pkg_context, "model_dump")
+                else (dict(llm_pkg_context) if isinstance(llm_pkg_context, dict) else {})
             )
             llm_status = gemini_metadata.get("llm_status")
             if llm_status == "SUCCESS":
@@ -254,6 +261,7 @@ async def perform_scan(
             gemini_metadata = {"llm_status": "ERROR", "error": str(gem_exc)}
             analysis_source = "OCR + Deterministic Extraction (Gemini fallback)"
             llm_pkg_context = None
+            llm_pkg_context_data = {}
 
         gemini_total_ms = round((time.perf_counter() - gemini_started) * 1000)
         timings['gemini_total_ms'] = gemini_total_ms
@@ -264,11 +272,15 @@ async def perform_scan(
                 timings['gemini_grounding_ms'] = gemini_metadata['grounding_validation_ms']
 
         package_context = detect_package_context(raw_text, extracted_fields)
-        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and llm_pkg_context:
-            if package_context.get('package_type') == 'NOT_DETECTED' and llm_pkg_context.get('package_type') in ('RETAIL', 'WHOLESALE'):
-                package_context['package_type'] = llm_pkg_context['package_type']
-            if package_context.get('import_status') == 'NOT_DETECTED' and llm_pkg_context.get('import_status') in ('DOMESTIC', 'IMPORTED'):
-                package_context['import_status'] = llm_pkg_context['import_status']
+        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and llm_pkg_context_data:
+            llm_pkg_type = llm_pkg_context_data.get('package_type')
+            if package_context.get('package_type') == 'NOT_DETECTED' and llm_pkg_type in ('RETAIL', 'WHOLESALE'):
+                package_context['package_type'] = llm_pkg_type
+
+            llm_import_status = llm_pkg_context_data.get('import_status')
+            if package_context.get('import_status') == 'NOT_DETECTED' and llm_import_status in ('DOMESTIC', 'IMPORTED'):
+                package_context['import_status'] = llm_import_status
+
         package_type = package_context['package_type']
         import_status = package_context['import_status']
         timings['package_context'] = package_context
@@ -277,9 +289,12 @@ async def perform_scan(
         classification = classify_category(raw_text, extracted_fields, settings.CATEGORY_CONFIDENCE_THRESHOLD)
         category = classification.get('category', 'UNKNOWN')
         cat_confidence = classification.get('confidence', 0.0)
-        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and category == 'UNKNOWN' and llm_pkg_context and llm_pkg_context.get('category') in ('FOOD', 'COSMETIC'):
-            category = llm_pkg_context['category']
-            cat_confidence = 0.85
+        supported_categories = set(CATEGORY_VOCABULARY.keys())
+        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and category == 'UNKNOWN' and llm_pkg_context_data:
+            llm_cat = llm_pkg_context_data.get('category')
+            if llm_cat and llm_cat in supported_categories:
+                category = llm_cat
+                cat_confidence = float(llm_pkg_context_data.get('confidence') or 0.85)
         product_type = classification.get('product_type') or extracted_fields.get('PRODUCT_TYPE', {}).get('value', 'UNKNOWN')
 
         # Reference Product Registry matching (Supporting evidence only — does not alter statutory compliance)

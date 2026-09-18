@@ -22,10 +22,115 @@ def _normalize_alphanumeric(text: str) -> str:
     return re.sub(r'[^a-zA-Z0-9]+', '', (text or '').lower())
 
 
+def _is_date_expansion_derivable(value: str, raw_text: str) -> bool:
+    """
+    Narrow deterministic date-normalization derivation rule allowing:
+    MM/YY -> MM/YYYY (as well as DD/MM/YY -> DD/MM/YYYY, or ISO date variants)
+    only when:
+    - Month is valid 01-12
+    - The two-digit year is actually present in the OCR evidence
+    - Normalized month is identical
+    - Normalized year is a deterministic expansion of the OCR year (e.g. 20YY or 19YY)
+    - No arbitrary date value is introduced.
+    """
+    if not value or not raw_text:
+        return False
+
+    # Extract candidate dates from normalized value (requiring a 4-digit year 19xx/20xx)
+    val_dates = []
+
+    # 1. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    for m in re.finditer(r'(?<!\d)([0-2]?[1-9]|3[01])[\/\-\.](0?[1-9]|1[0-2])[\/\-\.]((?:19|20)\d{2})(?!\d)', value):
+        val_dates.append({
+            "day": int(m.group(1)),
+            "month": int(m.group(2)),
+            "year": int(m.group(3)),
+        })
+
+    # 2. MM/YYYY or MM-YYYY or MM.YYYY (only if not preceded by a day)
+    for m in re.finditer(r'(?<!\d)(0?[1-9]|1[0-2])[\/\-\.]((?:19|20)\d{2})(?!\d)', value):
+        m_val = int(m.group(1))
+        y_val = int(m.group(2))
+        if not any(vd["month"] == m_val and vd["year"] == y_val for vd in val_dates):
+            val_dates.append({
+                "day": None,
+                "month": m_val,
+                "year": y_val,
+            })
+
+    # 3. YYYY-MM-DD or YYYY/MM/DD
+    for m in re.finditer(r'(?<!\d)((?:19|20)\d{2})[\/\-\.](0?[1-9]|1[0-2])[\/\-\.]([0-2]?[1-9]|3[01])(?!\d)', value):
+        val_dates.append({
+            "day": int(m.group(3)),
+            "month": int(m.group(2)),
+            "year": int(m.group(1)),
+        })
+
+    # 4. YYYY-MM or YYYY/MM
+    for m in re.finditer(r'(?<!\d)((?:19|20)\d{2})[\/\-\.](0?[1-9]|1[0-2])(?!\d)', value):
+        m_val = int(m.group(2))
+        y_val = int(m.group(1))
+        if not any(vd["month"] == m_val and vd["year"] == y_val for vd in val_dates):
+            val_dates.append({
+                "day": None,
+                "month": m_val,
+                "year": y_val,
+            })
+
+    if not val_dates:
+        return False
+
+    # Extract candidate 2-digit-year dates from raw_text
+    # Common separators: / - .
+    raw_dates = []
+
+    # 1. DD/MM/YY
+    for m in re.finditer(r'(?<!\d)([0-2]?[1-9]|3[01])[\/\-\.](0?[1-9]|1[0-2])[\/\-\.]([0-9]{2})(?!\d)', raw_text):
+        raw_dates.append({
+            "day": int(m.group(1)),
+            "month": int(m.group(2)),
+            "yy": int(m.group(3)),
+        })
+
+    # 2. MM/YY e.g. 05/26, 04/28, 05-26, 05.26
+    for m in re.finditer(r'(?<!\d)(0?[1-9]|1[0-2])[\/\-\.]([0-9]{2})(?!\d)', raw_text):
+        m_raw = int(m.group(1))
+        yy_raw = int(m.group(2))
+        if not any(rd["month"] == m_raw and rd["yy"] == yy_raw for rd in raw_dates):
+            raw_dates.append({
+                "day": None,
+                "month": m_raw,
+                "yy": yy_raw,
+            })
+
+    if not raw_dates:
+        return False
+
+    for vd in val_dates:
+        for rd in raw_dates:
+            # Month must be valid 01-12 and identical
+            if not (1 <= vd["month"] <= 12 and 1 <= rd["month"] <= 12):
+                continue
+            if vd["month"] != rd["month"]:
+                continue
+
+            # If both have a day specified, day must be identical
+            if vd["day"] is not None and rd["day"] is not None and vd["day"] != rd["day"]:
+                continue
+
+            # Normalized year must be a deterministic expansion of the 2-digit OCR year
+            expected_20xx = 2000 + rd["yy"]
+            expected_19xx = 1900 + rd["yy"]
+            if vd["year"] in (expected_20xx, expected_19xx):
+                return True
+
+    return False
+
+
 def _is_value_derivable_from_text(value: str, raw_text: str) -> bool:
     """
     Check if an extracted/normalized value can reasonably be derived from the raw source text.
-    Handles unit abbreviations, currency signs, spacing, and numbers.
+    Handles unit abbreviations, currency signs, spacing, numbers, and deterministic date expansions.
     """
     if not value or not raw_text:
         return False
@@ -55,6 +160,10 @@ def _is_value_derivable_from_text(value: str, raw_text: str) -> bool:
     val_digits = re.findall(r'\d+', value)
     raw_digits = re.findall(r'\d+', raw_text)
     if val_digits and all(d in raw_text for d in val_digits):
+        return True
+
+    # 4. Narrow deterministic date expansion (e.g. MM/YY in OCR normalized to MM/YYYY)
+    if _is_date_expansion_derivable(value, raw_text):
         return True
 
     return False

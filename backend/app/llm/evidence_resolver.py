@@ -142,10 +142,12 @@ INSTRUCTIONS FOR EVIDENCE RESOLUTION:
 def resolve_evidence_with_gemini(
     ocr_items: List[Dict[str, Any]],
     raw_text: str,
-    num_images: int,
-    deterministic_fields: Dict[str, Any],
+    num_images: Optional[int] = None,
+    deterministic_fields: Optional[Dict[str, Any]] = None,
     barcode_result: Optional[Dict[str, Any]] = None,
     client: Optional[GeminiClient] = None,
+    image_count: Optional[int] = None,
+    **kwargs: Any,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[PackageContext]]:
     """
     Main entry point for Gemini Semantic Evidence Resolution.
@@ -160,6 +162,9 @@ def resolve_evidence_with_gemini(
     """
     settings = get_settings()
     gemini_client = client or GeminiClient()
+
+    total_images = num_images if num_images is not None else (image_count if image_count is not None else 1)
+    deterministic_fields = deterministic_fields or {}
 
     timing_start = time.perf_counter()
     llm_metadata: Dict[str, Any] = {
@@ -186,7 +191,7 @@ def resolve_evidence_with_gemini(
     prompt = build_evidence_resolver_prompt(
         ocr_items=ocr_items,
         raw_text=raw_text,
-        num_images=num_images,
+        num_images=total_images,
         deterministic_fields=deterministic_fields,
         barcode_result=barcode_result,
     )
@@ -203,7 +208,7 @@ def resolve_evidence_with_gemini(
     grounding_start = time.perf_counter()
     validator = EvidenceGroundingValidator(
         ocr_items=ocr_items,
-        num_images=num_images,
+        num_images=total_images,
         min_confidence=settings.GEMINI_MIN_CONFIDENCE,
     )
     validated_result, grounding_audit = validator.validate_extraction_result(llm_result)
