@@ -591,8 +591,9 @@ def _is_instructional_label_line(line: str) -> bool:
     lowered = str(line or '').strip().lower()
     return bool(
         re.search(r'^for\s+(?:mrp|manufactured\s+by|packed\s+by)', lowered)
-        or re.search(r'\b(?:mm/yy|expiry\s+date)\b', lowered)
-        or re.search(r'\b(?:batch\s+no\.?|mfd\.?\s*date)\b.*\b(?:see|below|and)\b', lowered)
+        or re.search(r'\b(?:mm/yy)\b', lowered)
+        or re.search(r'\b(?:batch\s+no\.?|mfd\.?\s*date|expiry\s+date)\b.*\b(?:see|below|and|panel|side|cap|crimp)\b', lowered)
+        or re.search(r'\b(?:see|refer)\b.*\b(?:batch|mfd|expiry|best\s+before)\b', lowered)
         or re.search(r'\b(?:m-him|m-dnh|license|licence|cos/)\b', lowered)
     )
 
@@ -1274,7 +1275,8 @@ def _extract_product_name_candidates(
             1 for other in (ocr_items or [])
             if re.sub(r'[^a-z0-9]+', ' ', str(other.get('text', '')).lower()).strip() == normalized
         )
-        score += min(repeat_count - 1, 3) * 0.7
+        if repeat_count >= 2:
+            score += min(repeat_count - 1, 3) * 0.7
         scored.append((score, line))
 
     if not scored:
@@ -2106,7 +2108,7 @@ def _classify_multi_image_evidence(
                 'source': best.get('source', 'OCR'),
                 'source_image_index': best.get('source_image_index'),
                 'candidates': all_candidates,
-                'review_required': False,
+                'review_required': True,
                 'candidate_classification': 'MULTI_PANEL_EVIDENCE',
                 'evidence_merge_type': 'COMPLEMENTARY',
                 'reason': (
@@ -2124,7 +2126,7 @@ def _classify_multi_image_evidence(
         'confidence': round(highest_conf, 2),
         'source': 'MULTI_IMAGE_CONFLICT',
         'candidates': all_candidates,
-        'review_required': False,
+        'review_required': True,
         'candidate_classification': 'TRUE_CONFLICT',
         'evidence_merge_type': 'TRUE_CONFLICT',
         'conflict_reason': f"Conflicting declarations detected across package views for '{field_name}': {distinct_values}",
@@ -3666,8 +3668,7 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
         if cleaned_after:
             tokens = cleaned_after.split()
             first_token = tokens[0].strip(' ,;:')
-            if (first_token.lower() not in INVALID_BATCH_TOKENS
-                    and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', first_token, re.I)
+            if (first_token.lower().rstrip(':.-') not in INVALID_BATCH_TOKENS
                     and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 4):
                 candidate = first_token
 
@@ -3679,8 +3680,7 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
                 next_tokens = cleaned_next.split()
                 if next_tokens:
                     cand = next_tokens[0].strip(' ,;:')
-                    if (cand.lower() not in INVALID_BATCH_TOKENS
-                            and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', cand, re.I)
+                    if (cand.lower().rstrip(':.-') not in INVALID_BATCH_TOKENS
                             and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 4):
                         candidate = cand
 
@@ -4082,6 +4082,8 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         if 'USE_BEFORE_DATE' not in fields:
             for line in lines:
                 if not re.search(r'\b(?:mfd|mfg|manufactur\w*)\b', line, re.IGNORECASE):
+                    continue
+                if ';' not in line and ' - ' not in line and '–' not in line and '—' not in line:
                     continue
                 date_tokens = []
                 for pattern in DATE_PATTERNS:

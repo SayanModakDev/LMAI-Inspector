@@ -756,12 +756,12 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(extracted_table)
 
     # =========================================================================
-    # PAGE 4: REGULATORY TRACEABILITY & SYSTEM LIMITATIONS
+    # PAGE 4: REGULATORY TRACEABILITY & STATUTORY SIGN-OFF
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("REGULATORY TRACEABILITY & SYSTEM LIMITATIONS", heading_style))
+    story.append(Paragraph("REGULATORY TRACEABILITY & STATUTORY SIGN-OFF", heading_style))
     story.append(Paragraph(
-        "Legal framework references and system operating limitations.",
+        "Legal framework references, statutory sign-off, and system operating limitations.",
         subtitle_style,
     ))
     story.append(Spacer(1, 2 * mm))
@@ -802,11 +802,13 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(trace_table)
     story.append(Spacer(1, 3 * mm))
 
-    # Image-reading limitations only.
+    # System limitations and extraction provenance
     limitations_text = (
-        "<b>Image reading note:</b> The report shows only information read from the package images. "
-        "Unreadable or missing text is marked NOT DETECTED. Results may be limited by blur, glare, "
-        "curved surfaces, or low image quality."
+        "<b>System Limitations:</b> OCR and computer vision screen optical label declarations on package graphics only. "
+        "Evidence extraction: PaddleOCR + Gemini-assisted semantic extraction (or deterministic fallback when offline). "
+        "Compliance evaluation: Deterministic regulatory rule engine. "
+        "Final statutory verification remains subject to authorised inspection where physical measurements or unresolved evidence is required. "
+        "The report shows only information read from the package images. Unreadable or missing text is marked NOT DETECTED."
     )
     limitations_box = Table(
         [[_safe_html_p(limitations_text, small_style)]],

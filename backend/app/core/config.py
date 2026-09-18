@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change-this-to-a-random-secret-key"
 
+    # Gemini LLM Semantic Evidence Resolver
+    GEMINI_ENABLED: bool = True
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_TIMEOUT_SECONDS: int = 20
+    GEMINI_MIN_CONFIDENCE: float = 0.80
+    GEMINI_AUTO_SCOPE: bool = True
+
     # Memory & Concurrency Optimization (Production Stability)
     MAX_OCR_IMAGE_DIMENSION: int = 1536
     MAX_IMAGES_PER_INSPECTION: int = 8
@@ -91,3 +100,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached Settings instance."""
     return Settings()
+
+
+settings = get_settings()

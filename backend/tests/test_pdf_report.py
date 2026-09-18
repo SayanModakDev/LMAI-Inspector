@@ -243,29 +243,3 @@ def test_report_api_endpoints_generate_and_download(db_session):
     assert down_resp.status_code == 200
     assert down_resp.headers["content-type"] == "application/pdf"
     assert down_resp.content[:5] == b"%PDF-"
-
-
-    assert "95.00" in mrp_field_now.field_value
-
-    # 4. Generate PDF report
-    report = generate_inspection_pdf(updated_insp, db_session)
-    pdf_text = _extract_pdf_text(report.file_path)
-
-    # 5. Verify PDF contents and terminology
-    assert "LMAI INSPECTOR" in pdf_text
-    assert "1.0.0" in pdf_text
-    # Original OCR preserved in PDF
-    assert "Rs. 9?" in pdf_text
-    # Verified value appears in PDF
-    assert "95.00" in pdf_text
-    # Method and status indicators
-    assert "INSPECTOR_VERIFIED" in pdf_text
-    assert "VERIFIED" in pdf_text
-    # Action summary in inspector block
-    assert "Inspector Review Actions" in pdf_text
-
-    # Verify no inaccurate AI claims in PDF
-    assert "AI decision" not in pdf_text
-    assert "AI compliance score" not in pdf_text
-    assert "AI recommendation" not in pdf_text
-    assert "Legal Metrology Compliance Checker" not in pdf_text

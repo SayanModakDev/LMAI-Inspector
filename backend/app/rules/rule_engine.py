@@ -189,10 +189,27 @@ def _is_uncontradicted_visual_candidate(r: Any) -> bool:
     return True
 
 
+def _is_physical_verification_rule(r: Any) -> bool:
+    """Check if a rule result represents a physical verification requirement (caliper/scale)."""
+    vtype = getattr(r, 'verification_type', None) or (r.get('verification_type') if isinstance(r, dict) else None)
+    rid = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
+    param = getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else None)
+    return (
+        vtype in ('PHYSICAL_VERIFICATION_REQUIRED', 'PHYSICAL_CHECK')
+        or rid in ('PC-ALL-012', 'PC-ALL-013')
+        or param in ('ACTUAL_NET_CONTENT', 'FONT_SIZE_COMPLIANCE')
+    )
+
+
 def _is_blocking_for_automated_screening(r: Any) -> bool:
     """Determine whether an unresolved rule blocks automated screening compliance."""
     status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
     if status not in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
+        return False
+
+    # Physical verification checks (caliper measurement, physical weighing) cannot be verified
+    # from package images alone and do not block automated optical screening.
+    if _is_physical_verification_rule(r):
         return False
 
     # Visual candidate detected without contradiction (e.g. FSSAI veg symbol identified on food panel)

@@ -51,6 +51,7 @@ def validate_and_enforce_verification_status(rule: Dict[str, Any]) -> str:
     """
     rule_id = str(rule.get("rule_id", "")).upper()
     regulatory_source = str(rule.get("regulatory_source", "")).upper()
+    parameter = str(rule.get("parameter", "")).upper()
 
     # Check presence of mandatory evidentiary fields.
     missing_fields = []
@@ -69,6 +70,12 @@ def validate_and_enforce_verification_status(rule: Dict[str, Any]) -> str:
         if rule.get("source_authority") and (rule.get("source_url") or rule.get("source_document")):
             return "SOURCE_IDENTIFIED"
         return "PENDING_REVIEW"
+
+    # Internal inspection / product name rule must enforce NON_STATUTORY when attempted as statutory
+    if rule_id == "PC-ALL-001" or parameter == "PRODUCT_NAME" or regulatory_source in ("NON_STATUTORY", "INTERNAL_INSPECTION"):
+        if rule.get("verification_status") == "SOURCE_IDENTIFIED" and regulatory_source == "AUTOMATIC_IMAGE_SCREENING":
+            return "SOURCE_IDENTIFIED"
+        return "NON_STATUTORY"
 
     # Check whether application is conditional / exemption-dependent.
     requested_status = rule.get("verification_status") or rule.get("rule_reference_status")

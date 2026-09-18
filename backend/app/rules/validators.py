@@ -255,7 +255,7 @@ def _check_preconditions(
     # 0b. Ambiguous / OCR variation evidence is not detected reliably
     if evidence and evidence.get("status") == "REVIEW":
         review_reason = evidence.get("reason") or (
-            f"Evidence detected for '{parameter}' is ambiguous. "
+            f"Evidence detected for '{parameter}' is ambiguous and requires review. "
             "Declaration not detected reliably from package images."
         )
         return ValidationResult(

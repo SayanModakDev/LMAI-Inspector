@@ -60,6 +60,8 @@ def get_history(
         created_dt = i.created_at
         if created_dt and created_dt.tzinfo is None:
             created_dt = created_dt.replace(tzinfo=timezone.utc)
+        ocr_payload_data = i.ocr_result.ocr_data if i.ocr_result and isinstance(i.ocr_result.ocr_data, dict) else {}
+        analysis_source = ocr_payload_data.get("analysis_source")
         result_summaries.append(
             schemas.InspectionSummary(
                 id=int(i.id),
@@ -76,6 +78,7 @@ def get_history(
                     {"id": i.report.id, "file_name": i.report.file_name}
                     if i.report else None
                 ),
+                analysis_source=analysis_source,
             )
         )
     return result_summaries
@@ -249,8 +252,12 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
     # -----------------------------------------------------------------------
     registry_match = None
     ocr_payload_data = ocr_result.get("ocr_data") if ocr_result else {}
+    analysis_source = None
+    llm_metadata = None
     if isinstance(ocr_payload_data, dict):
         registry_match = ocr_payload_data.get("registry_match")
+        analysis_source = ocr_payload_data.get("analysis_source")
+        llm_metadata = ocr_payload_data.get("llm_metadata")
 
     if not registry_match:
         from app.registry.matcher import match_product
@@ -304,6 +311,8 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         "report": report,
         "findings": build_inspection_findings(rule_results),
         "registry_match": registry_match,
+        "analysis_source": analysis_source,
+        "llm_metadata": llm_metadata,
     }
 
 @router.post("/report/{inspection_id}", response_model=schemas.MessageResponse)

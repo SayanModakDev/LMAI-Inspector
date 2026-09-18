@@ -214,6 +214,9 @@ async def perform_scan(
 
         raw_text = '\n\n'.join(combined_text_parts)
         ocr_items = combined_ocr_items
+        for idx, item in enumerate(ocr_items):
+            item['token_id'] = idx
+
         if barcode_result:
             lookup_started = time.perf_counter()
             barcode_result['lookup'] = lookup_barcode(barcode_result.get('value'))
@@ -225,7 +228,47 @@ async def perform_scan(
         timings['declaration_extraction_ms'] = round((time.perf_counter() - extraction_started) * 1000)
         log_memory_checkpoint("RSS after semantic extraction")
 
+        # Gemini-powered LLM Semantic Evidence Extraction & Resolution Layer
+        from app.llm.evidence_resolver import resolve_evidence_with_gemini
+        gemini_started = time.perf_counter()
+        gemini_metadata = {}
+        analysis_source = "OCR + Deterministic Extraction"
+        llm_pkg_context = None
+        try:
+            extracted_fields, gemini_metadata, llm_pkg_context = resolve_evidence_with_gemini(
+                ocr_items=ocr_items,
+                raw_text=raw_text,
+                image_count=len(original_paths),
+                deterministic_fields=extracted_fields,
+                barcode_result=barcode_result,
+            )
+            llm_status = gemini_metadata.get("llm_status")
+            if llm_status == "SUCCESS":
+                analysis_source = "OCR + Gemini Semantic Extraction"
+            elif llm_status in ("DISABLED", "SKIPPED"):
+                analysis_source = "OCR + Deterministic Extraction"
+            else:
+                analysis_source = "OCR + Deterministic Extraction (Gemini fallback)"
+        except Exception as gem_exc:
+            logger.exception("Error in Gemini resolution layer: %s", gem_exc)
+            gemini_metadata = {"llm_status": "ERROR", "error": str(gem_exc)}
+            analysis_source = "OCR + Deterministic Extraction (Gemini fallback)"
+            llm_pkg_context = None
+
+        gemini_total_ms = round((time.perf_counter() - gemini_started) * 1000)
+        timings['gemini_total_ms'] = gemini_total_ms
+        if gemini_metadata:
+            if 'llm_latency_ms' in gemini_metadata:
+                timings['gemini_latency_ms'] = gemini_metadata['llm_latency_ms']
+            if 'grounding_validation_ms' in gemini_metadata:
+                timings['gemini_grounding_ms'] = gemini_metadata['grounding_validation_ms']
+
         package_context = detect_package_context(raw_text, extracted_fields)
+        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and llm_pkg_context:
+            if package_context.get('package_type') == 'NOT_DETECTED' and llm_pkg_context.get('package_type') in ('RETAIL', 'WHOLESALE'):
+                package_context['package_type'] = llm_pkg_context['package_type']
+            if package_context.get('import_status') == 'NOT_DETECTED' and llm_pkg_context.get('import_status') in ('DOMESTIC', 'IMPORTED'):
+                package_context['import_status'] = llm_pkg_context['import_status']
         package_type = package_context['package_type']
         import_status = package_context['import_status']
         timings['package_context'] = package_context
@@ -234,6 +277,9 @@ async def perform_scan(
         classification = classify_category(raw_text, extracted_fields, settings.CATEGORY_CONFIDENCE_THRESHOLD)
         category = classification.get('category', 'UNKNOWN')
         cat_confidence = classification.get('confidence', 0.0)
+        if getattr(settings, "GEMINI_AUTO_SCOPE", True) and category == 'UNKNOWN' and llm_pkg_context and llm_pkg_context.get('category') in ('FOOD', 'COSMETIC'):
+            category = llm_pkg_context['category']
+            cat_confidence = 0.85
         product_type = classification.get('product_type') or extracted_fields.get('PRODUCT_TYPE', {}).get('value', 'UNKNOWN')
 
         # Reference Product Registry matching (Supporting evidence only — does not alter statutory compliance)
@@ -430,6 +476,8 @@ async def perform_scan(
             "images": image_results,
             "registry_match": reg_match.to_dict(),
             "package_context": package_context,
+            "llm_metadata": gemini_metadata,
+            "analysis_source": analysis_source,
         }
         db_ocr = models.OCRResult(
             inspection_id=db_inspection.id,
@@ -547,6 +595,8 @@ async def perform_scan(
             inspection_date=created_dt,
             regulatory_snapshot=snapshot_meta.get('snapshot_id'),
             regulatory_snapshot_label=snapshot_meta.get('effective_label'),
+            analysis_source=analysis_source,
+            llm_metadata=gemini_metadata,
         )
 
     except MemoryError:

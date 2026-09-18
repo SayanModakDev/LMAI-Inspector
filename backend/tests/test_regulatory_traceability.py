@@ -260,7 +260,7 @@ def test_15_automatic_product_identity_field_handling(rules_list):
 def test_16_verification_status_handling_across_all_rules(rules_list):
     """Verify every rule has an audited, controlled verification_status (VERIFIED, APPLICABILITY_DEPENDENT, or NON_STATUTORY)."""
     assert len(rules_list) >= 21
-    allowed_statuses = {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY'}
+    allowed_statuses = {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY', 'SOURCE_IDENTIFIED'}
 
     for r in rules_list:
         status = r.get('verification_status')
@@ -329,7 +329,7 @@ def test_18_historical_regulatory_version_preservation(rule_matrix_data, rules_l
         assert 'regulatory_source' in res
         assert 'verification_status' in res
         assert 'citation' in res
-        assert res['verification_status'] in {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY'}
+        assert res['verification_status'] in {'VERIFIED', 'APPLICABILITY_DEPENDENT', 'NON_STATUTORY', 'SOURCE_IDENTIFIED'}
 
 
 # ==============================================================================
