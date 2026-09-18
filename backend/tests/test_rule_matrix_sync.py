@@ -1,0 +1,199 @@
+"""Automated tests for rule matrix structure, metadata fidelity, and database synchronization."""
+import json
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.database.connection import SessionLocal, init_db
+from app.database import models
+from app.rules.rule_engine import sync_rules_to_db
+from app.rules.applicability import get_applicable_rules
+
+
+@pytest.fixture
+def rule_matrix_data():
+    with open('data/rule_matrix.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def test_rule_matrix_loads_and_contains_standardized_metadata(rule_matrix_data):
+    """Verify data/rule_matrix.json loads and all rules contain required metadata fields."""
+    rules = rule_matrix_data.get('rules', [])
+    assert len(rules) >= 20
+
+    required_fields = [
+        'rule_id',
+        'parameter',
+        'category',
+        'package_type',
+        'condition',
+        'regulatory_source',
+        'source_authority',
+        'source_document',
+        'source_url',
+        'rule_reference',
+        'rule_reference_status',
+        'rule_version',
+        'effective_from',
+        'required',
+        'validation_method',
+    ]
+
+    for rule in rules:
+        for field in required_fields:
+            assert field in rule, f"Rule {rule.get('rule_id')} missing required field '{field}'"
+            assert rule[field] is not None, f"Rule {rule.get('rule_id')} has null '{field}'"
+
+
+def test_regulatory_traceability_citations_are_verified(rule_matrix_data):
+    """Verify statutory rules have verified citations while internal fields are marked non-statutory."""
+    rules = rule_matrix_data.get('rules', [])
+    for rule in rules:
+        if rule['rule_id'] == 'PC-ALL-001':
+            assert rule['rule_reference_status'] == 'NON_STATUTORY'
+            assert rule['verification_status'] == 'NON_STATUTORY'
+            assert 'INTERNAL' in rule['rule_reference']
+        else:
+            assert rule['rule_reference_status'] in ('VERIFIED', 'APPLICABILITY_DEPENDENT'), (
+                f"Rule {rule['rule_id']} should have verified or applicability_dependent status, got '{rule['rule_reference_status']}'"
+            )
+            assert rule['verification_status'] in ('VERIFIED', 'APPLICABILITY_DEPENDENT')
+            assert rule['rule_reference'] != 'PENDING_VERIFICATION', (
+                f"Rule {rule['rule_id']} should have verified rule reference, not placeholder"
+            )
+            assert rule['instrument'] is not None
+            assert rule['citation'] is not None
+
+
+def test_exact_verification_status_counts(rule_matrix_data):
+    """Verify exact counts of verified, applicability dependent, non-statutory, and pending review rules."""
+    rules = rule_matrix_data.get('rules', [])
+    baseline_rules = [r for r in rules if not r['rule_id'].endswith('-AMEND2026')]
+    assert len(baseline_rules) == 21
+
+    verified_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'VERIFIED')
+    app_dep_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'APPLICABILITY_DEPENDENT')
+    non_stat_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'NON_STATUTORY')
+    pending_count = sum(1 for r in baseline_rules if r.get('verification_status') == 'PENDING_REVIEW')
+
+    assert verified_count == 16, f"Expected 16 VERIFIED rules, got {verified_count}"
+    assert app_dep_count == 4, f"Expected 4 APPLICABILITY_DEPENDENT rules, got {app_dep_count}"
+    assert non_stat_count == 1, f"Expected 1 NON_STATUTORY rule, got {non_stat_count}"
+    assert pending_count == 0, f"Expected 0 PENDING_REVIEW rules, got {pending_count}"
+
+
+def test_legal_metrology_commencement_date_is_accurate(rule_matrix_data):
+    """Verify Legal Metrology rules use official commencement dates (1 April 2011, 1 January 2018 for COO, 1 January 2024 for USP)."""
+    rules = rule_matrix_data.get('rules', [])
+    lm_rules = [r for r in rules if r['regulatory_source'] == 'LEGAL_METROLOGY']
+    assert len(lm_rules) >= 11
+
+    for rule in lm_rules:
+        if rule['rule_id'] == 'PC-ALL-011':
+            assert rule['effective_from'] == '2024-01-01', (
+                f"Rule {rule['rule_id']} (Unit Sale Price) should have effective_from='2024-01-01', got '{rule['effective_from']}'"
+            )
+        elif rule['rule_id'] == 'PC-ALL-006':
+            assert rule['effective_from'] == '2018-01-01', (
+                f"Rule {rule['rule_id']} (Country of Origin) should have effective_from='2018-01-01', got '{rule['effective_from']}'"
+            )
+        else:
+            assert rule['effective_from'] == '2011-04-01', (
+                f"Rule {rule['rule_id']} should have effective_from='2011-04-01', got '{rule['effective_from']}'"
+            )
+
+
+def test_regulatory_sources_and_authorities_are_correctly_classified(rule_matrix_data):
+    """Verify proper classification between automatic, Legal Metrology, FSSAI, and Cosmetics sources."""
+    rules = rule_matrix_data.get('rules', [])
+
+    for rule in rules:
+        rule_id = rule['rule_id']
+        if rule_id == 'PC-ALL-001':
+            assert rule['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
+            assert rule['rule_reference_status'] == 'SOURCE_IDENTIFIED'
+        elif rule_id.startswith('PC-ALL'):
+            assert rule['regulatory_source'] == 'LEGAL_METROLOGY'
+            assert 'Consumer Affairs' in rule['source_authority']
+            assert 'Legal Metrology' in rule['source_document']
+        elif rule_id.startswith('PC-FOOD'):
+            assert rule['regulatory_source'] == 'FSSAI_FOOD_LABELING'
+            assert 'Food Safety and Standards Authority of India' in rule['source_authority']
+            assert 'Food Safety and Standards' in rule['source_document']
+        elif rule_id.startswith('PC-COSM'):
+            assert rule['regulatory_source'] == 'COSMETIC_LABELING'
+            assert 'Cosmetics' in rule['source_authority'] or 'Drugs' in rule['source_authority'] or 'Health' in rule['source_authority']
+            assert 'Cosmetics Rules, 2020' in rule['source_document']
+
+
+def test_product_name_kept_separate_from_statutory_generic_name(rule_matrix_data):
+    """Verify PRODUCT_NAME does not falsely claim to be a statutory Rule 6 heading."""
+    rules = rule_matrix_data.get('rules', [])
+    product_name_rule = next((r for r in rules if r['rule_id'] == 'PC-ALL-001'), None)
+    generic_name_rule = next((r for r in rules if r['rule_id'] == 'PC-ALL-010'), None)
+
+    assert product_name_rule is not None
+    assert generic_name_rule is not None
+    assert product_name_rule['parameter'] == 'PRODUCT_NAME'
+    assert generic_name_rule['parameter'] == 'GENERIC_NAME'
+
+    # Verify exception/note clarifies commercial identification vs statutory generic name
+    assert 'Rule 6(1)(b)' in product_name_rule['exception'] or 'generic' in product_name_rule['exception'].lower()
+    assert 'generic' in generic_name_rule['exception'].lower() or 'common' in generic_name_rule['exception'].lower()
+
+
+def test_sync_rules_to_db_preserves_new_metadata():
+    """Verify database synchronization populates and updates all new metadata columns."""
+    init_db()
+    sync_rules_to_db()
+
+    db = SessionLocal()
+    try:
+        db_rules = db.query(models.Rule).all()
+        assert len(db_rules) >= 20
+
+        rule_001 = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-ALL-001').first()
+        assert rule_001 is not None
+        assert rule_001.source_authority == "Internal Inspection Screening Specification"
+        assert rule_001.effective_from == "2011-04-01"
+        assert rule_001.rule_reference_status == "NON_STATUTORY"
+        assert rule_001.regulatory_source == "AUTOMATIC_IMAGE_SCREENING"
+        assert rule_001.source_url is not None
+
+        rule_002 = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-ALL-002').first()
+        assert rule_002 is not None
+        assert rule_002.rule_reference_status == "VERIFIED"
+        assert "Rule 6(1)(c)" in rule_002.rule_reference
+
+        food_rule = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-FOOD-001').first()
+        assert food_rule is not None
+        assert food_rule.regulatory_source == "FSSAI_FOOD_LABELING"
+        assert food_rule.source_authority == "Food Safety and Standards Authority of India (FSSAI)"
+        assert "Labelling and Display" in food_rule.source_document
+
+        cosm_rule = db.query(models.Rule).filter(models.Rule.rule_id == 'PC-COSM-001').first()
+        assert cosm_rule is not None
+        assert cosm_rule.regulatory_source == "COSMETIC_LABELING"
+        assert "Cosmetics Rules, 2020" in cosm_rule.source_document
+    finally:
+        db.close()
+
+
+def test_rules_api_endpoint_exposes_standardized_metadata():
+    """Verify GET /api/rules endpoint returns all standardized metadata fields."""
+    client = TestClient(app)
+    resp = client.get("/api/rules")
+    assert resp.status_code == 200
+    rules = resp.json()
+    assert len(rules) >= 20
+
+    first_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-001')
+    assert first_rule['source_authority'] is not None
+    assert first_rule['source_url'] is not None
+    assert first_rule['rule_reference_status'] == 'SOURCE_IDENTIFIED'
+    assert first_rule['effective_from'] == '2011-04-01'
+    assert first_rule['regulatory_source'] == 'AUTOMATIC_IMAGE_SCREENING'
+
+    statutory_rule = next(r for r in rules if r['rule_id'] == 'PC-ALL-002')
+    assert statutory_rule['rule_reference_status'] == 'VERIFIED'
+    assert 'Rule 6(1)(c)' in statutory_rule['rule_reference']

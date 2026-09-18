@@ -1,0 +1,4339 @@
+"""Declaration extractor for packaged-commodity OCR text."""
+
+import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
+from app.core.ontology import (
+    CanonicalDeclarationField,
+    QuantityType,
+    QuantityCandidateType,
+    LEGAL_MASS_UNITS,
+    LEGAL_VOLUME_UNITS,
+    LEGAL_COUNT_UNITS,
+    LEGAL_LENGTH_AREA_UNITS,
+    build_quantity_candidate,
+    infer_quantity_type,
+    normalize_unit,
+    DatePrecision,
+    ContactType,
+    build_date_candidate,
+    build_consumer_care_candidate,
+    build_product_name_candidate,
+)
+from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token
+from app.extraction.evidence_model import (
+    AnchorRelation,
+    EvidenceAvailabilityState,
+    EvidenceCandidate,
+    EvidenceMergeClassification,
+    FIELD_SCOPING_REGISTRY,
+    SourceType,
+    ValidationState,
+    SECTION_FRONT_PRODUCT,
+    SECTION_IDENTITY,
+    SECTION_QUANTITY,
+    SECTION_DECLARED_QUANTITY,
+    SECTION_PRICING,
+    SECTION_MRP,
+    SECTION_MANUFACTURER,
+    SECTION_PACKER,
+    SECTION_ADDRESS,
+    SECTION_DATE,
+    SECTION_BATCH,
+    SECTION_NUTRITION,
+    SECTION_SERVING_SIZE,
+    SECTION_INGREDIENTS,
+    SECTION_CONSUMER_CARE,
+    SECTION_FOOD_LABELING,
+    SECTION_COSMETIC_LABELING,
+    SECTION_INSTRUCTIONS,
+    SECTION_STORAGE,
+    SECTION_MARKETING,
+    SECTION_BARCODE,
+    SECTION_OTHER,
+    SECTION_UNKNOWN,
+)
+from app.extraction.association_engine import AssociatedCandidate, LabelValueAssociator
+from app.extraction.label_value_association import (
+    EvidenceToken,
+    SemanticLabel,
+    ValueCandidate,
+    LabelValueRelation,
+    CanonicalFieldCandidate,
+    LabelValueAssociationEngine,
+)
+
+logger = logging.getLogger(__name__)
+
+MRP_PATTERNS = [
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\s*(?:inr\s*|rs\.?\s*|₹\s*)?[:\s-]*\s*([\d,]+(?:\.\d{1,2})?)',
+    r'(?:rs\.?|₹|inr)\s*([\d,]+(?:\.\d{1,2})?)',
+    r'price\s*[:\s-]*\s*(?:rs\.?\s*|₹\s*)?([\d,]+(?:\.\d{1,2})?)',
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\s*[^\d]{0,80}([\d]{1,6}(?:[.,]\d{1,2})?)',
+]
+
+NET_QTY_PATTERNS = [
+    r'(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|vol\.?|volume)|contents?)\s*[:\s-]*\s*([\d.]+)\s*(g|gm|gms|kg|kgs|ml|l|ltr|litre|litres|liter|liters|oz|lb)',
+    r'\b([\d.]+)\s*(g|gm|gms|kg|kgs|ml|l|ltr|litre|litres|liter|liters|oz|lb)\b',
+    r'(?:net\s*(?:qty|quantity|contents?)\s*[:\s-]*)?\b(\d+)\s*(pcs?|pieces?|tablets?|capsules?)\b',
+]
+
+DATE_PATTERNS = [
+    # 3-part dates
+    r'\b(\d{1,2}/\d{1,2}/\d{2,4})\b',
+    r'\b(\d{1,2}-\d{1,2}-\d{2,4})\b',
+    r'\b(\d{1,2}\.\d{1,2}\.\d{2,4})\b',
+    r'\b(\d{4}[/-]\d{1,2}[/-]\d{1,2})\b',
+    r'\b(\d{1,2}[/-](?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[/-]\d{2,4})\b',
+    r'\b(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{2,4})\b',
+    # 2-part dates (Month / Year)
+    r'\b(\d{1,2}/\d{2,4})\b',
+    r'\b(\d{1,2}-\d{2,4})\b',
+    r'\b(\d{1,2}\.\d{4})\b',
+    r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*[/.-]?\s*\d{2,4})\b',
+    r'\b(\d{4}[/-]\d{1,2})\b',
+]
+
+FSSAI_PATTERNS = [
+    r'(?:fssai|lic\.?\s*(?:no\.?|number)?|licen[cs]e\s*(?:no\.?|number)?|reg\.?\s*no\.?)\s*[:\s-]*\s*(\d{9,14})',
+]
+
+CONSUMER_CARE_PATTERNS = [
+    r'(?:consumer\s*care|customer\s*care|helpline|toll\s*free|contact)\s*[:\s-]*\s*([^\n]{5,80})',
+    r'\b(1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b',
+    r'\b(\d{3,5}[\s\-]\d{6,10})\b',
+]
+
+MANUFACTURER_KEYWORDS = [
+    'manufactured & marketed by', 'manufactured and marketed by', 'manufactured/marketed by',
+    'manufactured & packed by', 'manufactured and packed by', 'manufactured/packed by',
+    'manufactured at', 'manufactured for', 'manufactured by', 'manufactured:',
+    'mfg & mkt by', 'mfg & pkd by', 'mfd & pkd by', 'mfd & mkt by',
+    'mfg. by', 'mfd. by', 'mfg by', 'mfd by',
+    'manufacturer', 'made by',
+]
+MARKETER_KEYWORDS = [
+    'manufactured & marketed by', 'manufactured and marketed by', 'manufactured/marketed by',
+    'marketed & distributed by', 'marketed and distributed by',
+    'marketed by', 'marketed at', 'marketed for',
+    'mkt & dist by', 'mkt by', 'mktg by', 'mkt. by',
+    'marketer', 'distributed by',
+]
+PACKER_KEYWORDS = [
+    'manufactured & packed by', 'manufactured and packed by', 'manufactured/packed by',
+    'packed & marketed by', 'packed and marketed by',
+    'packed by', 'packed at', 'pkd by', 'pkd at', 'pkg by', 'pkg at', 'puckea by',
+    'packaged by', 'packer',
+]
+IMPORTER_KEYWORDS = ['imported by', 'importer', 'import by']
+INGREDIENT_KEYWORDS = ['ingredients', 'composition', 'ingredient list']
+NUTRITIONAL_KEYWORDS = ['nutritional information', 'nutrition facts', 'energy', 'protein', 'carbohydrate', 'fat', 'calories', 'per serving']
+VEG_NONVEG_KEYWORDS = ['vegetarian', 'non-vegetarian', 'non-veg', 'nonveg']
+COUNTRY_OF_ORIGIN_KEYWORDS = ['country of origin', 'made in', 'product of', 'manufactured in']
+BEST_BEFORE_KEYWORDS = ['best before date', 'best before', 'best by date', 'best by']
+USE_BY_KEYWORDS = ['use before date', 'use by date', 'use-before', 'use before', 'use by', 'consume before', 'consume within', 'valid until', 'valid till']
+EXPIRY_KEYWORDS = ['expiry date', 'expiration date', 'exp date', 'exp. date', 'expiry', 'exp:', 'exp.', 'exp']
+MFG_DATE_KEYWORDS = [
+    'date of manufacture', 'date of manufacturing', 'manufacturing date', 'manufacture date',
+    'date of mfg', 'date of mfd', 'mfg date', 'mfd date', 'mfg dt', 'mfd dt', 'mfg dt.', 'mfd dt.',
+    'mfg. dt.', 'mfg. date', 'mfd. date', 'month/year of mfg', 'month & year of mfg',
+    'month & year of manufacture', 'month and year of manufacture', 'mfg month & year',
+    'month of mfg', 'mfg/pkd date', 'mfg.', 'mfd.', 'mfg:', 'mfd:', 'mfg', 'mfd',
+]
+PACKING_DATE_KEYWORDS = [
+    'date of packaging', 'date of packing', 'packaging date', 'packing date', 'package date',
+    'date of pkd', 'date of pkg', 'pkg date', 'pkd date', 'pkd dt', 'pkg dt', 'pkd dt.', 'pkg dt.',
+    'pkd. date', 'pkg. date', 'month/year of pkd', 'month & year of pkd', 'month & year of packing',
+    'month and year of packing', 'pkd month & year', 'month of pkd', 'month of packing',
+    'packed on', 'pkd:', 'pkd.', 'pkd', 'pkg',
+]
+MARKETING_TERMS = {'balanced', 'taste', 'immuno', 'iodine', 'zinc', 'vacuum', 'evaporated', 'recyclable', 'fresh', 'natural', 'quality', 'premium', 'guarantee', 'trust', 'great', 'deal', 'new', 'sale', 'special', 'offer', 'free', 'buy', 'one', 'get', 'did', 'you', 'know', 'best', 'no'}
+
+# Semantic section classifications
+SECTION_FRONT_PRODUCT = "FRONT_PRODUCT"
+SECTION_DECLARED_QUANTITY = "DECLARED_QUANTITY"
+SECTION_MRP = "MRP"
+SECTION_MANUFACTURER = "MANUFACTURER"
+SECTION_MARKETER = "MARKETER"
+SECTION_PACKER = "PACKER"
+SECTION_ADDRESS = "ADDRESS"
+SECTION_DATE = "DATE"
+SECTION_BATCH = "BATCH"
+SECTION_NUTRITION = "NUTRITION"
+SECTION_INGREDIENTS = "INGREDIENTS"
+SECTION_SERVING_SIZE = "SERVING_SIZE"
+SECTION_FSSAI = "FSSAI"
+SECTION_CONSUMER_CARE = "CONSUMER_CARE"
+SECTION_BARCODE = "BARCODE"
+SECTION_STORAGE = "STORAGE"
+SECTION_MARKETING = "MARKETING"
+SECTION_FRONT_TITLE = "FRONT_TITLE"
+SECTION_INSTRUCTIONS = "INSTRUCTIONS"
+SECTION_OTHER = "OTHER"
+
+NET_QTY_POSITIVE_CONTEXT_RE = re.compile(
+    r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|declared\s+quantity|net\s*contents?|pack\s*(?:content|contents|size|qty\.?|quantity)|package\s*(?:quantity|content|contents)|pkg\s*qty)\b',
+    re.IGNORECASE,
+)
+
+NUTRITION_SECTION_HEADER_RE = re.compile(
+    r'\b(?:nutritional?\s*(?:information|facts|values?)|nutrition\s+table)\b',
+    re.IGNORECASE,
+)
+
+NUTRITION_LINE_RE = re.compile(
+    r'(?:'
+    r'\b(?:energy|calories|protein|carbohydrates?|total\s+sugars?|added\s+sugars?|sugar|total\s+fat|fat|saturated\s+fat|trans\s+fat|cholesterol|sodium|dietary\s+fib(?:re|er)|calcium|iron|potassium|zinc|nutrients?)\b|'
+    r'\b(?:kcal|kj)\b|'
+    r'\bper\s+100\s*(?:g|ml)\b|'
+    r'\bapprox(?:imate)?\s+value\b'
+    r')',
+    re.IGNORECASE,
+)
+
+SERVING_SIZE_RE = re.compile(
+    r'\b(?:serv(?:e|ing)\s*size|per\s+(?:serve|serving)|servings?\s+per\s+(?:container|pack|package)|serve\s*size\s*per)\b',
+    re.IGNORECASE,
+)
+
+INGREDIENTS_LINE_RE = re.compile(
+    r'\b(?:ingredients?|composition|contains?\s*:|ingredient\s+list)\b',
+    re.IGNORECASE,
+)
+
+CONSUMER_CARE_STOP_RE = re.compile(
+    r'(?:'
+    r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|call\s+us\s+at|call\s+us|write\s+to|feedback|contact\s*us|reach\s*us)\b|'
+    r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4}|\b\d{3,5}[\s\-]\d{6,10}|\b0\d{2,4}[\s\-]?\d{6,8})\b|'
+    r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b|'
+    r'\b(?:www\.[a-z0-9\-]+|https?://[^\s]+)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+STORAGE_STOP_RE = re.compile(
+    r'(?:'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away)\b|'
+    r'\bcool\s*(?:,|&|and)?\s*dry\s+place\b|\brefrigerat\w*\b|'
+    r'\bavoid\s+(?:direct\s+)?sunlight\b|\bdo\s+not\s+(?:store|keep)\b|'
+    r'\bdirections?\s+for\s+use\b|\bfor\s+external\s+use\b'
+    r')',
+    re.IGNORECASE,
+)
+
+MARKETING_STOP_RE = re.compile(
+    r'(?:'
+    r"\bsweet'?n\s*sour\b|\bcrispy\s*(?:&|and)\s*crunchy\b|"
+    r'\bdelicious\b|\btasty\b|\bpremium\s+quality\b|'
+    r'\b(?:100|pure)\s*%\s*(?:natural|pure|vegetarian)\b|'
+    r'\bno\s+added\s+(?:preservative|colour|flavor|sugar)\b|'
+    r'\b(?:new|improved)\s+(?:taste|formula|recipe)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+SECTION_BOUNDARY_RE = re.compile(
+    r'(?:'
+    r'\b(?:manufactured|mfg|mfd|packed|marketed|imported)\s*(?:&|and|/)?\s*(?:marketed|packed|mkt|pkd)?\s*(?:by|at|for)\b|'
+    r'\bpacked\s+(?:by|at)\b|\bmarketed\s+by\b|\bimported\s+by\b|\bcountry\s+of\s+origin\b|\bmade\s+in\b|'
+    r'\bnet\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)\b|\bquantity\b|'
+    r'\bm\.?\s*r\.?\s*p\.?|\bmaximum\s+retail\s+price\b|'
+    r'\bbatch\s*(?:no\.?|number)?\b|\bb\.?\s*no\.?\b|\blot\s+(?:no\.?|number)?\b|\blot\s*[:#]|'
+    r'\buse\s*-?\s*(?:by|before)\b|\bbest\s+before\b|\bbest\s+by\b|\bconsume\s+before\b|'
+    r'\bdate\s+of\s+(?:manufactur\w+|pack\w+)\b|\bmfg\s*date\b|\bmfd\s*date\b|\bpkd\s*date\b|\bpkg\s*date\b|\bpacked\s+on\b|'
+    r'\bexpiry(?:\s+date)?\b|\bexp(?:\.|\s*date|:)|'
+    r'\bconsumer\s+care\b|\bcustomer\s+care\b|\bcustomer\s+support\b|\bhelpline\b|\btoll\s*free\b|\bwrite\s+to\b|\bcall\s+us\s+at\b|\bcall\s+us\b|'
+    r'\bingredients?\b|\bcomposition\b|\bingredient\s+list\b|'
+    r'\bnutritional?\s*(?:information|facts)\b|\bserv(?:e|ing)\s*size\b|'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bcool\s*(?:&|and)?\s*dry\s+place\b|'
+    r"\bsweet'?n\s*sour\b|\bpremium\s+quality\b|"
+    r'\bfssai\b|\blic\.?\s*(?:no\.?|number)?\b|\blicen[cs]e\s*(?:no\.?|number)?\b|\bbarcode\b|\bean\b'
+    r')',
+    re.IGNORECASE,
+)
+COMPANY_LEGAL_ENTITY_TYPES = (
+    r'Pvt\.?\s*Ltd\b\.?|Private\s+Limited\b|Ltd\b\.?|Limited\b|LLP\b|Inc\b\.?|Corp\b\.?|Corporation\b|Co\b\.?'
+    r'|(?:Enterprises|Industries|Foods|Products|Agro|Mills|Laboratories)\b(?![^,\n]*(?:Pvt|Private|Ltd|Limited|LLP|Inc|Corp|Corporation|Co\b))'
+)
+VENDOR_LINE_RE = re.compile(
+    rf'([A-Za-z][A-Za-z0-9&.\'\s-]{{2,80}}?(?:{COMPANY_LEGAL_ENTITY_TYPES}))',
+    re.IGNORECASE,
+)
+COMPANY_SUFFIX_RE = re.compile(
+    rf'\b([A-Za-z][A-Za-z0-9&.\'\s-]{{1,70}}?\s+(?:{COMPANY_LEGAL_ENTITY_TYPES}))(?:\s*[,;:]|\s*$|\s+(?=[A-Za-z0-9]))',
+    re.IGNORECASE,
+)
+NON_COMPANY_LIMITED_WORDS = {'edition', 'offer', 'period', 'time', 'stock', 'validity', 'warranty', 'qty', 'quantity'}
+INLINE_SECTION_PATTERNS = {
+    'manufacturer': [
+        r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfg\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|mfd\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|manufacturer\b|made\s+by\b)',
+    ],
+    'marketer': [
+        r'\b(?:marketed\s*(?:&|and)?\s*(?:distributed)?\s*(?:by|at|for)|mkt\s*by|mktg\s*by|mkt\.\s*by|marketer\b|distributed\s+by\b)',
+    ],
+    'packer': [
+        r'\b(?:packed\s*(?:&|and)?\s*(?:marketed)?\s*(?:by|at|for)|packed\s+(?:by|at)|pkd\s*by|pkg\s*by|packer\b|packaged\s+by\b)',
+    ],
+    'importer': [
+        r'\b(?:imported\s+by|importer\b)',
+    ],
+    'ingredients': [
+        r'\b(?:ingredients?|composition|ingredient\s+list)\b',
+    ],
+    'net_quantity': [
+        r'\b(?:net\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|vol\.?|volume)|quantity|contents)\b',
+    ],
+    'mrp': [
+        r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\b',
+        r'\b(?:rs\.?|₹|inr)\s*\d',
+    ],
+    'batch': [
+        r'\b(?:batch\s*(?:no\.?|number)?|lot\s+(?:no\.?|number)?|lot\s*[:#]|b\.?\s*no\.?)\b',
+    ],
+    'date': [
+        r'\b(?:date\s+of\s+(?:manufactur\w+|pack\w+)|mfg\s*date|mfd\s*date|pkd\s*date|pkg\s*date|packed\s+on|mfd[:.]|mfg[:.]|pkd[:.]|best\s+before|best\s+by|use\s*-?\s*(?:by|before)|consume\s+before|expiry(?:\s+date)?|exp(?:\.|\s*date|:))\b',
+    ],
+    'consumer_care': [
+        r'\b(?:consumer\s*care|customer\s*care|customer\s*support|helpline|toll\s*free|call\s+us\s+at|call\s+us|contact(?:\s+us)?|write\s+to|feedback)\b',
+        r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4}|\b\d{3,5}[\s\-]\d{6,10}|\b0\d{2,4}[\s\-]?\d{6,8})\b',
+    ],
+    'nutrition': [
+        r'\b(?:nutritional\s+information|nutrition\s+facts|nutritional\s+facts|per\s+(?:100\s*g|serving)|energy\s*:|protein\s*:|carbohydrate\s*:)\b',
+        r'\b(?:serving\s*size|serve\s*size|per\s+serve|nutrients?)\b',
+    ],
+    'storage': [
+        r'\b(?:container\s+once\s+opened|store\s+in|keep\s+(?:in|away)|cool\s*(?:&|and)?\s*dry\s+place|refrigerat\w*|avoid\s+sunlight|do\s+not\s+store)\b',
+    ],
+    'marketing': [
+        r"\b(?:sweet'?n\s*sour|crispy\s*(?:&|and)\s*crunchy|delicious|tasty|premium\s+quality|100\s*%\s*(?:pure|natural)|no\s+added)\b",
+    ],
+    'fssai': [
+        r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?|licen[cs]e\s*(?:no\.?|number)?|reg\.?\s*no\.?)\b',
+    ],
+}
+VENDOR_PREFIX_RE = re.compile(
+    r'\b(?:manufactured|mfg|mfd|packed|marketed|imported|produced|distributed)\s*(?:\.|\b)\s*(?:by|at|for|in)\b',
+    re.IGNORECASE,
+)
+ALL_DATE_LABELS = MFG_DATE_KEYWORDS + PACKING_DATE_KEYWORDS + BEST_BEFORE_KEYWORDS + USE_BY_KEYWORDS + EXPIRY_KEYWORDS
+
+
+def group_ocr_items_into_lines(ocr_items: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Group OCR items that share similar vertical baselines into coherent horizontal lines.
+    Sorts lines top-to-bottom, and tokens within lines left-to-right.
+    Preserves dense package panel layouts (e.g. back panel declarations).
+    """
+    if not ocr_items:
+        return []
+
+    parsed_items = []
+    unboxed_items = []
+
+    for item in ocr_items:
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        box = item.get("bbox")
+        coords = None
+        if box:
+            if isinstance(box, dict):
+                x = float(box.get("x", box.get("left", 0)))
+                y = float(box.get("y", box.get("top", 0)))
+                w = float(box.get("w", box.get("width", 0)))
+                h = float(box.get("h", box.get("height", 0)))
+                coords = (x, y, x + w, y + h, x + w / 2.0, y + h / 2.0, h)
+            elif isinstance(box, (list, tuple)) and len(box) >= 4:
+                x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+                h = abs(y2 - y1)
+                coords = (x1, y1, x2, y2, (x1 + x2) / 2.0, (y1 + y2) / 2.0, h)
+
+        if coords:
+            parsed_items.append((coords, text, item))
+        else:
+            unboxed_items.append(text)
+
+    if not parsed_items:
+        return unboxed_items
+
+    # Sort top-to-bottom by y_min
+    parsed_items.sort(key=lambda it: (it[0][1], it[0][0]))
+
+    # Cluster into lines based on vertical overlap
+    line_clusters: List[List[Tuple[Tuple, str, Dict[str, Any]]]] = []
+    for it in parsed_items:
+        it_ymin, it_ymax = it[0][1], it[0][3]
+        it_cy = it[0][5]
+        it_h = max(it[0][6], 5.0)
+
+        placed = False
+        for cluster in line_clusters:
+            clust_ymin = min(c[0][1] for c in cluster)
+            clust_ymax = max(c[0][3] for c in cluster)
+            clust_cy = sum(c[0][5] for c in cluster) / len(cluster)
+            clust_h = max(clust_ymax - clust_ymin, 5.0)
+
+            overlap = min(it_ymax, clust_ymax) - max(it_ymin, clust_ymin)
+            overlap_ratio = overlap / min(it_h, clust_h) if min(it_h, clust_h) > 0 else 0
+            center_dist = abs(it_cy - clust_cy)
+
+            if overlap_ratio >= 0.4 or center_dist <= 0.5 * min(it_h, clust_h):
+                cluster.append(it)
+                placed = True
+                break
+
+        if not placed:
+            line_clusters.append([it])
+
+    # Within each line cluster, sort left-to-right (by x1) and join text
+    result_lines = []
+    for cluster in line_clusters:
+        cluster.sort(key=lambda it: it[0][0])  # x1
+        line_str = " ".join(it[1] for it in cluster).strip()
+        if line_str:
+            result_lines.append(line_str)
+
+    # Append any unboxed items
+    for ub in unboxed_items:
+        if ub and ub not in result_lines:
+            result_lines.append(ub)
+
+    return result_lines
+
+
+def classify_line_section(line: str, current_section: Optional[str] = None) -> str:
+    """Classify an OCR text line into its semantic section."""
+    cleaned = line.strip()
+    if not cleaned:
+        return current_section or SECTION_OTHER
+
+    if NUTRITION_SECTION_HEADER_RE.search(cleaned):
+        return SECTION_NUTRITION
+    if SERVING_SIZE_RE.search(cleaned):
+        return SECTION_SERVING_SIZE
+    if NET_QTY_POSITIVE_CONTEXT_RE.search(cleaned):
+        return SECTION_DECLARED_QUANTITY
+    if INGREDIENTS_LINE_RE.search(cleaned):
+        return SECTION_INGREDIENTS
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in PACKER_KEYWORDS) and re.search(r'\b(?:packed|pkd|pkg|packer)\b', cleaned, re.I):
+        return SECTION_PACKER
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MARKETER_KEYWORDS) and re.search(r'\b(?:marketed|mkt|mktg|marketer|distributed)\b', cleaned, re.I):
+        return SECTION_MARKETER
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MANUFACTURER_KEYWORDS) or COMPANY_SUFFIX_RE.search(cleaned):
+        return SECTION_MANUFACTURER
+    if CONSUMER_CARE_STOP_RE.search(cleaned):
+        return SECTION_CONSUMER_CARE
+    if STORAGE_STOP_RE.search(cleaned):
+        return SECTION_STORAGE
+    if MARKETING_STOP_RE.search(cleaned):
+        return SECTION_MARKETING
+    if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)\b', cleaned, re.I):
+        return SECTION_MRP
+    if re.search(r'\b(?:fssai|lic\.?\s*(?:no\.?|number)?)\b', cleaned, re.I):
+        return SECTION_FSSAI
+    if re.search(r'\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b', cleaned, re.I):
+        return SECTION_BATCH
+    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in ALL_DATE_LABELS):
+        return SECTION_DATE
+    if re.search(r'\b(?:directions?\s+for\s+use|how\s+to\s+use|instructions?)\b', cleaned, re.I):
+        return SECTION_INSTRUCTIONS
+    if re.search(r'\b(?:barcode|ean|upc)\b', cleaned, re.I):
+        return SECTION_BARCODE
+
+    # Section continuity
+    if current_section == SECTION_NUTRITION:
+        # Check if line breaks out of nutrition into a multipack expression
+        if re.search(r'\b\d+\s*(?:[×xX*✕✖⨯]|\bof\b)\s*[+-]?\d+(?:\.\d+)?\s*(?:g|gm|gms|grams?|kg|kgs?|ml|millilitres?|l|litres?)\b', cleaned, re.I) and not NUTRITION_LINE_RE.search(cleaned):
+            return SECTION_DECLARED_QUANTITY
+        if NUTRITION_LINE_RE.search(cleaned) or re.search(r'\b\d+(?:\.\d+)?\s*(?:g|mg|kcal|kj|%)\b', cleaned, re.I):
+            return SECTION_NUTRITION
+        if re.fullmatch(r'[\d.,\s/%+-]+', cleaned) or len(cleaned.split()) <= 4:
+            return SECTION_NUTRITION
+    elif current_section in (SECTION_MANUFACTURER, SECTION_PACKER, SECTION_ADDRESS):
+        if re.search(r'(?:plot|survey|sector|phase|road|street|bldg|building|floor|estate|industrial|gidc|district|dist|pin|india)', cleaned, re.I):
+            return SECTION_ADDRESS
+
+    return SECTION_OTHER
+
+
+def detect_semantic_sections(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Segment document text lines into semantic packaging sections with bounding boxes and metadata."""
+    current_sec = SECTION_OTHER
+    annotated: List[Dict[str, Any]] = []
+    for idx, line in enumerate(lines):
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        sec = classify_line_section(line_clean, current_sec)
+        current_sec = sec
+        bbox = None
+        conf = 0.8
+        if ocr_items:
+            matching_item = next(
+                (item for item in ocr_items if line_clean.lower() in str(item.get('text', '')).lower()),
+                None,
+            )
+            if matching_item:
+                bbox = matching_item.get('bbox')
+                conf = float(matching_item.get('confidence') or 0.8)
+        annotated.append({
+            'line_index': idx,
+            'text': line_clean,
+            'section_type': sec,
+            'bbox': bbox,
+            'confidence': conf,
+        })
+    return annotated
+
+
+def _normalize_text(raw_text: str) -> str:
+    text = raw_text.replace('\r', '\n')
+    text = text.replace('₹', ' Rs ')
+    text = text.replace('â¹', ' Rs ')
+    text = text.replace('–', '-')
+    # Universal OCR repairs: standard whitespace, punctuation, and legal abbreviations
+    repairs = (
+        (r'\bGREDIENTS\b', 'INGREDIENTS'),
+        (r'\bMADENINDIA\b', 'MADE IN INDIA'),
+        (r'\bMADEININDIA\b', 'MADE IN INDIA'),
+        (r'\bMADE\s*N\s*INDIA\b', 'MADE IN INDIA'),
+        (r'Pvi\.?\s*Ld\.?', 'Pvt. Ltd.'),
+        (r'Pvt\.?\s*Ld\.?', 'Pvt. Ltd.'),
+        (r'Far external use', 'For external use'),
+        (r'\bUSE BEFORE(\d)', r'USE BEFORE \1'),
+    )
+    for pattern, replacement in repairs:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{2,}', '\n', text)
+    return text.strip()
+
+
+def _is_section_boundary(line: str, current_section: Optional[str] = None) -> bool:
+    if not line:
+        return False
+    if current_section:
+        for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+            if sec_name == current_section:
+                continue
+            for pat in patterns:
+                if re.search(pat, line, re.IGNORECASE):
+                    return True
+        return False
+    return bool(SECTION_BOUNDARY_RE.search(line))
+
+
+def _values_conflict(left: str, right: str) -> bool:
+    a = re.sub(r'[^a-z0-9]+', '', (left or '').lower())
+    b = re.sub(r'[^a-z0-9]+', '', (right or '').lower())
+    if not a or not b:
+        return False
+    return a != b and a not in b and b not in a
+
+
+def _search_patterns(text: str, patterns: List[str]) -> Optional[str]:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _find_keyword_line(text: str, keywords: List[str]) -> Optional[Dict[str, Any]]:
+    for kw in keywords:
+        idx = text.lower().find(kw.lower())
+        if idx != -1:
+            start = idx + len(kw)
+            end = text.find('\n', start)
+            if end == -1:
+                end = len(text)
+            value = text[start:end].strip(' :;\t-')
+            return {'value': value if value else kw, 'keyword_matched': kw, 'position': idx}
+    return None
+
+
+def _first_date_in(text: str) -> Optional[str]:
+    if not text:
+        return None
+    matches = []
+    for pattern in DATE_PATTERNS:
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            token = m.group(1).strip()
+            if _is_valid_date_token(token):
+                matches.append((m.start(), len(token), token))
+    if not matches:
+        return None
+    # Sort primarily by starting character position (earliest in the string),
+    # and secondarily by token length descending (longest valid date format starting at that position)
+    matches.sort(key=lambda x: (x[0], -x[1]))
+    return matches[0][2]
+
+
+def _line_has_other_date_label(line: str, keywords: List[str]) -> bool:
+    lowered = line.lower()
+    own = [kw.lower().strip() for kw in keywords]
+    for label in ALL_DATE_LABELS:
+        token = label.lower().strip()
+        if len(token) < 3:
+            continue
+        if token in own or any(token == item for item in own):
+            continue
+        esc = re.escape(token)
+        pat = rf'(?:\b|(?<=^)){esc}' if token.endswith((':', '.')) else rf'\b{esc}\b'
+        if re.search(pat, lowered):
+            if not re.search(rf'{pat}(?:\s*(?:by|at|for|in)\b)', lowered):
+                return True
+    return False
+
+
+def _is_instructional_label_line(line: str) -> bool:
+    """Reject package instructions that mention declaration labels as examples."""
+    lowered = str(line or '').strip().lower()
+    return bool(
+        re.search(r'^for\s+(?:mrp|manufactured\s+by|packed\s+by)', lowered)
+        or re.search(r'\b(?:mm/yy|expiry\s+date)\b', lowered)
+        or re.search(r'\b(?:batch\s+no\.?|mfd\.?\s*date)\b.*\b(?:see|below|and)\b', lowered)
+        or re.search(r'\b(?:m-him|m-dnh|license|licence|cos/)\b', lowered)
+    )
+
+
+def _extract_date_near_keyword(
+    text: str,
+    keywords: List[str],
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
+    """Bind a date only to its label line (or an immediately adjacent date-only line).
+
+    Do not pick the nearest date in a large window. Ambiguous leftover dates stay unassigned.
+    """
+    if lines is None:
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = grouped if grouped else raw_lines
+        else:
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+
+    bound = []
+    own_keywords_lower = [kw.lower().strip() for kw in keywords]
+
+    # Precompile keyword patterns to avoid matching vendor lines as date keywords
+    keyword_patterns = []
+    for kw in sorted(keywords, key=len, reverse=True):
+        escaped = re.escape(kw.strip())
+        if kw.endswith((':', '.')):
+            pat = re.compile(rf'(?:\b|(?<=^)){escaped}(?!\s*(?:by|at|for|in)\b)', re.IGNORECASE)
+        else:
+            pat = re.compile(rf'\b{escaped}\b(?!\s*(?:by|at|for|in)\b)', re.IGNORECASE)
+        keyword_patterns.append((kw, pat))
+
+    for index, line in enumerate(lines):
+        if _is_instructional_label_line(line):
+            continue
+        matched_match = None
+        matched_kw_str = None
+        for kw_str, pat in keyword_patterns:
+            m = pat.search(line)
+            if m:
+                # Ensure it's not preceded by a vendor entity name on the same line
+                prefix_before = line[:m.start()]
+                if VENDOR_LINE_RE.search(prefix_before) and not any(sep in prefix_before for sep in (';', '|', '\t', '  ')):
+                    continue
+                matched_match = m
+                matched_kw_str = kw_str
+                break
+
+        if not matched_match:
+            continue
+
+        # Same line: only the span after the matched label, cut at the next other date label.
+        after = line[matched_match.end():]
+        earliest_other_pos = len(after)
+        for other in ALL_DATE_LABELS:
+            other_clean = other.lower().strip()
+            if len(other_clean) < 3 or other_clean in own_keywords_lower:
+                continue
+            esc_other = re.escape(other_clean)
+            other_pat = rf'(?:\b|(?<=^)){esc_other}' if other.endswith((':', '.')) else rf'\b{esc_other}\b'
+            other_m = re.search(other_pat, after, re.IGNORECASE)
+            if other_m and other_m.start() < earliest_other_pos:
+                earliest_other_pos = other_m.start()
+
+        after_segment = after[:earliest_other_pos]
+        same = _first_date_in(after_segment)
+        if same:
+            bound.append(same)
+            continue
+
+        # Check neighbour lines only if same line has no date
+        for neighbour in (lines[index + 1] if index + 1 < len(lines) else '', lines[index - 1] if index else ''):
+            if not neighbour:
+                continue
+            # Never cross into vendor lines or section boundaries
+            if _is_section_boundary(neighbour) or VENDOR_PREFIX_RE.search(neighbour) or _line_has_other_date_label(neighbour, keywords):
+                continue
+            neighbour_date = _first_date_in(neighbour)
+            if not neighbour_date:
+                continue
+            # Adjacent line may be used only when it is essentially a date token.
+            remainder = re.sub(re.escape(neighbour_date), '', neighbour).strip(' :;,-')
+            if len(re.sub(r'[^A-Za-z]', '', remainder)) <= 3:
+                bound.append(neighbour_date)
+                break
+
+    unique = []
+    for value in bound:
+        if value not in unique:
+            unique.append(value)
+
+    if len(unique) == 1:
+        return unique[0]
+    elif len(unique) > 1:
+        # Check if all unique date strings normalize to the same date components
+        parsed_dates = []
+        for val in unique:
+            is_val, norm_val, meta = parse_date_with_precision(val)
+            if is_val and meta:
+                parsed_dates.append((val, norm_val, meta.get("parsed_components", {})))
+
+        if parsed_dates and len(parsed_dates) == len(unique):
+            first_comps = parsed_dates[0][2]
+            all_agree = True
+            for _, _, comps in parsed_dates[1:]:
+                m1, y1 = first_comps.get("month"), first_comps.get("year")
+                m2, y2 = comps.get("month"), comps.get("year")
+                if (m1, y1) != (m2, y2):
+                    all_agree = False
+                    break
+            if all_agree:
+                # Prefer full date or longest valid date representation
+                best = max(parsed_dates, key=lambda x: (len(x[1] or ""), len(x[0])))
+                return best[0]
+
+    return None
+
+
+def _is_valid_date_token(value: str) -> bool:
+    """Reject decimal/price noise, phones, barcodes, and impossible fragments."""
+    token = value.strip().lower()
+    if not token or len(token) > 18:
+        return False
+
+    # Phone numbers
+    if '1800' in token or any(token.startswith(prefix) for prefix in ('+91', '011', '022', '033', '044', '080')):
+        return False
+
+    # Currency indicators
+    if re.search(r'(?:rs\.?|inr|₹|mrp)', token):
+        return False
+
+    # Decimal numbers (e.g. 0.73, 12.50, 99.99)
+    if re.fullmatch(r'\d+\.\d{1,2}', token):
+        return False
+
+    # Pure long digit sequences (barcodes, serials, phones)
+    digits_only = re.sub(r'\D', '', token)
+    if len(digits_only) > 8:
+        return False
+    if len(digits_only) < 3 and not re.search(r'[a-z]', token):
+        return False
+
+    has_text_month = bool(re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)', token))
+    if re.search(r'[a-z]', token) and not has_text_month:
+        return False
+
+    if has_text_month:
+        nums = [int(n) for n in re.findall(r'\d+', token)]
+        if not nums:
+            return False
+        if len(nums) == 1:
+            yr = nums[0]
+            if len(str(yr)) == 4:
+                return 1990 <= yr <= 2099
+            elif len(str(yr)) <= 2:
+                return 0 <= yr <= 99
+            return False
+        elif len(nums) == 2:
+            day, yr = nums
+            if not (1 <= day <= 31):
+                return False
+            if len(str(yr)) == 4:
+                return 1990 <= yr <= 2099
+            elif len(str(yr)) <= 2:
+                return 0 <= yr <= 99
+            return False
+        return False
+
+    # Numeric parts separated by /, -, or .
+    parts = [part for part in re.split(r'[/.-]', token) if part != '']
+    if len(parts) not in (2, 3):
+        return False
+
+    try:
+        numbers = [int(p) for p in parts]
+    except ValueError:
+        return False
+
+    if len(parts) == 2:
+        first, second = numbers
+        p1_len, p2_len = len(parts[0]), len(parts[1])
+        if 1 <= first <= 12:
+            if p2_len == 4:
+                return 1990 <= second <= 2099
+            elif p2_len == 2:
+                return 0 <= second <= 99
+        if p1_len == 4 and 1990 <= first <= 2099 and 1 <= second <= 12:
+            return True
+        return False
+
+    if len(parts) == 3:
+        p1_len, p2_len, p3_len = len(parts[0]), len(parts[1]), len(parts[2])
+        if 1 <= numbers[0] <= 31 and 1 <= numbers[1] <= 12:
+            if p3_len == 4:
+                return 1990 <= numbers[2] <= 2099
+            elif p3_len == 2:
+                return 0 <= numbers[2] <= 99
+        if p1_len == 4 and 1990 <= numbers[0] <= 2099 and 1 <= numbers[1] <= 12 and 1 <= numbers[2] <= 31:
+            return True
+        return False
+
+    return False
+
+
+def _lines_after_label(lines: List[str], index: int, max_lines: int = 4) -> str:
+    """Collect continuation lines without consuming the next declaration."""
+    collected = []
+    for line in lines[index + 1:index + 1 + max_lines]:
+        if _is_section_boundary(line) or VENDOR_LINE_RE.search(line):
+            break
+        collected.append(line.strip(' ,;'))
+    return ', '.join(item for item in collected if item)
+
+
+def parse_date_with_precision(date_str: str) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Parse a date string and determine its precision (FULL_DATE vs MONTH_YEAR).
+
+    Returns:
+        (is_valid, normalized_date_string, metadata_dict)
+    """
+    if not date_str or not _is_valid_date_token(date_str):
+        return False, None, None
+
+    token = date_str.strip()
+    month_names = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+
+    # Check for text month
+    m_text = re.search(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*', token, re.IGNORECASE)
+    if m_text:
+        month_str = m_text.group(1).lower()
+        month = month_names.get(month_str, 1)
+        nums = [int(n) for n in re.findall(r'\d+', token)]
+        if len(nums) == 1:
+            year = nums[0]
+            if year < 100:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+            norm = f"{month:02d}/{year}"
+            return True, norm, {
+                "precision": DatePrecision.MONTH_YEAR.value,
+                "raw_text": date_str,
+                "normalized_date": norm,
+                "parsed_components": {"month": month, "year": year}
+            }
+        elif len(nums) == 2:
+            day, year = nums
+            if year < 100:
+                year += 2000 if year <= 50 else 1900
+            if not (1 <= day <= 31 and 1990 <= year <= 2099):
+                return False, None, None
+            norm = f"{day:02d}/{month:02d}/{year}"
+            return True, norm, {
+                "precision": DatePrecision.FULL_DATE.value,
+                "raw_text": date_str,
+                "normalized_date": norm,
+                "parsed_components": {"day": day, "month": month, "year": year}
+            }
+        return False, None, None
+
+    # Numeric parts separated by /, -, or .
+    parts = [p for p in re.split(r'[/.-]', token) if p != '']
+    if len(parts) not in (2, 3):
+        return False, None, None
+
+    try:
+        numbers = [int(p) for p in parts]
+    except ValueError:
+        return False, None, None
+
+    if len(parts) == 2:
+        first, second = numbers
+        p1_len, p2_len = len(parts[0]), len(parts[1])
+        if p1_len == 4 and (1990 <= first <= 2099) and (1 <= second <= 12):
+            year, month = first, second
+        elif 1 <= first <= 12:
+            month = first
+            year = second
+            if p2_len == 2:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+        else:
+            return False, None, None
+
+        norm = f"{month:02d}/{year}"
+        return True, norm, {
+            "precision": DatePrecision.MONTH_YEAR.value,
+            "raw_text": date_str,
+            "normalized_date": norm,
+            "parsed_components": {"month": month, "year": year}
+        }
+
+    if len(parts) == 3:
+        p1_len, p2_len, p3_len = len(parts[0]), len(parts[1]), len(parts[2])
+        if p1_len == 4 and (1990 <= numbers[0] <= 2099) and (1 <= numbers[1] <= 12) and (1 <= numbers[2] <= 31):
+            year, month, day = numbers[0], numbers[1], numbers[2]
+        elif (1 <= numbers[0] <= 31) and (1 <= numbers[1] <= 12):
+            day, month = numbers[0], numbers[1]
+            year = numbers[2]
+            if p3_len == 2:
+                year += 2000 if year <= 50 else 1900
+            if not (1990 <= year <= 2099):
+                return False, None, None
+        else:
+            return False, None, None
+
+        norm = f"{day:02d}/{month:02d}/{year}"
+        return True, norm, {
+            "precision": DatePrecision.FULL_DATE.value,
+            "raw_text": date_str,
+            "normalized_date": norm,
+            "parsed_components": {"day": day, "month": month, "year": year}
+        }
+
+    return False, None, None
+
+
+def _is_disallowed_product_name_line(line: str) -> bool:
+    """Reject corporate entities, brand-only tokens, ingredient lists, botanical Latin names,
+    batch IDs, licenses, addresses, and decorative slogans from becoming PRODUCT_NAME.
+    """
+    line_clean = line.strip()
+    if not line_clean:
+        return True
+
+    lower = line_clean.lower()
+
+    if re.search(r'\bdentist\s+recommended\s+brand\b', lower):
+        return True
+    if re.search(r'\btriple\s+cleaning\s+action\b', lower):
+        return True
+    if re.fullmatch(r'[a-z]{1,10}[a-z0-9-]*\d[a-z0-9-]*', lower):
+        return True
+
+    # 1. Corporate entities / Manufacturers / Packers / Marketers
+    if COMPANY_SUFFIX_RE.search(line_clean) or VENDOR_PREFIX_RE.search(line_clean):
+        return True
+    if re.search(r'\b(?:pvt\.?\s*ltd|private\s+limited|limited\b|ltd\b|llp\b|corp\b|corporation\b|inc\b|mfg|mfd|manufactur\w*|pack\w*|market\w*|import\w*)\b', lower):
+        return True
+
+    # 2. Ingredient lists or composition headers
+    if INGREDIENTS_LINE_RE.search(line_clean) or re.search(r'\b(?:ingredients?|contains?|composition)\s*[:.]', lower):
+        return True
+
+    # 3. Botanical / Latin binomial names
+    # e.g., (Azadirachta indica), Camellia sinensis, Mangifera indica, Linn., etc.
+    if re.search(r'\b(?:[A-Z][a-z]+\s+(?:indica|sativa|sinensis|officinalis|vulgaris|sanctum|tinctoria|zeylanica|sp\.|var\.)|\([A-Z][a-z]+\s+[a-z]+\))\b', line_clean):
+        return True
+
+    # 4. Batch IDs, FSSAI licenses, dates, pricing, net quantity
+    if re.search(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?|fssai|lic\.?\s*(?:no\.?|number)?|regd?\s*no\.?)\b', lower):
+        return True
+    if re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|inr|exp(?:iry)?|mfd|pkd|use\s*by|best\s*before)\b', lower):
+        return True
+    if re.search(r'\bnet\s*(?:wt|weight|qty|quantity)\b', lower):
+        return True
+    if re.search(r'\b\d+\s*(?:g|kg|ml|l|ltr|gm|pieces?|tablets?)\b', lower):
+        return True
+
+    # 5. Addresses & Locations
+    if re.search(r'\b(?:plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|sector\b|phase\s+[ivx0-9]+|gidc|industrial\s*area|pin(?:code)?\s*[:.\s-]*\d{6})\b', lower):
+        return True
+
+    # 6. Decorative marketing slogans
+    if any(lower == term.lower() for term in MARKETING_TERMS):
+        return True
+    if re.search(r'^(?:100\s*%\s*(?:pure|natural|veg(?:etarian)?)|best\s+quality|premium\s+quality|original\s+taste|fresh\s+and\s+pure|delicious\s+taste|new\s+look)$', lower):
+        return True
+
+    # 7. Explicit Brand Labels or Trademark Declarations
+    if re.search(r'\b(?:brand\s*(?:name)?|trade\s*mark|regd?\s*(?:brand|trade\s*mark))\s*[:.\s-]', lower):
+        return True
+    if re.search(r'^(?:brand|trademark|tm)\s*[:.\s-]', lower):
+        return True
+    if re.search(r'^[A-Za-z0-9&\'\s.-]{1,35}\s*(?:™|\(tm\)|®|\(r\))\s*$', line_clean, re.I):
+        if not re.search(r'\b(?:extract|oil|flour|biscuit|powder|cream|salt|sugar|tea|coffee|soap|shampoo|juice|paste|rice|noodles|sauce|water|snack|chips|mixture|masala)\b', lower):
+            return True
+
+    # 8. Statutory Generic Name / Commodity declaration headers
+    if re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]', lower):
+        return True
+
+    return False
+
+
+# Generic Non-Brand Patterns: Slogans, usage instructions, sustainability claims, imperative clauses
+NON_BRAND_PATTERNS = [
+    # 1. Usage instructions, directions, storage, preparation, shelf life
+    r'\b(?:use\s+by|best\s+before|how\s+to\s+use|directions?\s*(?:for\s+use)?|instructions?|serving\s+suggestions?|store\s+in|keep\s+(?:in|away|cool|dry)|shake\s+well|caution|warning|dispose\s+of|external\s+use|do\s+not\s+(?:consume|eat|use|freeze)|for\s+best\s+results)\b',
+    # 2. Sustainability, civic, environmental, planet claims
+    r'\b(?:less\s+waste|zero\s+waste|waste\s+less|save\s+(?:earth|water|trees|nature|planet|energy|food)|eco\s+friendly|recycl(?:e|able|ing)|recycle\s+me|planet\s+friendly|green\s+energy|biodegradable|sustainable|clean\s+green|carbon\s+neutral|help\s+save|plant\s+based)\b',
+    # 3. Marketing slogans, taste, quality, promotional claims
+    r'\b(?:delicious|tasty|crispy|crunchy|natural\s+goodness|healthy\s+choice|rich\s+taste|rich\s+aroma|special\s+offer|extra\s+value|buy\s+\d+\s+get\s+\d+|free\s+with|trusted\s+quality|best\s+quality|quality\s+guaranteed|guaranteed\s+(?:quality|satisfaction)|guarantee[ds]?|satisfaction|authentic\s+taste|since\s+\d{4}|made\s+with|goodness\s+of|great\s+taste|freshly\s+baked|taste\s+the|pure\s+and\s+fresh|eat\s+healthy|live\s+better|love\s+food|feel\s+good|better\s+together|perfect\s+choice|expert\s+care|premium\s+quality|100%\s*(?:pure|natural|veg(?:etarian)?|organic|fresh|authentic|eco))\b',
+    # 4. Imperative verb clause structures (e.g. "Use By Less Waste", "Save Water", "Eat Fresh")
+    r'^(?:use|eat|drink|save|recycle|keep|enjoy|taste|choose|protect|help|cook|serve|try|discover|wash|apply|love|live)\s+(?:by|in|with|for|our|the|and|your|more|less|to|healthy|fresh|well|now|safe|clean|green)\b',
+    # 5. Statutory, regulatory, contact, nutrition declaration prefixes
+    r'\b(?:m\.?r\.?p\.?|net\s*(?:wt|qty|weight|volume)|batch|lot|mfg|mfd|pkd|exp|fssai|ingredients?|nutrition(?:al)?|consumer\s*care|customer\s*care|helpline|licen[cs]e)\b',
+    # 6. Corporate legal entity suffixes (pure manufacturer/packer registration names)
+    r'\b(?:pvt\.?\s*ltd\.?|private\s+limited|llp|inc\.?|corporation|gmbh|co\.?\s*kg)\b',
+    # 7. Generic commodity declaration headers
+    r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]',
+]
+
+STANDALONE_COMMODITY_NOUNS = {
+    'salt', 'sugar', 'oil', 'tea', 'coffee', 'soap', 'shampoo',
+    'flour', 'atta', 'maida', 'rice', 'dal', 'biscuit', 'biscuits',
+    'cookies', 'detergent', 'cleaner', 'water', 'juice', 'milk',
+}
+
+
+def _is_disallowed_brand_candidate(val: str) -> bool:
+    """Validate that an extracted brand candidate string represents a genuine brand name,
+    excluding marketing slogans, usage instructions, sustainability claims, and corporate legal entities.
+    """
+    if not val or not val.strip():
+        return True
+    clean_val = val.strip()
+    words = clean_val.split()
+    if not (1 <= len(words) <= 5):
+        return True
+    lower = clean_val.lower()
+
+    if re.search(r'\bdentist\s+recommended\s+brand\b', lower):
+        return True
+    if re.search(r'\btriple\s+cleaning\s+action\b', lower):
+        return True
+    if re.fullmatch(r'[a-z]{1,10}[a-z0-9-]*\d[a-z0-9-]*', lower):
+        return True
+
+    for pattern in NON_BRAND_PATTERNS:
+        if re.search(pattern, lower, re.IGNORECASE):
+            return True
+
+    # If all tokens are purely marketing words
+    if len(words) >= 2 and all(w.lower().rstrip('.,;:-') in MARKETING_TERMS or w.lower().rstrip('sed') in MARKETING_TERMS for w in words):
+        return True
+
+    if lower in STANDALONE_COMMODITY_NOUNS:
+        return True
+
+    return False
+
+
+def _extract_brand_candidate(lines: List[str]) -> Optional[Dict[str, Any]]:
+    """Extract explicit BRAND candidate from anchor labels, trademark markers, or top banner."""
+    # 1. Explicit brand label
+    for line in lines:
+        m = re.search(r'\b(?:brand\s*(?:name)?|trade\s*mark|regd?\s*(?:brand|trade\s*mark))\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            if line[:m.start()].strip(' :;,-'):
+                continue
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'brand')
+            val = cut_val or val
+            val_words = [word.lower() for word in re.findall(r'[A-Za-z]+', val)]
+            if not (val_words and all(word in BRAND_CONTEXT_STOPWORDS for word in val_words)) and not _is_disallowed_brand_candidate(val):
+                return {'value': val.title(), 'confidence': 0.92, 'source': 'OCR_LABEL', 'role': 'BRAND'}
+
+    # 2. Trademarked tokens/lines (e.g. "BrandName™", "BrandName®")
+    for line in lines[:10]:
+        line_clean = line.strip()
+        m = re.search(r'^([A-Za-z0-9&\'\s.-]+?)\s*(?:™|\(tm\)|®|\(r\))\s*$', line_clean, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            words = val.split()
+            if 1 <= len(words) <= 4 and not any(w.lower() in MARKETING_TERMS for w in words):
+                return {'value': val.title(), 'confidence': 0.88, 'source': 'OCR_TRADEMARK', 'role': 'BRAND'}
+    return None
+
+
+BRAND_CONTEXT_STOPWORDS = {
+    'a', 'an', 'and', 'are', 'as', 'by', 'does', 'for', 'from', 'has', 'is',
+    'name', 'of', 'only', 'or', 'the', 'this', 'to', 'with',
+}
+
+
+def _select_general_brand_candidate(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Select an unanchored brand from standalone OCR evidence, not prose."""
+    candidates = []
+    evidence = ocr_items or []
+    if not evidence:
+        return None
+    for line_index, line in enumerate(lines[:25]):
+        clean_line = line.strip()
+        words = re.findall(r"[A-Za-z][A-Za-z0-9&'-]*", clean_line)
+        if not (1 <= len(words) <= 4) or _is_disallowed_brand_candidate(clean_line):
+            continue
+        lower = clean_line.lower()
+        if any(word in BRAND_CONTEXT_STOPWORDS for word in (word.lower() for word in words)):
+            continue
+        if re.search(r'[.!?,:;]', clean_line) or re.search(r'\b(?:brand\s+name|trademark|manufactur\w*|packed\s+by|marketed\s+by)\b', lower):
+            continue
+
+        matching_items = [
+            item for item in evidence
+            if str(item.get('text', '')).strip().lower() == clean_line.lower()
+        ]
+        item = max(matching_items, key=lambda value: float(value.get('confidence') or 0), default=None)
+        confidence = float(item.get('confidence') or 0.8) if item else 0.8
+        score = confidence
+        bbox = item.get('bbox') if item else None
+        if bbox and len(bbox) == 4:
+            width = max(0, float(bbox[2]) - float(bbox[0]))
+            height = max(0, float(bbox[3]) - float(bbox[1]))
+            area = width * height
+            all_areas = []
+            all_ys = []
+            for other in evidence:
+                other_box = other.get('bbox') or []
+                if len(other_box) == 4:
+                    all_areas.append(max(0, float(other_box[2]) - float(other_box[0])) * max(0, float(other_box[3]) - float(other_box[1])))
+                    all_ys.append(float(other_box[1]))
+            if all_areas and area >= max(all_areas) * 0.5:
+                score += 1.2
+            elif all_areas and area >= sorted(all_areas)[len(all_areas) // 2]:
+                score += 0.4
+            if all_ys and float(bbox[1]) <= min(all_ys) + (max(all_ys) - min(all_ys)) * 0.45:
+                score += 0.5
+
+        normalized = re.sub(r'[^a-z0-9]+', ' ', clean_line.lower()).strip()
+        repeat_count = sum(
+            1 for other in evidence
+            if re.sub(r'[^a-z0-9]+', ' ', str(other.get('text', '')).lower()).strip() == normalized
+        )
+        score += min(repeat_count - 1, 3) * 0.8
+        candidates.append((score, line_index, clean_line, item, confidence))
+
+    if not candidates:
+        return None
+    _, line_index, value, item, confidence = max(candidates, key=lambda candidate: candidate[0])
+    selected = {
+        'value': value.title(),
+        'confidence': round(min(0.99, max(0.5, confidence)), 2),
+        'source': 'OCR_LAYOUT',
+        'role': 'BRAND',
+        'line_index': line_index,
+    }
+    if item:
+        selected['bbox'] = item.get('bbox')
+        selected['source_image_index'] = item.get('image_index')
+    return selected
+
+
+def _extract_explicit_product_name(lines: List[str]) -> Optional[str]:
+    """Extract explicit PRODUCT_NAME candidate from statutory/front-panel product labels."""
+    for line in lines:
+        m = re.search(r'\b(?:product\s*(?:name)?|item\s*(?:name)?|article\s*(?:name)?|name\s+of\s+(?:the\s+)?(?:product|item))\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'product')
+            val = cut_val or val
+            words = val.split()
+            if 1 <= len(words) <= 10 and not _is_disallowed_product_name_line(val):
+                return val.title()
+    return None
+
+
+def _extract_explicit_generic_name(lines: List[str]) -> Optional[str]:
+    """Extract explicit GENERIC_NAME candidate from statutory commodity labels."""
+    for line in lines:
+        m = re.search(r'\b(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]+\s*([A-Za-z0-9&\'\s.-]+)', line, re.I)
+        if m:
+            val = m.group(1).strip(' :;,-')
+            cut_val = _cut_before_next_section(val, 'generic')
+            val = cut_val or val
+            words = val.split()
+            if 1 <= len(words) <= 8 and not _is_disallowed_product_name_line(val):
+                return val.upper()
+    return None
+
+
+def _extract_product_name_candidates(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+    known_brand: Optional[str] = None,
+) -> Tuple[Optional[str], List[Dict[str, Any]], str]:
+    """Score front-label candidates and detect ambiguity when multiple plausible candidates exist.
+
+    Enforces strict semantic field ownership: candidates strongly identified as BRAND are excluded
+    unless accompanied by independent product identity terms.
+
+    Returns:
+        (primary_candidate, competing_candidates, status)
+        where status is 'VALID' or 'AMBIGUOUS'.
+    """
+    scored = []
+    clean_known = re.sub(r'[^\w\s]', '', known_brand.lower()).strip() if known_brand else ""
+    brand_words = set(clean_known.split()) if clean_known else set()
+
+    for index, line in enumerate(lines[:25]):
+        if _is_disallowed_product_name_line(line):
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z&'-]*", line)
+        lowered = [w.lower() for w in words]
+        if not words or len(words) > 8 or ':' in line:
+            continue
+        if any(w in MARKETING_TERMS for w in lowered) and len(words) <= 3:
+            continue
+        if len(words) > 5 and re.search(r'\b(?:brand\s+name|recommended|contains?|made\s+with|best\s+before|use\s+by|keep|store)\b', line, re.I):
+            continue
+
+        clean_line = re.sub(r'[^\w\s]', '', line.lower()).strip()
+        line_word_set = set(clean_line.split())
+
+        # Strict semantic exclusion: reject candidates that are identical to or pure subsets of the brand
+        if clean_known:
+            if clean_line == clean_known:
+                continue
+            if line_word_set and line_word_set.issubset(brand_words):
+                continue
+
+        # If brand-only text with no other lines: reject isolated brand banner at index 0
+        if not clean_known and index == 0 and len(words) <= 2:
+            # Check if there are any product descriptors or if line is purely an isolated name
+            has_product_nouns = bool(re.search(
+                r'\b(?:salt|sugar|biscuit|cookies|oil|tea|coffee|soap|shampoo|cream|flour|atta|maida|rice|masala|juice|toothpaste|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink)\b',
+                line, re.I
+            ))
+            # Check if following lines are exclusively statutory metadata (MRP, Net Qty, Dates)
+            remaining_lines = lines[1:]
+            is_lone_front_title = (
+                not has_product_nouns and
+                len(remaining_lines) >= 1 and
+                all(
+                    re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|net\s*(?:wt|qty|weight|volume)|mfg|mfd|pkd|exp|batch|use\s*by|best\s*before)\b', l, re.I)
+                    or _is_disallowed_product_name_line(l)
+                    for l in remaining_lines
+                )
+            )
+            if is_lone_front_title:
+                # This lone prominent text is a BRAND candidate, not a PRODUCT_NAME
+                continue
+
+        score = 1.0 + max(0, 8 - index) * 0.08
+        if clean_known and brand_words.intersection(line_word_set):
+            score += 3.0
+            if clean_line.startswith(clean_known):
+                score += 0.8
+        if re.search(r'\b(?:salt|sugar|biscuit|oil|tea|soap|shampoo|cream|flour|rice|masala|juice|toothpaste|noodles)\b', line, re.I):
+            score += 4.0
+
+        if ocr_items:
+            item = next((x for x in ocr_items if str(x.get('text', '')).strip().lower() == line.lower()), None)
+            if item:
+                score += float(item.get('confidence') or 0)
+                bbox = item.get('bbox') or []
+                if len(bbox) == 4:
+                    width = max(0, float(bbox[2]) - float(bbox[0]))
+                    height = max(0, float(bbox[3]) - float(bbox[1]))
+                    area = width * height
+                    all_areas = []
+                    all_ys = [it.get('bbox')[1] for it in ocr_items if len(it.get('bbox') or []) == 4]
+                    for other in ocr_items:
+                        other_box = other.get('bbox') or []
+                        if len(other_box) == 4:
+                            all_areas.append(max(0, float(other_box[2]) - float(other_box[0])) * max(0, float(other_box[3]) - float(other_box[1])))
+                    if all_areas and area >= max(all_areas) * 0.5:
+                        score += 1.0
+                    elif all_areas and area >= sorted(all_areas)[len(all_areas) // 2]:
+                        score += 0.35
+                    max_y = max(all_ys) if all_ys else 1
+                    min_y = min(all_ys) if all_ys else 0
+                    y_range = max_y - min_y if max_y > min_y else 1
+                    if (bbox[1] - min_y) / y_range < 0.6:
+                        score += 0.5
+        normalized = re.sub(r'[^a-z0-9]+', ' ', clean_line).strip()
+        repeat_count = sum(
+            1 for other in (ocr_items or [])
+            if re.sub(r'[^a-z0-9]+', ' ', str(other.get('text', '')).lower()).strip() == normalized
+        )
+        score += min(repeat_count - 1, 3) * 0.7
+        scored.append((score, line))
+
+    if not scored:
+        return None, [], "VALID"
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top_score, top_cand = scored[0]
+
+    competing = []
+    for s, c in scored[1:4]:
+        if s >= 1.0 and _product_names_conflict(top_cand, c) and (s / top_score) > 0.70:
+            competing.append(c)
+
+    if competing:
+        all_competing = [top_cand] + [c for c in competing if c != top_cand]
+        return top_cand, all_competing, "AMBIGUOUS"
+
+    return top_cand, [], "VALID"
+
+
+def _product_candidate(lines: List[str], ocr_items: Optional[List[Dict[str, Any]]] = None, known_brand: Optional[str] = None) -> Optional[str]:
+    """Score front-label candidates; do not let a marketing adjective become a product."""
+    cand, _, _ = _extract_product_name_candidates(lines, ocr_items, known_brand=known_brand)
+    return cand
+
+
+def _adjacent_brand_generic_product(
+    lines: List[str],
+    brand: Optional[str],
+    generic: Optional[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Join adjacent brand and generic lines only when package evidence supports it."""
+    if not brand or not generic:
+        return None
+    brand_clean = re.sub(r'[^a-z0-9\s]+', '', brand.lower()).strip()
+    generic_clean = re.sub(r'[^a-z0-9\s]+', '', generic.lower()).strip()
+    brand_words = set(brand_clean.split())
+    generic_words = set(generic_clean.split())
+    if generic_words and generic_words.issubset(brand_words):
+        return None
+
+    for index, line in enumerate(lines[:-1]):
+        next_line = lines[index + 1]
+        if re.sub(r'[^a-z0-9\s]+', '', line.lower()).strip() != brand_clean:
+            continue
+        if re.sub(r'[^a-z0-9\s]+', '', next_line.lower()).strip() != generic_clean:
+            continue
+        brand_item = next((item for item in (ocr_items or []) if str(item.get('text', '')).strip().lower() == line.lower()), None)
+        generic_item = next((item for item in (ocr_items or []) if str(item.get('text', '')).strip().lower() == next_line.lower()), None)
+        if brand_item and generic_item and brand_item.get('image_index') != generic_item.get('image_index'):
+            continue
+
+        evidence = [item for item in (brand_item, generic_item) if item]
+        bboxes = [item.get('bbox') for item in evidence if len(item.get('bbox') or []) == 4]
+        candidate = {
+            'value': f"{brand.strip()} {next_line.strip()}"[:200],
+            'raw_text': f"{line.strip()} {next_line.strip()}",
+            'confidence': min((float(item.get('confidence') or 0.8) for item in evidence), default=0.8),
+            'source': 'OCR_LAYOUT',
+            'role': 'PRODUCT_NAME',
+            'line_index': index,
+        }
+        if bboxes:
+            candidate['bbox'] = [
+                min(box[0] for box in bboxes), min(box[1] for box in bboxes),
+                max(box[2] for box in bboxes), max(box[3] for box in bboxes),
+            ]
+        if evidence:
+            candidate['source_image_index'] = evidence[0].get('image_index')
+        return candidate
+    return None
+
+
+def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[Dict[str, Any]]:
+    """Extract clean, structured consumer care contact channels.
+
+    Finds toll-free phone, telephone/mobile, email, website, and postal contacts.
+    Never appends arbitrary continuation lines or unrelated trailing text.
+    """
+    contacts: List[Dict[str, str]] = []
+    seen_contacts = set()
+
+    def _add_contact(c_type: str, c_val: str):
+        key = (c_type, c_val.lower().strip())
+        if key not in seen_contacts:
+            seen_contacts.add(key)
+            contacts.append({"contact_type": c_type, "contact_value": c_val.strip()})
+
+    # 1. Search for toll-free numbers across lines and text
+    tf_pattern = re.compile(r'\b(1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b')
+    for m in tf_pattern.finditer(text):
+        _add_contact(ContactType.TOLL_FREE.value, m.group(1).replace(' ', '-'))
+
+    # 2. Search for email addresses
+    email_pattern = re.compile(r'\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b')
+    for m in email_pattern.finditer(text):
+        _add_contact(ContactType.EMAIL.value, m.group(1))
+
+    # 3. Search for websites (avoiding generic word matching)
+    web_pattern = re.compile(r'\b(https?://[^\s,;]+|www\.[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:/[^\s,;]*)?)\b', re.I)
+    for m in web_pattern.finditer(text):
+        _add_contact(ContactType.WEBSITE.value, m.group(1))
+
+    # 4. Search for phone / helpline numbers specifically linked to consumer care / helpline context
+    phone_prefix_pattern = re.compile(
+        r'(?:(?:helpline|toll\s*free|call\s*us(?:\s*at)?|ph(?:one)?|tel(?:ephone)?|contact(?:\s*no\.?)?|mobile)\s*[:.\s-]*)\s*([+]?[0-9\s\-]{8,15})',
+        re.I
+    )
+    for m in phone_prefix_pattern.finditer(text):
+        raw_num = m.group(1).strip()
+        digits = re.sub(r'\D', '', raw_num)
+        if 8 <= len(digits) <= 12 and not raw_num.startswith('1800'):
+            _add_contact(ContactType.PHONE.value, raw_num)
+
+    # 5. Check if any line explicitly identifies Consumer Care Cell / address
+    matched_label_line = None
+    for idx, line in enumerate(lines):
+        lower = line.lower()
+        if any(kw in lower for kw in ('consumer care', 'customer care', 'customer support', 'write to:')):
+            matched_label_line = line
+            after_kw = line
+            for kw in ('consumer care cell', 'consumer care', 'customer care', 'customer support', 'write to'):
+                if kw in lower:
+                    pos = lower.find(kw) + len(kw)
+                    after_kw = line[pos:].strip(' :;,-')
+                    break
+            if after_kw and not any(ch in after_kw for ch in ('@', 'www.', 'http')):
+                clean_target = _clean_address_text(after_kw)
+                if clean_target and len(clean_target) > 5:
+                    _add_contact(ContactType.POSTAL.value, clean_target)
+            break
+
+    if not contacts:
+        cc_match = _search_patterns(text, CONSUMER_CARE_PATTERNS)
+        if cc_match:
+            val_clean = cc_match.strip(' :;,-')
+            if '@' in val_clean:
+                _add_contact(ContactType.EMAIL.value, val_clean)
+            elif re.search(r'\d{6,}', val_clean):
+                _add_contact(ContactType.PHONE.value, val_clean)
+            else:
+                _add_contact(ContactType.CONSUMER_CARE_CELL.value, val_clean)
+
+    if not contacts and not matched_label_line:
+        return None
+
+    type_priority = {
+        ContactType.TOLL_FREE.value: 1,
+        ContactType.PHONE.value: 2,
+        ContactType.EMAIL.value: 3,
+        ContactType.WEBSITE.value: 4,
+        ContactType.POSTAL.value: 5,
+        ContactType.CONSUMER_CARE_CELL.value: 6,
+    }
+    contacts.sort(key=lambda c: type_priority.get(c["contact_type"], 99))
+
+    primary = contacts[0] if contacts else {"contact_type": "CONSUMER_CARE_CELL", "contact_value": matched_label_line or "Consumer Care"}
+    
+    val_strs = [c["contact_value"] for c in contacts[:2]]
+    val_summary = None
+    if matched_label_line:
+        lower_lbl = matched_label_line.lower()
+        for kw in ('consumer care cell', 'consumer care', 'customer care', 'customer support', 'helpline', 'toll free', 'call us', 'write to'):
+            if kw in lower_lbl:
+                pos = lower_lbl.find(kw) + len(kw)
+                cand_after = matched_label_line[pos:].strip(' :;,-')
+                cand_after = _cut_before_next_section(cand_after, 'consumer_care')
+                if cand_after:
+                    if any(ch in cand_after for ch in ('@', 'www.', 'http')) or re.search(r'\d{4,}', cand_after):
+                        val_summary = cand_after
+                    elif val_strs:
+                        val_summary = f"{cand_after}, {', '.join(val_strs)}"
+                    else:
+                        val_summary = cand_after
+                break
+    if not val_summary:
+        val_summary = ', '.join(val_strs) if val_strs else primary["contact_value"]
+
+    return build_consumer_care_candidate(
+        value=val_summary,
+        raw_text=matched_label_line or val_summary,
+        contacts=contacts,
+        primary_contact_type=primary["contact_type"],
+        primary_contact_value=primary["contact_value"],
+        confidence=0.8,
+        source='OCR',
+    )
+
+
+def _extract_price_number(text: str) -> Optional[float]:
+    """Extract numeric price value from price string e.g. '₹120', 'Rs 140.50'."""
+    if not text:
+        return None
+    cleaned = str(text).replace(',', '')
+    match = re.search(r'(\d+(?:\.\d{1,2})?)', cleaned)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _product_names_conflict(s1: str, s2: str) -> bool:
+    """Determine whether two product or brand names contradict each other."""
+    c1 = re.sub(r'[^\w\s]', '', str(s1).lower()).strip()
+    c2 = re.sub(r'[^\w\s]', '', str(s2).lower()).strip()
+    if not c1 or not c2 or c1 == c2:
+        return False
+    stop_words = {'the', 'a', 'an', 'and', '&', 'net', 'pack', 'package', 'pouch', 'bottle', 'box'}
+    words1 = [w for w in c1.split() if w not in stop_words]
+    words2 = [w for w in c2.split() if w not in stop_words]
+    if not words1 or not words2:
+        return False
+    set1, set2 = set(words1), set(words2)
+    if set1 == set2:
+        return False
+
+    # Panel detail expansion: if all words of one candidate are fully contained in the other
+    # and the shorter phrase has at least 2 words (e.g. "Tata Salt" vs "Tata Salt Vacuum Evaporated Iodised")
+    if (set1.issubset(set2) or set2.issubset(set1)) and min(len(set1), len(set2)) >= 2:
+        return False
+
+    overlap = set1.intersection(set2)
+    union = set1.union(set2)
+    similarity = len(overlap) / len(union) if union else 1.0
+    return similarity < 0.6
+
+
+def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, Any]) -> bool:
+    """Determine whether two candidate extractions for the same field represent conflicting evidence."""
+    v1 = cand1.get('value')
+    v2 = cand2.get('value')
+    if v1 is None or v2 is None:
+        return False
+    s1 = str(v1).strip()
+    s2 = str(v2).strip()
+    if not s1 or not s2:
+        return False
+    if s1.lower() == s2.lower():
+        return False
+
+    if field_name == 'BRAND':
+        brand_words_1 = set(re.sub(r'[^a-z0-9\s]', '', s1.lower()).split())
+        brand_words_2 = set(re.sub(r'[^a-z0-9\s]', '', s2.lower()).split())
+        if brand_words_1.issubset(brand_words_2) or brand_words_2.issubset(brand_words_1):
+            return False
+
+    # 1. Price / MRP comparison
+    if field_name == 'MRP':
+        num1 = cand1.get('numeric_value')
+        num2 = cand2.get('numeric_value')
+        if num1 is not None and num2 is not None:
+            try:
+                return abs(float(num1) - float(num2)) > 0.01
+            except (ValueError, TypeError):
+                pass
+        p1 = _extract_price_number(s1)
+        p2 = _extract_price_number(s2)
+        if p1 is not None and p2 is not None:
+            return abs(p1 - p2) > 0.01
+        return s1.lower() != s2.lower()
+
+    # 2. Declared Net Quantity comparison
+    if field_name == 'DECLARED_NET_QUANTITY':
+        # Ignore price or non-quantity candidate types from triggering net quantity conflicts
+        if cand1.get('candidate_type') in ('MRP_AMOUNT', 'UNKNOWN_NUMERIC') or cand2.get('candidate_type') in ('MRP_AMOUNT', 'UNKNOWN_NUMERIC'):
+            return False
+
+        is_multi1 = bool(cand1.get('is_multipack'))
+        is_multi2 = bool(cand2.get('is_multipack'))
+
+        # A. Multipack vs Multipack
+        if is_multi1 and is_multi2:
+            cnt1 = cand1.get('pack_count')
+            cnt2 = cand2.get('pack_count')
+            uq1 = cand1.get('unit_net_quantity')
+            uq2 = cand2.get('unit_net_quantity')
+            u1 = str(cand1.get('quantity_unit') or cand1.get('unit') or '').lower().strip()
+            u2 = str(cand2.get('quantity_unit') or cand2.get('unit') or '').lower().strip()
+
+            if cnt1 is not None and cnt2 is not None and cnt1 != cnt2:
+                return True
+            if uq1 is not None and uq2 is not None:
+                try:
+                    if abs(float(uq1) - float(uq2)) > 0.001:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            if u1 and u2 and u1 != u2:
+                return True
+            return False
+
+        # B. Multipack vs Single Quantity (Packaging Hierarchy: Outer Package vs Inner Unit)
+        if is_multi1 != is_multi2:
+            multi_cand = cand1 if is_multi1 else cand2
+            single_cand = cand2 if is_multi1 else cand1
+
+            s_val = single_cand.get('quantity_value') or single_cand.get('numeric_value')
+            s_unit = str(single_cand.get('quantity_unit') or single_cand.get('unit') or '').lower().strip()
+            m_unit = str(multi_cand.get('quantity_unit') or multi_cand.get('unit') or '').lower().strip()
+
+            if s_val is not None:
+                try:
+                    s_float = float(s_val)
+                    m_unit_qty = float(multi_cand.get('unit_net_quantity') or 0)
+                    m_total_qty = float(multi_cand.get('derived_total_quantity') or 0)
+
+                    unit_matches = not s_unit or not m_unit or s_unit == m_unit
+                    matches_unit = abs(s_float - m_unit_qty) <= 0.001
+                    matches_total = abs(s_float - m_total_qty) <= 0.001
+
+                    if unit_matches and (matches_unit or matches_total):
+                        # Complementary hierarchy: outer multipack breakdown vs inner unit or derived total
+                        return False
+                    else:
+                        # Genuine conflict between declarations
+                        return True
+                except (ValueError, TypeError):
+                    pass
+
+        # C. Single Quantity vs Single Quantity
+        qv1 = cand1.get('quantity_value')
+        qv2 = cand2.get('quantity_value')
+        qu1 = str(cand1.get('quantity_unit') or '').lower().strip()
+        qu2 = str(cand2.get('quantity_unit') or '').lower().strip()
+        if qv1 is not None and qv2 is not None:
+            try:
+                if abs(float(qv1) - float(qv2)) > 0.001:
+                    return True
+                if qu1 and qu2 and qu1 != qu2:
+                    return True
+                return False
+            except (ValueError, TypeError):
+                pass
+
+        # Parse string expressions for structured units
+        q_exp1 = parse_quantity_expression(s1)
+        q_exp2 = parse_quantity_expression(s2)
+        if q_exp1 and q_exp2:
+            v_val1 = q_exp1.get('quantity') or q_exp1.get('unit_net_quantity')
+            v_val2 = q_exp2.get('quantity') or q_exp2.get('unit_net_quantity')
+            v_u1 = str(q_exp1.get('unit') or '').lower().strip()
+            v_u2 = str(q_exp2.get('unit') or '').lower().strip()
+            if v_val1 is not None and v_val2 is not None:
+                if abs(float(v_val1) - float(v_val2)) > 0.001:
+                    return True
+                if v_u1 and v_u2 and v_u1 != v_u2:
+                    return True
+                return False
+
+        c1 = re.sub(r'[^\w\s]', '', s1.lower()).strip()
+        c2 = re.sub(r'[^\w\s]', '', s2.lower()).strip()
+        return c1 != c2
+
+    # 3. Dates comparison (month/year)
+    if field_name in (
+        'MONTH_YEAR_MANUFACTURE', 'MANUFACTURE_DATE', 'PACKING_DATE',
+        'BEST_BEFORE_USE_BY', 'USE_BEFORE_DATE', 'EXPIRY_DATE'
+    ):
+        norm1 = cand1.get('normalized_value') or cand1.get('normalized_date')
+        norm2 = cand2.get('normalized_value') or cand2.get('normalized_date')
+        if norm1 and norm2:
+            return norm1 != norm2
+
+        p1_valid, p1_norm, _ = parse_date_with_precision(s1)
+        p2_valid, p2_norm, _ = parse_date_with_precision(s2)
+        if p1_valid and p2_valid and p1_norm and p2_norm:
+            return p1_norm != p2_norm
+
+        m1 = cand1.get('month') or cand1.get('extracted_month')
+        y1 = cand1.get('year') or cand1.get('extracted_year')
+        m2 = cand2.get('month') or cand2.get('extracted_month')
+        y2 = cand2.get('year') or cand2.get('extracted_year')
+        if m1 and m2 and y1 and y2:
+            return (m1, y1) != (m2, y2)
+        d1_m = re.findall(r'\b(0?[1-9]|1[0-2])[/-](\d{2,4})\b', s1)
+        d2_m = re.findall(r'\b(0?[1-9]|1[0-2])[/-](\d{2,4})\b', s2)
+        if d1_m and d2_m:
+            return d1_m[0] != d2_m[0]
+        return s1.lower() != s2.lower()
+
+    # 4. Product Name and Brand
+    if field_name in ('PRODUCT_NAME', 'BRAND'):
+        return _product_names_conflict(s1, s2)
+
+    # 5. FSSAI License Number (digits)
+    if field_name == 'FSSAI_LICENSE':
+        dig1 = re.findall(r'\d{14}', s1)
+        dig2 = re.findall(r'\d{14}', s2)
+        if dig1 and dig2:
+            return dig1[0] != dig2[0]
+        return s1.lower() != s2.lower()
+
+    # Default fallback: cleaned alphanumeric comparison
+    c1 = re.sub(r'[^\w\s]', '', s1.lower()).strip()
+    c2 = re.sub(r'[^\w\s]', '', s2.lower()).strip()
+    return c1 != c2
+
+
+def merge_product_evidence(
+    fields: Dict[str, Any],
+    raw_text: str,
+    ocr_items: Optional[List[Dict[str, Any]]],
+    barcode_result: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Merge barcode lookup as supplementary evidence without silently overwriting OCR or product identity."""
+    lookup = (barcode_result or {}).get('lookup') or {}
+    barcode_value = (barcode_result or {}).get('value')
+    if barcode_value:
+        fields['BARCODE'] = {
+            'value': barcode_value,
+            'confidence': (barcode_result or {}).get('confidence', 0.7),
+            'source': (barcode_result or {}).get('source', 'BARCODE'),
+        }
+
+    if lookup.get('status') != 'FOUND':
+        return fields
+
+    product_name = str(lookup.get('product_name') or '').strip()
+    brand = str(lookup.get('brands') or '').split(',')[0].strip()
+
+    # External database lookup is supplementary evidence, never legal proof
+    fields['BARCODE_METADATA'] = {
+        'product_name': product_name,
+        'brand': brand,
+        'source': 'BARCODE_LOOKUP',
+        'evidence_type': 'SUPPLEMENTARY',
+        'status': 'FOUND',
+    }
+
+    # Handle PRODUCT_NAME
+    if product_name:
+        current = fields.get('PRODUCT_NAME')
+        if not current or not str(current.get('value', '')).strip():
+            fields['PRODUCT_NAME'] = {
+                'value': product_name[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        elif current.get('value', '').lower() in MARKETING_TERMS:
+            fields['PRODUCT_NAME'] = {
+                'value': product_name[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        else:
+            if _values_conflict('PRODUCT_NAME', current, {'value': product_name}):
+                # Barcode lookup contradicts printed OCR - surface contradiction without replacing OCR
+                ocr_val = current.get('value')
+                current['status'] = 'CONFLICTING_EVIDENCE'
+                current['has_conflict'] = True
+                current['barcode_match'] = 'CONFLICTS'
+                current['values'] = [ocr_val, product_name]
+                current['ocr_value'] = ocr_val
+                current['barcode_value'] = product_name
+                current['candidates'] = [
+                    dict(current),
+                    {
+                        'value': product_name,
+                        'source': 'BARCODE_LOOKUP',
+                        'evidence_type': 'SUPPLEMENTARY',
+                        'confidence': 0.75,
+                    },
+                ]
+                current['conflict_reason'] = (
+                    f"Printed OCR product name '{ocr_val}' contradicts barcode database lookup '{product_name}'."
+                )
+            else:
+                current['barcode_match'] = 'AGREES'
+                current['supplementary_evidence'] = {
+                    'value': product_name,
+                    'source': 'BARCODE_LOOKUP',
+                    'evidence_type': 'SUPPLEMENTARY',
+                }
+
+    # Handle BRAND
+    if brand:
+        current = fields.get('BRAND')
+        if not current or not str(current.get('value', '')).strip():
+            fields['BRAND'] = {
+                'value': brand[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        elif current.get('value', '').lower() in MARKETING_TERMS:
+            fields['BRAND'] = {
+                'value': brand[:200],
+                'confidence': 0.85,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+                'is_supplementary': True,
+            }
+        else:
+            if _values_conflict('BRAND', current, {'value': brand}):
+                ocr_val = current.get('value')
+                current['status'] = 'CONFLICTING_EVIDENCE'
+                current['has_conflict'] = True
+                current['barcode_match'] = 'CONFLICTS'
+                current['values'] = [ocr_val, brand]
+                current['ocr_value'] = ocr_val
+                current['barcode_value'] = brand
+                current['candidates'] = [
+                    dict(current),
+                    {
+                        'value': brand,
+                        'source': 'BARCODE_LOOKUP',
+                        'evidence_type': 'SUPPLEMENTARY',
+                        'confidence': 0.75,
+                    },
+                ]
+                current['conflict_reason'] = (
+                    f"Printed OCR brand '{ocr_val}' contradicts barcode database lookup '{brand}'."
+                )
+            else:
+                current['barcode_match'] = 'AGREES'
+                current['supplementary_evidence'] = {
+                    'value': brand,
+                    'source': 'BARCODE_LOOKUP',
+                    'evidence_type': 'SUPPLEMENTARY',
+                }
+
+    if product_name and 'GENERIC_NAME' not in fields:
+        tokens = [
+            token for token in re.findall(r'[A-Za-z]+', product_name)
+            if token.lower() not in {word.lower() for word in brand.split()}
+        ]
+        if tokens:
+            fields['GENERIC_NAME'] = {
+                'value': tokens[-1].upper(),
+                'confidence': 0.78,
+                'source': 'BARCODE_LOOKUP',
+                'evidence_type': 'SUPPLEMENTARY',
+            }
+
+    return fields
+
+
+# ---------------------------------------------------------------------------
+# Semantic context detection for candidate classification
+# ---------------------------------------------------------------------------
+NUTRITION_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bserv(?:e|ing)\s*size\b|\bper\s+(?:\d+\s*g|serving)\b|'
+    r'\bnutrition(?:al)?\s*(?:information|facts|value)?\b|'
+    r'\b(?:energy|protein|carbohydrate|fat|sugar|fibre|fiber|sodium|cholesterol|calcium|iron|vitamin)\s*[:\(]|'
+    r'\bkcal\b|\bkj\b|'
+    r'\btotal\s+(?:sugar|fat|carbohydrate|energy)\b|'
+    r'\bper\s+100\s*(?:g|ml)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+STORAGE_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away)\b|'
+    r'\bcool\s*(?:,|&|and)?\s*dry\s+place\b|\brefrigerat\w*\b|'
+    r'\bavoid\s+(?:direct\s+)?sunlight\b|\bdo\s+not\s+(?:store|keep)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+MARKETING_CONTEXT_RE = re.compile(
+    r'(?:'
+    r"\bsweet'?n\s*sour\b|\bcrispy\s*(?:&|and)\s*crunchy\b|"
+    r'\bdelicious\b|\btasty\b|\bpremium\s+quality\b|'
+    r'\b(?:100|pure)\s*%\s*(?:natural|pure|vegetarian)\b|'
+    r'\bno\s+added\s+(?:preservative|colour|flavor)\b|'
+    r'\b(?:new|improved)\s+(?:taste|formula|recipe)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+CONTACT_CONTEXT_RE = re.compile(
+    r'(?:'
+    r'\bcall\s+us\s+at\b|\btoll\s*free\b|\b(?:phone|tel|fax)\s*[:\s]\b|'
+    r'\b(?:email|e-mail)\s*[:\s]\b|\bwww\.\b|\bhttp\b|'
+    r'\bconsumer\s*care\b|\bcustomer\s*care\b|\bhelpline\b|'
+    r'\bwrite\s+to\b|\bfeedback\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _fuzzy_ocr_similar(s1: str, s2: str, threshold: float = 0.65) -> bool:
+    """Detect if two strings are OCR character-error variations of the same underlying text.
+
+    Uses character-level bigram similarity (Dice coefficient).
+    E.g. 'COMPANYFOODS' vs 'COMPANY FOODS' share most bigrams.
+    """
+    def _bigrams(s: str) -> list:
+        cleaned = re.sub(r'[^a-z0-9]', '', s.lower())
+        return [cleaned[i:i+2] for i in range(len(cleaned) - 1)] if len(cleaned) >= 2 else []
+
+    bg1 = _bigrams(s1)
+    bg2 = _bigrams(s2)
+    if not bg1 or not bg2:
+        return False
+    # Dice coefficient
+    from collections import Counter
+    c1, c2 = Counter(bg1), Counter(bg2)
+    overlap = sum((c1 & c2).values())
+    total = sum(c1.values()) + sum(c2.values())
+    similarity = (2.0 * overlap) / total if total else 0.0
+    return similarity >= threshold
+
+
+def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool:
+    """Check if a candidate value is contextually irrelevant for its claimed field.
+
+    Returns True if the candidate should be excluded from conflict evaluation.
+    """
+    val = str(candidate.get('value') or '').strip()
+    raw = str(candidate.get('raw_text') or candidate.get('value') or '').strip()
+    # Surrounding context from the source line/text
+    context = str(candidate.get('source_context') or candidate.get('context') or raw)
+    sec = candidate.get('semantic_section')
+    rel = candidate.get('relevance')
+    rel_score = candidate.get('relevance_score')
+
+    if not val:
+        return True
+
+    if rel == 'rejected_as_irrelevant':
+        return True
+
+    if rel_score is not None and float(rel_score) <= 0.2 and field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        return True
+
+    if field_name in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        # Check explicit semantic candidate_type tag
+        cand_type = candidate.get('candidate_type')
+        if cand_type in ('MRP_AMOUNT', 'NUTRITIONAL_QUANTITY', 'SERVING_QUANTITY', 'DATE_NUMERIC', 'IDENTIFIER_NUMERIC', 'UNKNOWN_NUMERIC'):
+            return True
+
+        # Reject MRP / price context
+        if re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', context, re.IGNORECASE) or re.search(r'\b(?:rs\.?|inr|₹|mrp)\b', val, re.IGNORECASE):
+            return True
+
+        # Reject zero or negative quantities (e.g. '0 g', '0.0 g', '0')
+        z_match = re.search(r'([+-]?\d+(?:\.\d+)?)', val)
+        if z_match:
+            try:
+                if float(z_match.group(1)) <= 0:
+                    return True
+            except (ValueError, TypeError):
+                pass
+
+        # Reject unanchored bare numbers lacking any statutory measurement unit
+        if re.fullmatch(r'[+-]?\d+(?:\.\d+)?', val) and not candidate.get('unit'):
+            return True
+
+        if sec in (SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INGREDIENTS, SECTION_MRP):
+            return True
+        # Reject nutrition/serving-size quantities
+        if NUTRITION_CONTEXT_RE.search(context) or SERVING_SIZE_RE.search(context) or NUTRITION_LINE_RE.search(context):
+            return True
+        # Reject isolated single digits without units (OCR noise like "2")
+        if re.fullmatch(r'\d{1,2}', val) and not re.search(r'[a-zA-Z]', val):
+            return True
+        # Reject if the context line is clearly a nutrition row
+        if re.search(r'\b(?:sugar|protein|fat|carbohydrate|fibre|fiber|energy|cholesterol|sodium|calcium)\b', context, re.IGNORECASE):
+            return True
+        # Serving size indicator
+        if re.search(r'\bserv(?:e|ing)\s*size\b', context, re.IGNORECASE):
+            return True
+
+    elif field_name == 'MANUFACTURER_NAME':
+        if sec in (SECTION_MARKETING, SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE):
+            return True
+        # Reject marketing slogans, nutrition rows, storage instructions
+        if MARKETING_CONTEXT_RE.search(context) or NUTRITION_CONTEXT_RE.search(context):
+            return True
+        if STORAGE_CONTEXT_RE.search(context):
+            return True
+        if CONTACT_CONTEXT_RE.search(context):
+            return True
+
+    elif field_name == 'MANUFACTURER_ADDRESS':
+        if sec in (SECTION_MARKETING, SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE):
+            return True
+        # Reject storage instructions, marketing, contact lines
+        if STORAGE_CONTEXT_RE.search(val) or MARKETING_CONTEXT_RE.search(val):
+            return True
+        if CONTACT_CONTEXT_RE.search(val):
+            return True
+        # Reject if it looks like a nutrition/serving line
+        if NUTRITION_CONTEXT_RE.search(val) or NUTRITION_LINE_RE.search(val):
+            return True
+
+    elif field_name == 'PRODUCT_NAME':
+        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS):
+            return True
+        # Reject nutrition table rows
+        if NUTRITION_CONTEXT_RE.search(val) or NUTRITION_LINE_RE.search(val):
+            return True
+        # Reject very short low-confidence fragments (likely OCR noise)
+        conf = float(candidate.get('confidence') or 0)
+        if len(val) <= 3 and conf < 0.7:
+            return True
+        # Reject candidates with explicit brand ownership
+        anchor = str(candidate.get('anchor_label') or '').lower()
+        if 'brand' in anchor or 'trade mark' in anchor or candidate.get('role') == 'BRAND':
+            return True
+
+    elif field_name == 'BRAND':
+        if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS, SECTION_MARKETING):
+            return True
+        if COMPANY_SUFFIX_RE.search(val) or VENDOR_PREFIX_RE.search(val):
+            return True
+        if _is_disallowed_brand_candidate(val):
+            return True
+        if len(val) <= 1:
+            return True
+
+    elif field_name == 'MRP':
+        if sec in (SECTION_NUTRITION, SECTION_CONSUMER_CARE):
+            return True
+        if NUTRITION_CONTEXT_RE.search(context) or NUTRITION_LINE_RE.search(context):
+            return True
+        digits_only = re.sub(r'\D', '', val)
+        if len(digits_only) >= 10 and not re.search(r'(?:mrp|price|₹|rs)', context, re.I):
+            return True
+
+    return False
+
+
+def _classify_multi_image_evidence(
+    field_name: str,
+    groups: List[List[Dict[str, Any]]],
+    all_candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Classify multi-group evidence for a field into TRUE_CONFLICT, REVIEW, or MULTI_PANEL_EVIDENCE.
+
+    Args:
+        field_name: The declaration field being evaluated.
+        groups: Groups of candidates clustered by value equivalence.
+        all_candidates: All candidates (for metadata).
+
+    Returns:
+        A merged field dict with the appropriate status and classification.
+    """
+    distinct_values = [str(g[0].get('value')) for g in groups]
+    highest_conf = max((float(c.get('confidence') or 0) for c in all_candidates), default=0.8)
+
+    # Check if all MRP candidate groups agree on the exact numeric price
+    if field_name == 'MRP':
+        prices = [_extract_price_number(str(g[0].get('value', ''))) for g in groups]
+        if all(p is not None for p in prices) and len(prices) >= 1:
+            if max(prices) - min(prices) <= 0.01:
+                all_in_groups = [c for g in groups for c in g]
+                best = max(all_in_groups, key=lambda c: float(c.get('confidence') or 0))
+                res = dict(best)
+                res['candidates'] = all_candidates
+                res['candidate_classification'] = 'CONFIRMED_SAME'
+                res['multi_image_agreement'] = 'CONFIRMED_SAME'
+                res['evidence_merge_type'] = 'CONFIRMED_SAME'
+                res['has_conflict'] = False
+                res['is_ambiguous'] = False
+                res['status'] = 'VALID'
+                res['evidence_state'] = 'EVIDENCE_VERIFIED'
+                return res
+
+    # Check if all groups are OCR variations of the same value (fuzzy match)
+    # Works for 2+ groups by checking all pairs
+    if len(groups) >= 2:
+        all_fuzzy_similar = True
+        for i in range(len(groups)):
+            for j in range(i + 1, len(groups)):
+                v_i = str(groups[i][0].get('value', ''))
+                v_j = str(groups[j][0].get('value', ''))
+                if field_name in ('PRODUCT_NAME', 'BRAND') and _product_names_conflict(v_i, v_j):
+                    all_fuzzy_similar = False
+                    break
+                if not _fuzzy_ocr_similar(v_i, v_j):
+                    all_fuzzy_similar = False
+                    break
+            if not all_fuzzy_similar:
+                break
+
+        if all_fuzzy_similar:
+            # OCR character-level variations — pick the best candidate, flag for review
+            all_in_groups = [c for g in groups for c in g]
+            best = max(all_in_groups, key=lambda c: (float(c.get('confidence') or 0), len(str(c.get('value', '')))))
+            return {
+                'status': 'REVIEW',
+                'has_conflict': False,
+                'value': best.get('value'),
+                'selected_value': best.get('value'),
+                'values': distinct_values,
+                'confidence': round(float(best.get('confidence') or highest_conf), 2),
+                'source': best.get('source', 'OCR'),
+                'source_image_index': best.get('source_image_index'),
+                'candidates': all_candidates,
+                'review_required': False,
+                'candidate_classification': 'OCR_VARIATION',
+                'evidence_merge_type': 'AMBIGUOUS',
+                'reason': (
+                    f"Multiple plausible evidence candidates detected across package views for '{field_name}': "
+                    f"{distinct_values}. Likely OCR character variations; additional package-image evidence is recommended."
+                ),
+            }
+
+    # For multi-group (3+ or non-fuzzy): check if there's one dominant, high-confidence group
+    if len(groups) >= 2:
+        # Check for multi-panel naming (e.g. front panel brand + side panel variant)
+        from_different_images = len(set(
+            c.get('source_image_index') for g in groups for c in g
+            if c.get('source_image_index') is not None
+        )) > 1
+        if from_different_images and field_name in ('PRODUCT_NAME', 'BRAND', 'GENERIC_NAME'):
+            # Product names from different panels may be complementary, not conflicting
+            best_group = max(groups, key=lambda g: max(float(c.get('confidence') or 0) for c in g))
+            best = max(best_group, key=lambda c: float(c.get('confidence') or 0))
+            return {
+                'status': 'REVIEW',
+                'has_conflict': False,
+                'value': best.get('value'),
+                'selected_value': best.get('value'),
+                'values': distinct_values,
+                'confidence': round(float(best.get('confidence') or highest_conf), 2),
+                'source': best.get('source', 'OCR'),
+                'source_image_index': best.get('source_image_index'),
+                'candidates': all_candidates,
+                'review_required': False,
+                'candidate_classification': 'MULTI_PANEL_EVIDENCE',
+                'evidence_merge_type': 'COMPLEMENTARY',
+                'reason': (
+                    f"Multiple product identification candidates detected across different package views for '{field_name}': "
+                    f"{distinct_values}. Additional package-image evidence is recommended."
+                ),
+            }
+
+    # Default: TRUE_CONFLICT — genuinely contradictory declarations
+    return {
+        'status': 'CONFLICTING_EVIDENCE',
+        'has_conflict': True,
+        'values': distinct_values,
+        'value': f"CONFLICT: {' vs '.join(distinct_values)}",
+        'confidence': round(highest_conf, 2),
+        'source': 'MULTI_IMAGE_CONFLICT',
+        'candidates': all_candidates,
+        'review_required': False,
+        'candidate_classification': 'TRUE_CONFLICT',
+        'evidence_merge_type': 'TRUE_CONFLICT',
+        'conflict_reason': f"Conflicting declarations detected across package views for '{field_name}': {distinct_values}",
+        'reason': (
+            f"Conflicting evidence detected across package views for '{field_name}': "
+            f"{distinct_values}. Automatic result marked NOT DETECTED."
+        ),
+    }
+
+
+def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge extracted declarations across multiple package views with smart conflict classification.
+
+    Distinguishes between:
+    - TRUE_CONFLICT: Same semantic field & context, genuinely contradictory values.
+    - COMPLEMENTARY (MULTI_PANEL_EVIDENCE): Complementary declarations from different package panels.
+    - AMBIGUOUS (OCR_VARIATION): Multiple plausible candidates or OCR character variations.
+    - IRRELEVANT (OCR_NOISE): Filtered out before conflict evaluation.
+    - CONFIRMED_SAME: Consistent declarations agreeing across package panels.
+
+    Never silently favors the highest-confidence candidate when values disagree.
+    All candidate metadata (source, confidence, image index) is preserved.
+    """
+    merged: Dict[str, Any] = {}
+    candidates_by_field: Dict[str, List[Dict[str, Any]]] = {}
+
+    for field_set in field_sets:
+        if not field_set or not isinstance(field_set, dict):
+            continue
+        for name, candidate in field_set.items():
+            if not candidate or not isinstance(candidate, dict):
+                continue
+            val = candidate.get('value')
+            if val is None or not str(val).strip():
+                continue
+            candidates_by_field.setdefault(name, []).append(dict(candidate))
+
+    # Phase 0: Semantic Field Ownership Validation across Images
+    # If any image extracted BRAND, collect the verified brand values.
+    # Candidates in PRODUCT_NAME that are purely identical to BRAND must NOT be promoted to PRODUCT_NAME.
+    all_brand_values = set()
+    for field_set in field_sets:
+        if not field_set or not isinstance(field_set, dict):
+            continue
+        brand_item = field_set.get('BRAND')
+        if brand_item and isinstance(brand_item, dict):
+            b_val = str(brand_item.get('value') or '').strip().lower()
+            if b_val:
+                all_brand_values.add(b_val)
+                b_clean = re.sub(r'[^\w\s]', '', b_val).strip()
+                if b_clean:
+                    all_brand_values.add(b_clean)
+
+    if 'PRODUCT_NAME' in candidates_by_field and all_brand_values:
+        clean_pname_candidates = []
+        for cand in candidates_by_field['PRODUCT_NAME']:
+            val_clean = re.sub(r'[^\w\s]', '', str(cand.get('value') or '').lower()).strip()
+            if val_clean in all_brand_values:
+                cand['candidate_classification'] = 'RECLASSIFIED_AS_BRAND'
+                cand['evidence_merge_type'] = 'RECLASSIFIED_AS_BRAND'
+                if 'BRAND' not in candidates_by_field or not candidates_by_field['BRAND']:
+                    b_cand = dict(cand)
+                    b_cand['role'] = 'BRAND'
+                    candidates_by_field.setdefault('BRAND', []).append(b_cand)
+            else:
+                clean_pname_candidates.append(cand)
+        candidates_by_field['PRODUCT_NAME'] = clean_pname_candidates
+
+    for name, candidates in candidates_by_field.items():
+        if not candidates:
+            continue
+
+        # Phase 1: Filter out irrelevant/noise candidates
+        relevant = [c for c in candidates if not _is_irrelevant_candidate(name, c)]
+        noise = [c for c in candidates if _is_irrelevant_candidate(name, c)]
+        for n in noise:
+            n['candidate_classification'] = 'IRRELEVANT'
+            n['evidence_merge_type'] = 'IRRELEVANT'
+
+        if not relevant:
+            # All candidates are noise — pick best anyway but mark as low-confidence
+            if candidates:
+                best = max(candidates, key=lambda c: float(c.get('confidence') or 0))
+                result = dict(best)
+                result['candidates'] = candidates
+                result['filtered_noise'] = noise
+                result['candidate_classification'] = 'IRRELEVANT'
+                result['evidence_merge_type'] = 'IRRELEVANT'
+                merged[name] = result
+            continue
+
+        if len(relevant) == 1:
+            result = dict(relevant[0])
+            result['candidates'] = candidates
+            result['has_conflict'] = False
+            result['is_ambiguous'] = False
+            if len(candidates) > 1 and len(noise) == 0:
+                result['candidate_classification'] = 'CONFIRMED_SAME'
+                result['evidence_merge_type'] = 'CONFIRMED_SAME'
+            else:
+                result.setdefault('candidate_classification', 'SINGLE_PANEL')
+                result.setdefault('evidence_merge_type', 'SINGLE_PANEL')
+            if name == 'MRP' and result.get('currency_status') == 'VERIFIED':
+                result['status'] = 'PASS'
+                result['reason'] = f"Detected valid MRP declaration: {result.get('value')}"
+                result['evidence_state'] = 'EVIDENCE_VERIFIED'
+            if noise:
+                result['filtered_noise'] = noise
+            merged[name] = result
+            continue
+
+        # Phase 2: Group relevant candidates by value equivalence
+        groups: List[List[Dict[str, Any]]] = []
+        for cand in relevant:
+            matched_group = False
+            for group in groups:
+                if not _values_conflict(name, cand, group[0]):
+                    group.append(cand)
+                    matched_group = True
+                    break
+            if not matched_group:
+                groups.append([cand])
+
+        if len(groups) == 1:
+            # All relevant candidates agree across images
+            best = max(groups[0], key=lambda c: float(c.get('confidence') or 0))
+            agreed = dict(best)
+            agreed['candidates'] = candidates
+            agreed['candidate_classification'] = 'CONFIRMED_SAME'
+            agreed['multi_image_agreement'] = 'CONFIRMED_SAME'
+            agreed['evidence_merge_type'] = 'CONFIRMED_SAME'
+            agreed['has_conflict'] = False
+            agreed['is_ambiguous'] = False
+            agreed.setdefault('status', 'VALID')
+            agreed.setdefault('evidence_state', 'EVIDENCE_VERIFIED')
+            if name == 'MRP' and agreed.get('currency_status') == 'VERIFIED':
+                agreed['status'] = 'PASS'
+                agreed['reason'] = f"Detected valid MRP declaration: {agreed.get('value')}"
+                agreed['evidence_state'] = 'EVIDENCE_VERIFIED'
+            if noise:
+                agreed['filtered_noise'] = noise
+            merged[name] = agreed
+        else:
+            # Multiple distinct value groups — classify the evidence type
+            result = _classify_multi_image_evidence(name, groups, relevant)
+            if noise:
+                result['filtered_noise'] = noise
+            # Preserve all original candidates (including noise) for transparency
+            result['all_candidates'] = candidates
+            merged[name] = result
+
+    return merged
+
+
+def _cut_before_next_section(text: str, current_section: str) -> str:
+    """Cut text on the same line before any other section begins."""
+    if not text:
+        return ""
+    earliest_pos = len(text)
+    for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+        if sec_name == current_section:
+            continue
+        for pat in patterns:
+            for m in re.finditer(pat, text, re.IGNORECASE):
+                if 0 <= m.start() < earliest_pos:
+                    earliest_pos = m.start()
+    return text[:earliest_pos].strip(' :;,-')
+
+
+def _clean_address_text(raw_addr: str) -> str:
+    """Clean manufacturer address by stripping trailing consumer care, contact info, storage, marketing, and nutrition fragments."""
+    if not raw_addr:
+        return ""
+
+    # Split into chunks by comma, semicolon, or newline
+    parts = [p.strip() for p in re.split(r'[,;\n]+', raw_addr) if p.strip()]
+    cleaned_parts = []
+
+    for part in parts:
+        part_clean = part.strip(' :;,-')
+        if not part_clean:
+            continue
+
+        # Check if this part marks the beginning of another section
+        if CONSUMER_CARE_STOP_RE.search(part_clean):
+            break
+        if STORAGE_STOP_RE.search(part_clean):
+            break
+        if MARKETING_STOP_RE.search(part_clean):
+            break
+        if SERVING_SIZE_RE.search(part_clean) or NUTRITION_LINE_RE.search(part_clean) or NUTRITION_SECTION_HEADER_RE.search(part_clean):
+            break
+        if INGREDIENTS_LINE_RE.search(part_clean):
+            break
+        if re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|fssai|lic\.?\s*(?:no\.?|number)?|batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?)\b', part_clean, re.I):
+            break
+        if re.search(r'\b(?:ph(?:one)?|tel(?:ephone)?|mob(?:ile)?|contact)\s*[:.\s-]*\+?\d', part_clean, re.I):
+            break
+        if re.search(r'\b(?:1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b', part_clean):
+            break
+        if re.search(r'\b(?:email|e-mail|website|web)\s*[:.\s-]*', part_clean, re.I):
+            break
+        if re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', part_clean):
+            break
+        if re.search(r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:by|at|for)|mfg\s*by|mfd\s*by|marketed\s*by|packed\s*by|imported\s*by|distributed\s*by)\b', part_clean, re.I):
+            break
+        if COMPANY_SUFFIX_RE.search(part_clean):
+            break
+        if re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', part_clean, re.I):
+            break
+        if re.search(r'\b(?:mfg(?:\s*date|\s*dt|\.)?|mfd(?:\s*date|\s*dt|\.)?|pkd(?:\s*date|\s*dt|\.)?|pkg(?:\s*date|\s*dt|\.)?|best\s*before|use\s*by|exp(?:\.|\s*date)?)\b', part_clean, re.I):
+            break
+
+        # Check for inline section cut inside the part
+        cut_part = _cut_before_next_section(part_clean, 'manufacturer')
+        if cut_part:
+            cleaned_parts.append(cut_part)
+            if cut_part != part_clean:
+                # Truncated inline before the next section
+                break
+        else:
+            # Entire part belongs to another section
+            break
+
+    result = ', '.join(cleaned_parts).strip(' :;,-')
+    return result
+
+
+def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
+    """If a line contains a verifiable corporate entity (e.g., 'Shree Foods Pvt. Ltd.'),
+    return (company_name, remaining_address_on_same_line).
+    """
+    line_clean = line.strip()
+    if not line_clean or _is_section_boundary(line_clean):
+        return None
+    m = COMPANY_SUFFIX_RE.search(line_clean)
+    if not m:
+        return None
+    entity = m.group(1).strip(' ,;:')
+    after_entity = line_clean[m.end():].strip(' ,;:')
+    first_word_after = after_entity.split()[0].lower() if after_entity.split() else ''
+    if first_word_after in NON_COMPANY_LIMITED_WORDS:
+        return None
+    words = entity.split()
+    if len(words) < 2:
+        return None
+    if any(w.lower() in {'fresh', 'natural', 'pure', 'offer', 'deal', 'free', 'great'} for w in words[:-1]) and len(words) <= 2:
+        return None
+    after_entity = _cut_before_next_section(after_entity, 'manufacturer')
+    after_entity = _clean_address_text(after_entity)
+    return entity, after_entity
+
+
+def _collect_continuation_lines(lines: List[str], start_index: int, current_section: str, max_lines: int = 6) -> List[str]:
+    """Collect continuation lines for a section, stopping immediately at any subsequent section boundary."""
+    collected = []
+    for line in lines[start_index + 1:start_index + 1 + max_lines]:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        if _is_section_boundary(line_clean, current_section):
+            break
+        if CONSUMER_CARE_STOP_RE.search(line_clean):
+            break
+        if STORAGE_STOP_RE.search(line_clean):
+            break
+        if MARKETING_STOP_RE.search(line_clean):
+            break
+        if current_section != 'nutrition' and (SERVING_SIZE_RE.search(line_clean) or NUTRITION_SECTION_HEADER_RE.search(line_clean) or NUTRITION_LINE_RE.search(line_clean)):
+            break
+        if current_section in ('ingredients', 'nutrition') and _extract_company_entity_from_line(line_clean):
+            break
+        if current_section in ('manufacturer', 'marketer', 'packer'):
+            if VENDOR_PREFIX_RE.search(line_clean):
+                break
+            if collected and (COMPANY_SUFFIX_RE.search(line_clean) or _extract_company_entity_from_line(line_clean)):
+                break
+            if NET_QTY_POSITIVE_CONTEXT_RE.search(line_clean) or re.search(r'\b(?:net\s*(?:wt|weight|qty|quantity)|mrp|rs\.\s*\d)\b', line_clean, re.I):
+                break
+            if re.search(r'\b(?:mfg(?:\s*date|\s*dt|\.)?|mfd(?:\s*date|\s*dt|\.)?|pkd(?:\s*date|\s*dt|\.)?|pkg(?:\s*date|\s*dt|\.)?|best\s*before|use\s*by|exp(?:\.|\s*date)?)\b', line_clean, re.I):
+                break
+            if re.search(r'\b(?:batch\s*(?:no\.?|number)?|b\.?\s*no\.?|lot\s*(?:no\.?|number)?)\b', line_clean, re.I):
+                break
+        earliest_other_pos = len(line_clean)
+        for sec_name, patterns in INLINE_SECTION_PATTERNS.items():
+            if sec_name == current_section:
+                continue
+            for pat in patterns:
+                for m in re.finditer(pat, line_clean, re.IGNORECASE):
+                    if 0 <= m.start() < earliest_other_pos:
+                        earliest_other_pos = m.start()
+
+        if earliest_other_pos < len(line_clean):
+            cut_line = line_clean[:earliest_other_pos].strip(' :;,-')
+            if cut_line:
+                collected.append(cut_line.strip(' ,;'))
+            break
+        else:
+            collected.append(line_clean.strip(' ,;'))
+    return collected
+
+
+def _extract_manufacturer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Extract manufacturer name and address cleanly without section contamination."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
+    # Step 1: Look for explicit manufacturer keyword lines
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        if _is_instructional_label_line(line):
+            continue
+        matched_kw = None
+        for kw in MANUFACTURER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'manufacturer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'manufacturer', max_lines=6)
+
+            # Check if cleaned_after has a company entity
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                return name, address or None
+
+            # Check if label was alone on line and first continuation line is company entity
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                    return name, address or None
+
+            # Fallback split
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = vendor['name']
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
+                elif cleaned_after:
+                    name = cleaned_after
+                    address = _clean_address_text(', '.join(cont_lines))
+                else:
+                    name = cont_lines[0]
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = vendor['name'] or cleaned_after
+                address = _clean_address_text(vendor['address']) or None
+                return name or None, address
+
+    # Step 2: Standalone company entity without "Manufactured by:" prefix
+    for idx, line in enumerate(lines):
+        comp_res = _extract_company_entity_from_line(line)
+        if comp_res:
+            comp_name, comp_addr = comp_res
+            cont_lines = _collect_continuation_lines(lines, idx, 'manufacturer', max_lines=6)
+            addr_parts = [comp_addr] if comp_addr else []
+            addr_parts.extend(cont_lines)
+            address = _clean_address_text(', '.join(part for part in addr_parts if part))
+            return comp_name, address or None
+
+    return None, None
+
+
+def _extract_marketer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Extract marketer name and address cleanly when marketed by / distributed by is declared."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        matched_kw = None
+        for kw in MARKETER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'marketer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'marketer', max_lines=6)
+
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                return name, address or None
+
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                    return name, address or None
+
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = vendor['name']
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
+                elif cleaned_after:
+                    name = cleaned_after
+                    address = _clean_address_text(', '.join(cont_lines))
+                else:
+                    name = cont_lines[0]
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = vendor['name'] or cleaned_after
+                address = _clean_address_text(vendor['address']) or None
+                return name or None, address
+
+    return None, None
+
+
+def _split_vendor_and_address(raw_value: str) -> Dict[str, str]:
+    value = raw_value.strip(' :;,-')
+    if not value:
+        return {'name': '', 'address': ''}
+
+    # Check if there is a company suffix first
+    m_comp = COMPANY_SUFFIX_RE.search(value)
+    if m_comp:
+        company_name = m_comp.group(1).strip(' ,;:')
+        rest = value[m_comp.end():].strip(' ,;:')
+        clean_rest = _clean_address_text(rest)
+        return {'name': company_name, 'address': clean_rest}
+
+    # Check for known address starter keywords
+    addr_kw = r'(?:p\.?o\.?|plot\s*(?:no\.?)?|survey\s*(?:no\.?)?|road|street|sector|phase\s+[ivx0-9]+|gidc|industrial\s*area|village|taluka|district|state|pin(?:code)?|india)'
+    if re.search(addr_kw, value, re.IGNORECASE):
+        parts = re.split(rf'\s+(?={addr_kw})', value, maxsplit=1, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            return {'name': parts[0].strip(', '), 'address': _clean_address_text(parts[1].strip(', '))}
+
+    if ',' in value:
+        first, second = value.split(',', 1)
+        if 3 < len(first) <= 200:
+            return {'name': first.strip(), 'address': _clean_address_text(second.strip())}
+
+    return {'name': value[:200], 'address': ''}
+
+
+MRP_EXPLICIT_RUPEE_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*(?:₹)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_RS_INR_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*(?:rs\.?|inr)\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_CORRUPTED_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)?(?:\s*\([^)]*\))?\s*[:.\s-]*\s*([■\?*#§¤])\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+MRP_PREFIX_ONLY_RE = re.compile(
+    r'(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price)(?:\s*\([^)]*\))?\s*[:.\s-]*\s*([+-]?\d+(?:[.,]\d{1,2})?)',
+    re.IGNORECASE,
+)
+
+
+def _extract_mrp_structured(
+    normalized: str,
+    raw_text: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract structured Maximum Retail Price declaration, identifying currency symbols,
+    corrupted symbols, and inference status without fabricating currency."""
+    if not normalized and not raw_text:
+        return None
+
+    if lines is None:
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in normalized.split('\n') if l.strip()]
+            lines = grouped + [l for l in raw_lines if l not in grouped]
+        else:
+            lines = [l.strip() for l in normalized.split('\n') if l.strip()]
+
+    # First pass: line-by-line inspection
+    for line in lines:
+        cleaned_line = line.strip()
+        if not cleaned_line:
+            continue
+
+        # 1. Corrupted currency symbol (e.g. ■10.00, MRP ■10.00)
+        m_corrupt = MRP_CORRUPTED_RE.search(cleaned_line)
+        if m_corrupt:
+            raw_span = m_corrupt.group(0).strip()
+            corrupt_char = m_corrupt.group(1)
+            num_str = m_corrupt.group(2).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            return {
+                'raw_value': raw_span,
+                'raw_text': raw_span,
+                'value': raw_span,
+                'numeric_value': num_val,
+                'currency_symbol': None,
+                'currency_status': 'UNKNOWN',
+                'status': 'REVIEW',
+                'binary': 0,
+                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; NOT DETECTED reliably in package images.",
+                'confidence': 0.6,
+                'source': 'OCR',
+                'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
+            }
+
+        # 2. Explicit Indian Rupee symbol (e.g. MRP ₹120, ₹120)
+        m_rupee = MRP_EXPLICIT_RUPEE_RE.search(cleaned_line)
+        if m_rupee and ('mrp' in cleaned_line.lower() or '₹' in cleaned_line):
+            raw_span = m_rupee.group(0).strip()
+            num_str = m_rupee.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"₹{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': '₹',
+                    'currency_status': 'VERIFIED',
+                    'status': 'PASS',
+                    'binary': 1,
+                    'reason': f"Detected valid MRP declaration: {display_val}",
+                    'confidence': 0.9,
+                    'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+                }
+
+        # 3. Explicit Rs. or INR (e.g. MRP Rs. 120, Rs 120, INR 120)
+        m_rs = MRP_RS_INR_RE.search(cleaned_line)
+        if m_rs and ('mrp' in cleaned_line.lower() or re.search(r'\b(?:rs\.?|inr)\b', cleaned_line, re.I)):
+            raw_span = m_rs.group(0).strip()
+            num_str = m_rs.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"₹{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': '₹',
+                    'currency_status': 'VERIFIED',
+                    'status': 'PASS',
+                    'binary': 1,
+                    'reason': f"Detected valid MRP declaration: {display_val}",
+                    'confidence': 0.88,
+                    'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+                }
+
+        # 4. MRP prefix only, missing currency symbol (e.g. MRP 120, Maximum Retail Price: 120)
+        m_prefix = MRP_PREFIX_ONLY_RE.search(cleaned_line)
+        if m_prefix and 'mrp' in cleaned_line.lower():
+            raw_span = m_prefix.group(0).strip()
+            num_str = m_prefix.group(1).replace(',', '')
+            try:
+                num_val = float(num_str)
+            except ValueError:
+                num_val = None
+            if num_val is not None:
+                display_val = f"{num_val:.2f}"
+                return {
+                    'raw_value': raw_span,
+                    'raw_text': raw_span,
+                    'value': display_val,
+                    'numeric_value': num_val,
+                    'currency_symbol': None,
+                    'currency_status': 'INFERRED',
+                    'status': 'REVIEW',
+                    'binary': 0,
+                    'reason': f"Currency symbol missing; MRP declaration NOT DETECTED reliably in package images: '{raw_span}'.",
+                    'confidence': 0.7,
+                    'source': 'OCR',
+                    'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
+                }
+
+    # Second pass: check normalized text as a whole
+    m_corrupt_full = MRP_CORRUPTED_RE.search(normalized)
+    if m_corrupt_full:
+        raw_span = m_corrupt_full.group(0).strip()
+        corrupt_char = m_corrupt_full.group(1)
+        num_str = m_corrupt_full.group(2).replace(',', '')
+        try:
+            num_val = float(num_str)
+        except ValueError:
+            num_val = None
+        return {
+            'raw_value': raw_span,
+            'raw_text': raw_span,
+            'value': raw_span,
+            'numeric_value': num_val,
+            'currency_symbol': None,
+            'currency_status': 'UNKNOWN',
+            'status': 'REVIEW',
+            'binary': 0,
+                'reason': f"Corrupted currency symbol '{corrupt_char}' detected in MRP declaration; NOT DETECTED reliably in package images.",
+            'confidence': 0.6,
+            'source': 'OCR',
+            'evidence_state': EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value,
+        }
+
+    legacy_mrp = _search_patterns(normalized, MRP_PATTERNS)
+    if legacy_mrp:
+        clean_num = legacy_mrp.replace(',', '')
+        try:
+            num_val = float(clean_num)
+        except ValueError:
+            num_val = None
+        if num_val is not None and num_val > 0:
+            return {
+                'raw_value': legacy_mrp,
+                'raw_text': legacy_mrp,
+                'value': f"₹{clean_num}",
+                'numeric_value': num_val,
+                'currency_symbol': '₹',
+                'currency_status': 'VERIFIED',
+                'status': 'PASS',
+                'binary': 1,
+                'reason': f"Detected valid MRP declaration: ₹{clean_num}",
+                'confidence': 0.85,
+                'source': 'OCR',
+                'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+            }
+
+    return None
+
+
+UNIT_SALE_PRICE_RE = re.compile(
+    r"\b(?:unit\s+sale\s+price|unit\s+price|sale\s+price)\b\s*[:.]?\s*"
+    r"(?:₹|rs\.?|inr)?\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*/\s*"
+    r"(g|kg|mg|ml|l|unit|piece|pc)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_unit_sale_price(
+    normalized: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract unit sale price separately from the maximum retail price."""
+    if lines is None:
+        lines = group_ocr_items_into_lines(ocr_items) if ocr_items else []
+        if not lines:
+            lines = [line.strip() for line in normalized.split('\n') if line.strip()]
+
+    for line in lines:
+        match = UNIT_SALE_PRICE_RE.search(line)
+        if not match:
+            continue
+        amount = match.group(1).replace(',', '')
+        unit = match.group(2).lower()
+        return {
+            'value': f"₹{amount}/{unit}",
+            'raw_value': match.group(0).strip(),
+            'raw_text': match.group(0).strip(),
+            'numeric_value': float(amount),
+            'unit': unit,
+            'source_label': 'UNIT_SALE_PRICE',
+            'semantic_section': 'MRP',
+            'confidence': 0.9,
+            'source': 'OCR',
+            'evidence_state': EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+        }
+    return None
+
+
+def _extract_compact_declaration_panel(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Recover ordered declarations from a compact panel when OCR drops labels.
+
+    This is intentionally conservative: it requires a four-line sequence containing
+    a price, a second small numeric price, an alphanumeric batch token, and two
+    month/year dates. It does not assign arbitrary numbers from a full package OCR.
+    """
+    candidates = [line.strip() for line in lines if line.strip()]
+    if len(candidates) != 4:
+        return {}
+
+    first_price = re.fullmatch(r'(?:₹|rs\.?|inr)?\s*([0-9]+[.,][0-9]{1,2})', candidates[0], re.I)
+    second_price = re.fullmatch(r'(?:₹|rs\.?|inr)?\s*([0-9]+[.,][0-9]{1,4})(?:\s*/?\s*[a-z])?', candidates[1], re.I)
+    batch_match = re.fullmatch(r'[A-Za-z]{1,8}[A-Za-z0-9-]{3,30}', candidates[2])
+    date_matches = re.findall(r'(?<!\d)(\d{1,2}[/-]\d{2,4})(?!\d)', candidates[3])
+    if not (first_price and second_price and batch_match and len(date_matches) == 2):
+        return {}
+
+    result: Dict[str, Dict[str, Any]] = {}
+    result['MRP'] = {
+        'value': f"₹{first_price.group(1).replace(',', '')}",
+        'raw_value': candidates[0],
+        'raw_text': candidates[0],
+        'numeric_value': float(first_price.group(1).replace(',', '')),
+        'currency_symbol': '₹',
+        'currency_status': 'INFERRED_FROM_COMPACT_PANEL',
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_MRP,
+        'confidence': 0.72,
+        'source': 'OCR_LAYOUT',
+        'evidence_state': EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+    }
+    unit_number = second_price.group(1).replace(',', '')
+    unit_match = re.search(r'/\s*([a-z]+)', candidates[1], re.I)
+    unit = unit_match.group(1).lower() if unit_match else 'g'
+    result['UNIT_SALE_PRICE'] = {
+        'value': f"₹{unit_number[:unit_number.find('.') + 3] if '.' in unit_number else unit_number}/{unit}",
+        'raw_value': candidates[1],
+        'raw_text': candidates[1],
+        'numeric_value': float(unit_number),
+        'unit': unit,
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_MRP,
+        'confidence': 0.68,
+        'source': 'OCR_LAYOUT',
+        'evidence_state': EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+    }
+    result['BATCH_NUMBER'] = {
+        'value': batch_match.group(0),
+        'raw_value': candidates[2],
+        'raw_text': candidates[2],
+        'normalized_value': batch_match.group(0),
+        'source_label': 'COMPACT_DECLARATION_PANEL',
+        'semantic_section': SECTION_BATCH,
+        'confidence': 0.82,
+        'source': 'OCR_LAYOUT',
+    }
+    for field_name, token, label in (
+        ('MONTH_YEAR_MANUFACTURE', date_matches[0], 'MFD'),
+        ('USE_BEFORE_DATE', date_matches[1], 'USE_BY'),
+    ):
+        valid, normalized_date, metadata = parse_date_with_precision(token)
+        if valid and metadata:
+            result[field_name] = {
+                'value': normalized_date,
+                'raw_value': token,
+                'raw_date': token,
+                'normalized_value': normalized_date,
+                'normalized_date': normalized_date,
+                'parsed_components': metadata['parsed_components'],
+                'source_label': label,
+                'semantic_type': field_name,
+                'confidence': 0.7,
+                'source': 'OCR_LAYOUT',
+            }
+    return result
+
+
+NET_QTY_UNITS_MAP: Dict[str, str] = {
+    **LEGAL_MASS_UNITS,
+    **LEGAL_VOLUME_UNITS,
+    **LEGAL_COUNT_UNITS,
+    **LEGAL_LENGTH_AREA_UNITS,
+}
+
+NET_QTY_LABEL_RE = re.compile(
+    r'(?:(?:net|pack|package|pkg)\s*(?:wt\.?|weight|qty\.?|quantity|content|contents|size|vol\.?|volume|mass)|quantity|contents?|pack\s*size)(?:\s*[:.=]|\s+[-–](?=\s))*\s*([^\n,;]+)',
+    re.IGNORECASE,
+)
+
+QUANTITY_UNITS_CHOICES = (
+    r'g|gm|gms|gram|grams|kg|kgs|kilogram|kilograms|mg|milligram|milligrams|'
+    r'ml|millilitre|millilitres|milliliter|milliliters|l|ltr|litre|litres|liter|liters|cl|'
+    r'oz|lb|lbs|'
+    r'pc|pcs|piece|pieces|tablet|tablets|tab|tabs|capsule|capsules|cap|caps|'
+    r'unit|units|n|no|nos|number|numbers|wipes?|sheets?|pouches?|sachets?|rolls?|sticks?|bars?|bags?|'
+    r'm|meter|meters|metre|metres|cm|centimeter|centimeters|centimetre|centimetres|mm|sq\s*m|sq\s*cm'
+)
+
+NET_QTY_UNIT_PATTERN = rf'(?:(?<=\d)|(?<=\s)|^)\s*({QUANTITY_UNITS_CHOICES})\b'
+
+STANDALONE_QTY_RE = re.compile(
+    rf'(?:\b|(?<=\s)|^)([+-]?\d+(?:\.\d+)?)\s*({QUANTITY_UNITS_CHOICES})\b',
+    re.IGNORECASE,
+)
+
+MULTIPACK_COUNT_UNITS = r'(?:pk|pks|packs?|units?|nos?|pcs?|pieces?|n|pouches?|sachets?|bottles?|cans?|bars?|tins?)'
+MULTIPACK_SEPARATORS = r'(?:[×xX*✕✖⨯]|\bof\b)'
+
+MULTIPACK_QTY_RE = re.compile(
+    rf'\b(?P<count>\d+)\s*(?:{MULTIPACK_COUNT_UNITS}\b\s*)?{MULTIPACK_SEPARATORS}\s*(?P<qty>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>{QUANTITY_UNITS_CHOICES})\b',
+    re.IGNORECASE,
+)
+
+MULTIPACK_INVERTED_RE = re.compile(
+    rf'\b(?P<qty>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>{QUANTITY_UNITS_CHOICES})\s*{MULTIPACK_SEPARATORS}\s*(?P<count>\d+)(?:\s*{MULTIPACK_COUNT_UNITS}\b)?',
+    re.IGNORECASE,
+)
+
+
+def parse_quantity_expression(expr: str) -> Optional[Dict[str, Any]]:
+    """
+    Universal packaged-commodity quantity expression parser.
+    Recognizes:
+      - Standard Multipack: COUNT × UNIT QUANTITY (e.g. 10 × 50 g, 6 x 100g, 24 × 200 ml)
+      - Inverted Multipack: UNIT QUANTITY × COUNT (e.g. 50 g × 10)
+      - Single Quantity: QUANTITY UNIT (e.g. 250 g, 500 ml)
+    Never confuses COUNT with net quantity.
+    Calculates derived total quantity (source = DERIVED) without replacing declared expression.
+    Returns None for invalid or incomplete expressions.
+    """
+    if not expr or not expr.strip():
+        return None
+
+    clean = expr.strip()
+
+    # 1. Standard Multipack: COUNT × UNIT QUANTITY
+    m_multi = MULTIPACK_QTY_RE.search(clean)
+    if m_multi:
+        prefix = clean[:m_multi.start()].rstrip()
+        if not prefix.endswith('-'):
+            try:
+                count = int(m_multi.group('count'))
+                raw_qty = m_multi.group('qty')
+                flt_qty = float(raw_qty)
+                unit_qty = int(flt_qty) if flt_qty.is_integer() else flt_qty
+                raw_unit = m_multi.group('unit')
+                norm_unit, qty_type = normalize_unit(raw_unit)
+
+                if count > 0 and unit_qty > 0 and norm_unit:
+                    calc_total = count * unit_qty
+                    derived_total = int(calc_total) if isinstance(calc_total, float) and calc_total.is_integer() else calc_total
+                    declared_expr = m_multi.group(0).strip()
+                    logger.debug(
+                        "Detected standard multipack: count=%s unit_qty=%s unit=%s derived_total=%s expr=%s",
+                        count, unit_qty, norm_unit, derived_total, declared_expr
+                    )
+                    return {
+                        "is_multipack": True,
+                        "pack_count": count,
+                        "unit_net_quantity": unit_qty,
+                        "unit_quantity": unit_qty,
+                        "unit": norm_unit,
+                        "raw_unit": raw_unit,
+                        "declared_expression": declared_expr,
+                        "derived_total_quantity": derived_total,
+                        "quantity_type": qty_type.value if qty_type else None,
+                        "span": declared_expr,
+                    }
+            except (ValueError, TypeError, IndexError):
+                pass
+
+    # 2. Inverted Multipack: UNIT QUANTITY × COUNT
+    m_inv = MULTIPACK_INVERTED_RE.search(clean)
+    if m_inv:
+        prefix = clean[:m_inv.start()].rstrip()
+        if not prefix.endswith('-'):
+            try:
+                count = int(m_inv.group('count'))
+                raw_qty = m_inv.group('qty')
+                flt_qty = float(raw_qty)
+                unit_qty = int(flt_qty) if flt_qty.is_integer() else flt_qty
+                raw_unit = m_inv.group('unit')
+                norm_unit, qty_type = normalize_unit(raw_unit)
+
+                if count > 0 and unit_qty > 0 and norm_unit:
+                    calc_total = count * unit_qty
+                    derived_total = int(calc_total) if isinstance(calc_total, float) and calc_total.is_integer() else calc_total
+                    declared_expr = m_inv.group(0).strip()
+                    logger.debug(
+                        "Detected inverted multipack: count=%s unit_qty=%s unit=%s derived_total=%s expr=%s",
+                        count, unit_qty, norm_unit, derived_total, declared_expr
+                    )
+                    return {
+                        "is_multipack": True,
+                        "pack_count": count,
+                        "unit_net_quantity": unit_qty,
+                        "unit_quantity": unit_qty,
+                        "unit": norm_unit,
+                        "raw_unit": raw_unit,
+                        "declared_expression": declared_expr,
+                        "derived_total_quantity": derived_total,
+                        "quantity_type": qty_type.value if qty_type else None,
+                        "span": declared_expr,
+                    }
+            except (ValueError, TypeError, IndexError):
+                pass
+
+    # 3. Single standard quantity: QUANTITY UNIT
+    m_single = STANDALONE_QTY_RE.search(clean)
+    if m_single:
+        try:
+            raw_qty = m_single.group(1)
+            flt_qty = float(raw_qty)
+            qty_val = int(flt_qty) if flt_qty.is_integer() else flt_qty
+            raw_unit = m_single.group(2)
+            norm_unit, qty_type = normalize_unit(raw_unit)
+
+            if qty_val > 0 and norm_unit:
+                declared_expr = m_single.group(0).strip()
+                return {
+                    "is_multipack": False,
+                    "pack_count": None,
+                    "unit_net_quantity": None,
+                    "unit_quantity": None,
+                    "quantity": qty_val,
+                    "unit": norm_unit,
+                    "raw_unit": raw_unit,
+                    "declared_expression": declared_expr,
+                    "derived_total_quantity": None,
+                    "quantity_type": qty_type.value if qty_type else None,
+                    "span": declared_expr,
+                }
+        except (ValueError, TypeError, IndexError):
+            pass
+
+    return None
+
+
+def _extract_net_quantity_field(
+    text: str,
+    lines: Optional[List[str]] = None,
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Extract structured declared net quantity with semantic section scoping.
+    Distinguishes declared package quantity from nutritional table values, serving sizes,
+    and unrelated section numbers across mass, volume, and count units.
+    Universally parses multipack expressions (COUNT × UNIT QUANTITY) without collapsing COUNT to quantity."""
+    if not text:
+        return None
+
+    if lines is None:
+        if ocr_items:
+            grouped = group_ocr_items_into_lines(ocr_items)
+            raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = grouped + [l for l in raw_lines if l not in grouped]
+        else:
+            lines = [l.strip() for l in text.split('\n') if l.strip()]
+
+    current_sec = SECTION_OTHER
+    annotated_lines = []
+    for line in lines:
+        current_sec = classify_line_section(line, current_sec)
+        annotated_lines.append((line, current_sec))
+
+    valid_candidates: List[Dict[str, Any]] = []
+    ignored_candidates: List[Dict[str, Any]] = []
+    fallback_candidates: List[Dict[str, Any]] = []
+
+    for line, sec in annotated_lines:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+
+        # 1. Check for explicit Net Quantity label pattern on this line
+        label_match = NET_QTY_LABEL_RE.search(line_clean)
+        if label_match:
+            raw_span = label_match.group(0).strip()
+            after_label = label_match.group(1).strip()
+
+            # Reject price tokens immediately if after_label contains price/MRP markers
+            if re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', after_label, re.IGNORECASE):
+                ignored_cand = build_quantity_candidate(
+                    qty_val=_extract_price_number(after_label),
+                    raw_unit=None,
+                    raw_span=after_label,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+                continue
+
+            parsed_q = parse_quantity_expression(after_label)
+            if parsed_q:
+                # Check for zero or negative quantity
+                chk_qty = parsed_q.get("unit_net_quantity") if parsed_q["is_multipack"] else parsed_q.get("quantity")
+                try:
+                    if chk_qty is not None and float(chk_qty) <= 0:
+                        ignored_cand = build_quantity_candidate(
+                            qty_val=chk_qty,
+                            raw_unit=parsed_q["raw_unit"],
+                            raw_span=raw_span,
+                            confidence=0.5,
+                            semantic_section=SECTION_DECLARED_QUANTITY,
+                            relevance="rejected_as_irrelevant",
+                            relevance_score=0.0,
+                            source_context=line_clean,
+                            source="OCR",
+                            candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                            rejection_reason="Package net quantity cannot be zero; belongs to nutritional/analytical content",
+                        )
+                        ignored_candidates.append(ignored_cand)
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+                if parsed_q["is_multipack"]:
+                    cand = build_quantity_candidate(
+                        qty_val=parsed_q["unit_net_quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.95,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.98,
+                        source_context=line_clean,
+                        source="OCR",
+                        is_multipack=True,
+                        pack_count=parsed_q["pack_count"],
+                        unit_net_quantity=parsed_q["unit_net_quantity"],
+                        declared_expression=parsed_q["declared_expression"],
+                        derived_total_quantity=parsed_q["derived_total_quantity"],
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                else:
+                    cand = build_quantity_candidate(
+                        qty_val=parsed_q["quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.90,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.95,
+                        source_context=line_clean,
+                        source="OCR",
+                        is_multipack=False,
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                valid_candidates.append(cand)
+                continue
+            else:
+                num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+                unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
+                qty_val = num_match.group(1) if num_match else None
+                raw_unit = unit_match.group(1) if unit_match else None
+
+                if qty_val is not None or raw_unit is not None:
+                    cand = build_quantity_candidate(
+                        qty_val=qty_val,
+                        raw_unit=raw_unit,
+                        raw_span=raw_span,
+                        confidence=0.88 if raw_unit else 0.70,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.92 if raw_unit else 0.80,
+                        source_context=line_clean,
+                        source="OCR",
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                    cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                    valid_candidates.append(cand)
+                    continue
+
+        # 2. Section scoping flags for standalone checks on this line
+        is_nutrition = (
+            sec == SECTION_NUTRITION
+            or bool(NUTRITION_LINE_RE.search(line_clean))
+            or bool(NUTRITION_SECTION_HEADER_RE.search(line_clean))
+            or bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium)\b', line_clean, re.I))
+        )
+        is_serving = (
+            sec == SECTION_SERVING_SIZE
+            or bool(SERVING_SIZE_RE.search(line_clean))
+        )
+        is_mrp = (
+            sec == SECTION_MRP
+            or bool(re.search(r'\b(?:m\.?\s*r\.?\s*p\.?|maximum\s+retail\s+price|rs\.?|₹|inr|price)\b', line_clean, re.I))
+        )
+        is_other_section = (
+            sec in (SECTION_CONSUMER_CARE, SECTION_STORAGE, SECTION_MARKETING, SECTION_MRP, SECTION_DATE, SECTION_INGREDIENTS, SECTION_FSSAI, SECTION_BATCH)
+            or bool(CONSUMER_CARE_STOP_RE.search(line_clean))
+            or bool(STORAGE_STOP_RE.search(line_clean))
+            or bool(MARKETING_STOP_RE.search(line_clean))
+            or is_mrp
+        )
+
+        # 3. Check for standalone multipack expression on this line
+        multi_match = parse_quantity_expression(line_clean)
+        if multi_match and multi_match.get("is_multipack"):
+            raw_span = multi_match["declared_expression"]
+            has_nutrient_words = bool(re.search(r'\b(?:carbohydrate|protein|fat|sugar|energy|cholesterol|sodium|trans|saturated|dietary|fiber|calcium|iron)\b', line_clean, re.I))
+            if is_nutrition and has_nutrient_words:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_NUTRITION,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                    rejection_reason="Value belongs to nutritional table, not declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_serving:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_SERVING_SIZE,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.SERVING_QUANTITY.value,
+                    rejection_reason="Value is serving size, not package declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_mrp:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_other_section:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=sec,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.UNKNOWN_NUMERIC.value,
+                    rejection_reason=f"Value belongs to {sec} section, not declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            else:
+                cand = build_quantity_candidate(
+                    qty_val=multi_match["unit_net_quantity"],
+                    raw_unit=multi_match["raw_unit"],
+                    raw_span=raw_span,
+                    confidence=0.92,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.95,
+                    source_context=line_clean,
+                    source="OCR",
+                    is_multipack=True,
+                    pack_count=multi_match["pack_count"],
+                    unit_net_quantity=multi_match["unit_net_quantity"],
+                    declared_expression=multi_match["declared_expression"],
+                    derived_total_quantity=multi_match["derived_total_quantity"],
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                )
+                cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                valid_candidates.append(cand)
+            continue
+
+        # 4. Check for standalone single quantity on this line
+        for sm in STANDALONE_QTY_RE.finditer(line_clean):
+            qty_val = sm.group(1)
+            raw_unit = sm.group(2)
+            raw_span = sm.group(0).strip()
+
+            # Net quantity cannot be zero or negative
+            try:
+                if float(qty_val) <= 0:
+                    ignored_cand = build_quantity_candidate(
+                        qty_val=qty_val,
+                        raw_unit=raw_unit,
+                        raw_span=raw_span,
+                        confidence=0.5,
+                        semantic_section=sec,
+                        relevance="rejected_as_irrelevant",
+                        relevance_score=0.0,
+                        source_context=line_clean,
+                        source="OCR",
+                        candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                        rejection_reason="Package net quantity cannot be zero; belongs to nutritional/analytical content",
+                    )
+                    ignored_candidates.append(ignored_cand)
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+            if is_mrp:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=SECTION_MRP,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.MRP_AMOUNT.value,
+                    rejection_reason="Value is associated with retail price (MRP), not package declared quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_nutrition:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_NUTRITION,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.NUTRITIONAL_QUANTITY.value,
+                    rejection_reason="Value belongs to nutritional table, not declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_serving:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.7,
+                    semantic_section=SECTION_SERVING_SIZE,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.SERVING_QUANTITY.value,
+                    rejection_reason="Value is serving size, not package declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            elif is_other_section:
+                ignored_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.5,
+                    semantic_section=sec,
+                    relevance="rejected_as_irrelevant",
+                    relevance_score=0.0,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.UNKNOWN_NUMERIC.value,
+                    rejection_reason=f"Value belongs to {sec} section, not declared net quantity",
+                )
+                ignored_candidates.append(ignored_cand)
+            else:
+                fallback_cand = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.75,
+                    semantic_section=SECTION_OTHER,
+                    relevance="standalone_fallback",
+                    relevance_score=0.6,
+                    source_context=line_clean,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                )
+                fallback_cand['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+                fallback_candidates.append(fallback_cand)
+
+    # If valid positive-context candidates exist, pick the best one
+    if valid_candidates:
+        valid_candidates.sort(
+            key=lambda c: (c.get('relevance_score', 0), 1 if c.get('quantity_unit_valid') else 0, c.get('confidence', 0)),
+            reverse=True,
+        )
+        winner = dict(valid_candidates[0])
+        winner['candidate_type'] = QuantityCandidateType.PACKAGE_QUANTITY.value
+        winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+        all_ignored = [c for c in valid_candidates[1:]] + ignored_candidates + fallback_candidates
+        if all_ignored:
+            winner['ignored_candidates'] = all_ignored
+        return winner
+
+    # Fallback to normalized text-level label search if lines didn't catch it
+    label_match_norm = NET_QTY_LABEL_RE.search(text)
+    if label_match_norm:
+        raw_span = label_match_norm.group(0).strip()
+        after_label = label_match_norm.group(1).strip()
+
+        if not re.search(r'\b(?:rs\.?|inr|₹|mrp|price)\b', after_label, re.IGNORECASE):
+            parsed_q = parse_quantity_expression(after_label)
+            if parsed_q:
+                chk_qty = parsed_q.get("unit_net_quantity") if parsed_q["is_multipack"] else parsed_q.get("quantity")
+                try:
+                    if chk_qty is not None and float(chk_qty) <= 0:
+                        parsed_q = None
+                except (ValueError, TypeError):
+                    pass
+
+            if parsed_q:
+                if parsed_q["is_multipack"]:
+                    winner = build_quantity_candidate(
+                        qty_val=parsed_q["unit_net_quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.90,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.95,
+                        source_context=raw_span,
+                        source="OCR",
+                        is_multipack=True,
+                        pack_count=parsed_q["pack_count"],
+                        unit_net_quantity=parsed_q["unit_net_quantity"],
+                        declared_expression=parsed_q["declared_expression"],
+                        derived_total_quantity=parsed_q["derived_total_quantity"],
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                else:
+                    winner = build_quantity_candidate(
+                        qty_val=parsed_q["quantity"],
+                        raw_unit=parsed_q["raw_unit"],
+                        raw_span=raw_span,
+                        confidence=0.85,
+                        semantic_section=SECTION_DECLARED_QUANTITY,
+                        relevance="high",
+                        relevance_score=0.90,
+                        source_context=raw_span,
+                        source="OCR",
+                        candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                    )
+                winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                if ignored_candidates:
+                    winner['ignored_candidates'] = ignored_candidates
+                return winner
+
+            num_match = re.search(r'([+-]?\d+(?:\.\d+)?)', after_label)
+            unit_match = re.search(NET_QTY_UNIT_PATTERN, after_label, re.IGNORECASE)
+            qty_val = num_match.group(1) if num_match else None
+            raw_unit = unit_match.group(1) if unit_match else None
+
+            if qty_val is not None or raw_unit is not None:
+                winner = build_quantity_candidate(
+                    qty_val=qty_val,
+                    raw_unit=raw_unit,
+                    raw_span=raw_span,
+                    confidence=0.85 if raw_unit else 0.70,
+                    semantic_section=SECTION_DECLARED_QUANTITY,
+                    relevance="high",
+                    relevance_score=0.9 if raw_unit else 0.80,
+                    source_context=raw_span,
+                    source="OCR",
+                    candidate_type=QuantityCandidateType.PACKAGE_QUANTITY.value,
+                )
+                winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                if ignored_candidates:
+                    winner['ignored_candidates'] = ignored_candidates
+                return winner
+
+    # If standalone fallback candidates exist and NO nutrition context was found on package
+    if fallback_candidates and not any(c.get('semantic_section') == SECTION_NUTRITION for c in ignored_candidates):
+        clean_fallbacks = [
+            c for c in fallback_candidates
+            if c.get('quantity_value') is not None
+            and float(c.get('quantity_value') or 0) > 0
+            and c.get('candidate_type') == QuantityCandidateType.PACKAGE_QUANTITY.value
+        ]
+        if clean_fallbacks:
+            winner = dict(clean_fallbacks[0])
+            winner['candidate_type'] = QuantityCandidateType.PACKAGE_QUANTITY.value
+            winner['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+            if ignored_candidates:
+                winner['ignored_candidates'] = ignored_candidates
+            return winner
+
+    return None
+
+
+def _extract_packer_and_address(
+    lines: List[str],
+    ocr_items: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Extract packer name and address when packed by/pkd by is declared."""
+    if ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        if grouped:
+            lines = grouped + [l for l in lines if l not in grouped]
+
+    for idx, line in enumerate(lines):
+        line_lower = line.lower()
+        matched_kw = None
+        for kw in PACKER_KEYWORDS:
+            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+            m_kw = re.search(kw_pattern, line_lower)
+            if m_kw:
+                matched_kw = kw
+                start_pos = m_kw.end()
+                label_prefix = line[:start_pos].strip(' :;,-')
+                raw_after = line[start_pos:].strip(' :;,-')
+                break
+
+        if matched_kw:
+            cleaned_after = _cut_before_next_section(raw_after, 'packer')
+            cont_lines = _collect_continuation_lines(lines, idx, 'packer', max_lines=6)
+
+            comp_res = _extract_company_entity_from_line(cleaned_after)
+            if comp_res:
+                comp_name, comp_addr = comp_res
+                name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                addr_parts = [comp_addr] if comp_addr else []
+                addr_parts.extend(cont_lines)
+                address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                return name, address or None
+
+            if not cleaned_after and cont_lines:
+                first_cont = cont_lines[0]
+                comp_res_cont = _extract_company_entity_from_line(first_cont)
+                if comp_res_cont:
+                    comp_name, comp_addr = comp_res_cont
+                    name = f"{label_prefix}: {comp_name}" if label_prefix else comp_name
+                    addr_parts = [comp_addr] if comp_addr else []
+                    addr_parts.extend(cont_lines[1:])
+                    address = _clean_address_text(', '.join(part for part in addr_parts if part))
+                    return name, address or None
+
+            if cont_lines:
+                vendor = _split_vendor_and_address(cleaned_after) if cleaned_after else {'name': '', 'address': ''}
+                if vendor['name'] and vendor['address']:
+                    name = f"{label_prefix}: {vendor['name']}" if label_prefix else vendor['name']
+                    address = _clean_address_text(', '.join([vendor['address']] + cont_lines))
+                elif cleaned_after:
+                    name = f"{label_prefix}: {cleaned_after}" if label_prefix else cleaned_after
+                    address = _clean_address_text(', '.join(cont_lines))
+                else:
+                    name = f"{label_prefix}: {cont_lines[0]}" if label_prefix else cont_lines[0]
+                    address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
+                return name or None, address or None
+            else:
+                vendor = _split_vendor_and_address(cleaned_after)
+                name = f"{label_prefix}: {vendor['name']}" if (vendor['name'] and label_prefix) else (vendor['name'] or cleaned_after)
+                address = _clean_address_text(vendor['address']) or None
+                return name or None, address
+
+    return None, None
+
+BATCH_LABEL_RE = re.compile(
+    r'\b(?:batch\s*(?:no\.?|number|num\.?|code)?|lot\s+(?:no\.?|number|num\.?|code)?|lot\s*[:#]|b\.?\s*no\.?|batch#)\b',
+    re.IGNORECASE,
+)
+INVALID_BATCH_TOKENS = {
+    'no', 'no.', 'number', 'num', 'num.', 'code', 'lot', 'batch', 'b', 'b.',
+    'date', 'mfd', 'pkd', 'exp', 'expiry', 'mrp', 'rs', 'inr', 'none', 'n/a', 'na', 'null',
+    'image', 'placeholder', '[image]', '[image 1]', 'undefined',
+}
+
+
+def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+    """Extract batch or lot number, strictly separating label tokens from the actual identifier value."""
+    # 1. Search lines for explicit batch label
+    for index, line in enumerate(lines):
+        m = BATCH_LABEL_RE.search(line)
+        if not m:
+            continue
+
+        matched_label = m.group(0).strip()
+        after = line[m.end():].strip(' :;,-=#')
+
+        # Strip any redundant label continuation words like 'No:', 'Number:'
+        cleaned_after = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', after, flags=re.IGNORECASE).strip(' :;,-=#')
+
+        candidate = None
+        if cleaned_after:
+            tokens = cleaned_after.split()
+            first_token = tokens[0].strip(' ,;:')
+            if (first_token.lower() not in INVALID_BATCH_TOKENS
+                    and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', first_token, re.I)
+                    and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 4):
+                candidate = first_token
+
+        # If not on same line, check immediate next line (e.g. Batch No:\nB104)
+        if not candidate and index + 1 < len(lines):
+            next_line = lines[index + 1].strip()
+            if not _is_section_boundary(next_line) and not re.search(r'\b(?:license|licence|read|see|below|alphabet|and)\b', next_line, re.I):
+                cleaned_next = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', next_line, flags=re.IGNORECASE).strip(' :;,-=#')
+                next_tokens = cleaned_next.split()
+                if next_tokens:
+                    cand = next_tokens[0].strip(' ,;:')
+                    if (cand.lower() not in INVALID_BATCH_TOKENS
+                            and not re.search(r'(?:mfd|mfg|pkd|date|batch|lot|sale|price)', cand, re.I)
+                            and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 4):
+                        candidate = cand
+
+        if candidate:
+            return {
+                'value': candidate[:100],
+                'raw_value': f"{matched_label}: {candidate}",
+                'raw_text': f"{matched_label}: {candidate}",
+                'normalized_value': candidate[:100],
+                'source_label': matched_label,
+                'semantic_section': 'BATCH',
+                'confidence': 0.85,
+                'source': 'OCR',
+            }
+
+    # 2. Check OCR bounding boxes / items if available
+    if ocr_items:
+        for item in ocr_items:
+            text = str(item.get('text', '')).strip()
+            m = BATCH_LABEL_RE.search(text)
+            if m:
+                after = text[m.end():].strip(' :;,-=#')
+                cleaned_after = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', after, flags=re.IGNORECASE).strip(' :;,-=#')
+                if cleaned_after:
+                    tok = cleaned_after.split()[0].strip(' ,;:')
+                    if tok.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', tok)) >= 1:
+                        return {
+                            'value': tok[:100],
+                            'raw_value': f"{m.group(0)}: {tok}",
+                            'raw_text': f"{m.group(0)}: {tok}",
+                            'normalized_value': tok[:100],
+                            'source_label': m.group(0),
+                            'semantic_section': 'BATCH',
+                            'confidence': float(item.get('confidence') or 0.8),
+                            'bbox': item.get('bbox'),
+                            'source_image_index': item.get('image_index'),
+                            'source': 'OCR',
+                        }
+
+    return None
+
+
+def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]] = None, category: Optional[str] = None) -> Dict[str, Any]:
+    if not raw_text and not ocr_items:
+        return {}
+    if not raw_text and ocr_items:
+        grouped = group_ocr_items_into_lines(ocr_items)
+        raw_text = "\n".join(grouped)
+
+    # Stage 2: OCR Cleaning layer
+    cleaned_text, cleaned_ocr_items, removed_artifacts = clean_ocr_evidence(raw_text, ocr_items)
+    effective_text = cleaned_text or raw_text
+    effective_items = cleaned_ocr_items if cleaned_ocr_items else ocr_items
+
+    normalized = _normalize_text(effective_text)
+    lines = [line.strip() for line in normalized.split('\n') if line.strip()]
+    if effective_items:
+        grouped_lines = group_ocr_items_into_lines(effective_items)
+        if grouped_lines:
+            existing_set = {l.strip().lower() for l in grouped_lines}
+            extra_lines = [l for l in lines if l.strip().lower() not in existing_set]
+            lines = grouped_lines + extra_lines
+    fields: Dict[str, Any] = {}
+
+    # 1. Explicit Statutory / Front-Panel Labels
+    explicit_pname = _extract_explicit_product_name(lines)
+    explicit_brand = _extract_brand_candidate(lines)
+    explicit_generic = _extract_explicit_generic_name(lines)
+
+    if explicit_pname:
+        fields['PRODUCT_NAME'] = build_product_name_candidate(
+            value=explicit_pname[:200],
+            raw_text=explicit_pname,
+            status="VALID",
+            confidence=0.92,
+            source='OCR_LABEL',
+        )
+
+    if explicit_brand:
+        fields['BRAND'] = explicit_brand
+
+    # Prefer standalone, visually supported OCR evidence over unanchored prose.
+    if 'BRAND' not in fields:
+        general_brand = _select_general_brand_candidate(lines, effective_items)
+        if general_brand:
+            fields['BRAND'] = general_brand
+
+    if explicit_generic:
+        fields['GENERIC_NAME'] = {'value': explicit_generic, 'confidence': 0.90, 'source': 'OCR_LABEL'}
+
+    # 2. Generalized Commodity & Brand Extraction
+    # Detect generic commodity descriptors across food, personal care, and household commodities.
+    GENERIC_COMMODITY_VOCABULARY = [
+        (r'\b(?:crystal\s+sugar|granulated\s+sugar|white\s+sugar|refined\s+sugar)\b', 'CRYSTAL SUGAR', 'SUGAR'),
+        (r'\b(?:sugar)\b', 'SUGAR', 'SUGAR'),
+        (r'\b(?:iodized?\s+salt|rock\s+salt|sea\s+salt|black\s+salt|table\s+salt|salt)\b', 'SALT', 'SALT'),
+        (r'\b(?:sunflower\s+oil|mustard\s+oil|refined\s+oil|edible\s+oil|vegetable\s+oil|coconut\s+oil|olive\s+oil|groundnut\s+oil|cooking\s+oil)\b', 'EDIBLE OIL', 'OIL'),
+        (r'\b(?:green\s+tea|black\s+tea|leaf\s+tea|dust\s+tea|tea)\b', 'TEA', 'BEVERAGE'),
+        (r'\b(?:instant\s+coffee|filter\s+coffee|coffee)\b', 'COFFEE', 'BEVERAGE'),
+        (r'\b(?:wheat\s+flour|whole\s+wheat\s+atta|atta|maida|besan|flour)\b', 'FLOUR', 'GRAIN_PRODUCT'),
+        (r'\b(?:basmati\s+rice|rice)\b', 'RICE', 'GRAIN_PRODUCT'),
+        (r'\b(?:biscuits?|cookies?)\b', 'BISCUIT', 'BISCUIT'),
+        (r'\b(?:garam\s+masala|turmeric\s+powder|chilli\s+powder|coriander\s+powder|cumin\s+powder|spices?|masala|pepper)\b', 'SPICE', 'SPICE'),
+        (r'\b(?:talcum\s+powder|body\s+talc|soft\s+talc|face\s+powder|talc)\b', 'TALCUM POWDER', 'TALCUM_POWDER'),
+        (r'\b(?:shampoo|hair\s+cleanser)\b', 'SHAMPOO', 'PERSONAL_CARE'),
+        (r'\b(?:conditioner|hair\s+conditioner)\b', 'CONDITIONER', 'PERSONAL_CARE'),
+        (r'\b(?:body\s+wash|shower\s+gel|toilet\s+soap|bathing\s+soap|soap)\b', 'SOAP', 'PERSONAL_CARE'),
+        (r'\b(?:body\s+lotion|face\s+cream|moisturizing\s+cream|cold\s+cream|skin\s+cream|deodorant)\b', 'SKIN CARE', 'PERSONAL_CARE'),
+        (r'\b(?:toothpaste|tooth\s+paste|dental\s+cream)\b', 'TOOTHPASTE', 'PERSONAL_CARE'),
+        (r'\b(?:detergent\s+powder|washing\s+powder|liquid\s+detergent|detergent)\b', 'DETERGENT', 'HOUSEHOLD_CLEANING'),
+        (r'\b(?:disinfectant\s+cleaner|floor\s+cleaner|toilet\s+cleaner|dishwash\s+liquid|surface\s+cleaner|cleaner)\b', 'CLEANER', 'HOUSEHOLD_CLEANING'),
+    ]
+
+    matched_generic = None
+    matched_type = None
+
+    for idx, line in enumerate(lines[:12]):
+        sec = classify_line_section(line)
+        if sec in (SECTION_INGREDIENTS, SECTION_NUTRITION, SECTION_ADDRESS, SECTION_CONSUMER_CARE, SECTION_STORAGE):
+            continue
+        if re.search(r'\b(?:manufactured|packed|marketed|ingredients|nutrition|mrp|batch|consumer)\b', line, re.I):
+            continue
+
+        for pat, gen_name, prod_type in GENERIC_COMMODITY_VOCABULARY:
+            m_gen = re.search(pat, line, re.IGNORECASE)
+            if m_gen:
+                matched_generic = gen_name
+                matched_type = prod_type
+                if 'GENERIC_NAME' not in fields:
+                    fields['GENERIC_NAME'] = {'value': gen_name, 'confidence': 0.85, 'source': 'OCR'}
+                if 'PRODUCT_TYPE' not in fields:
+                    fields['PRODUCT_TYPE'] = {'value': prod_type, 'confidence': 0.85, 'source': 'OCR'}
+
+                # Check if brand tokens appear before the generic match on the same line
+                before_text = line[:m_gen.start()].strip()
+                before_text = re.sub(r'^(?:generic\s*name|name\s+of\s+commodity|common\s*name|commodity)\s*[:.\s-]*', '', before_text, flags=re.I).strip()
+                COMMODITY_DESCRIPTORS = {'refined', 'pure', 'fresh', 'natural', 'organic', 'raw', 'extra', 'virgin', 'cold', 'pressed', 'classic', 'premium'}
+                brand_tokens = [t for t in re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text) if t.lower() not in MARKETING_TERMS and t.lower() not in COMMODITY_DESCRIPTORS]
+                if len(brand_tokens) >= 1:
+                    cand_brand = brand_tokens[0].title() if len(brand_tokens) > 1 else brand_tokens[0].title()
+                    product_prefix = ' '.join(re.findall(r'[A-Za-z][A-Za-z0-9&-]*', before_text))
+                    product_value = f"{product_prefix} {gen_name.title()}".strip()
+                    if not _is_disallowed_brand_candidate(cand_brand):
+                        if 'BRAND' not in fields:
+                            fields['BRAND'] = {'value': cand_brand, 'confidence': 0.84, 'source': 'OCR'}
+                        if 'PRODUCT_NAME' not in fields:
+                            fields['PRODUCT_NAME'] = build_product_name_candidate(
+                                value=product_value,
+                                raw_text=product_value,
+                                status="VALID",
+                                confidence=0.85,
+                                source='OCR_LAYOUT',
+                            )
+                elif idx > 0 and 'BRAND' not in fields:
+                    # Check preceding line for brand name
+                    prev_line = lines[idx - 1].strip()
+                    prev_words = re.findall(r'[A-Za-z][A-Za-z0-9&-]*', prev_line)
+                    if 1 <= len(prev_words) <= 4 and not _is_section_boundary(prev_line):
+                        cand_brand = ' '.join(prev_words).title()
+                        if not _is_disallowed_brand_candidate(cand_brand):
+                            fields['BRAND'] = {'value': cand_brand, 'confidence': 0.82, 'source': 'OCR_LAYOUT'}
+                            if 'PRODUCT_NAME' not in fields:
+                                fields['PRODUCT_NAME'] = build_product_name_candidate(
+                                    value=f"{cand_brand} {gen_name.title()}",
+                                    raw_text=f"{cand_brand} {gen_name.title()}",
+                                    status="VALID",
+                                    confidence=0.85,
+                                    source='OCR_LAYOUT',
+                                )
+                break
+        if matched_generic:
+            break
+
+    # 3. Front panel uppercase brand above generic line layout fallback
+    if 'BRAND' not in fields:
+        for index, line in enumerate(lines[:-1]):
+            next_line = lines[index + 1]
+            brand_words = re.findall(r'[A-Za-z][A-Za-z&-]*', line)
+            product_words = re.findall(r'[A-Za-z][A-Za-z&-]*', next_line)
+            if (1 <= len(brand_words) <= 3 and brand_words and line.upper() == line and
+                    not _is_disallowed_brand_candidate(' '.join(brand_words)) and
+                    any(word.lower() in {'salt', 'sugar', 'soap', 'shampoo', 'biscuit', 'oil', 'tea', 'powder', 'cream', 'cleaner', 'flour', 'rice'} for word in product_words)):
+                brand = ' '.join(word.title() for word in brand_words)
+                fields['BRAND'] = {'value': brand, 'confidence': 0.84, 'source': 'OCR_LAYOUT'}
+                if 'PRODUCT_NAME' not in fields:
+                    fields['PRODUCT_NAME'] = build_product_name_candidate(
+                        value=f'{brand} {generic}',
+                        raw_text=f'{brand} {generic}',
+                        status="VALID",
+                        confidence=0.86,
+                        source='OCR_LAYOUT',
+                    )
+                break
+
+    # 4. Brand-only prominent text fallback:
+    # If BRAND is still missing, check if line 0 is a 1-3 word title without product nouns, followed by statutory declarations
+    if 'BRAND' not in fields and lines:
+        first_line = lines[0].strip()
+        first_words = re.findall(r"[A-Za-z][A-Za-z&'-]*", first_line)
+        if (1 <= len(first_words) <= 3 and
+                not _is_disallowed_brand_candidate(first_line) and
+                not _is_disallowed_product_name_line(first_line)):
+            remaining = lines[1:]
+            has_product_nouns = bool(re.search(
+                r'\b(?:salt|sugar|biscuit|cookies|oil|tea|coffee|soap|shampoo|cream|flour|atta|maida|rice|masala|juice|toothpaste|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink)\b',
+                first_line, re.I
+            ))
+            if not has_product_nouns and (
+                not remaining or
+                all(
+                    re.search(r'\b(?:m\.?r\.?p\.?|₹|rs\.?|net\s*(?:wt|qty|weight|volume)|mfg|mfd|pkd|exp|batch|use\s*by|best\s*before)\b', l, re.I)
+                    or _is_disallowed_product_name_line(l)
+                    for l in remaining
+                )
+            ):
+                fields['BRAND'] = {'value': first_line.title(), 'confidence': 0.80, 'source': 'OCR_LAYOUT', 'role': 'BRAND'}
+
+    # 5. Extract front-panel PRODUCT_NAME candidates (with known_brand scoping)
+    known_brand_val = fields.get('BRAND', {}).get('value')
+    adjacent_identity = _adjacent_brand_generic_product(
+        lines,
+        known_brand_val,
+        matched_generic,
+        effective_items,
+    )
+    p_cand, competing_pnames, p_status = _extract_product_name_candidates(lines, effective_items, known_brand=known_brand_val)
+
+    if 'PRODUCT_NAME' not in fields and adjacent_identity:
+        fields['PRODUCT_NAME'] = adjacent_identity
+    elif 'PRODUCT_NAME' not in fields and p_cand:
+        # Strict semantic validation: do not allow candidate identical to the brand to become PRODUCT_NAME
+        cand_clean = re.sub(r'[^\w\s]', '', p_cand.lower()).strip()
+        brand_clean = re.sub(r'[^\w\s]', '', str(known_brand_val or '').lower()).strip()
+        if not (brand_clean and cand_clean == brand_clean):
+            fields['PRODUCT_NAME'] = build_product_name_candidate(
+                value=p_cand[:200],
+                raw_text=p_cand,
+                status=p_status,
+                competing_candidates=competing_pnames,
+                confidence=0.65 if p_status == "AMBIGUOUS" else 0.85,
+                source='OCR',
+            )
+
+    mrp_field = _extract_mrp_structured(normalized, raw_text, lines, effective_items)
+    if mrp_field:
+        fields['MRP'] = mrp_field
+
+    unit_sale_price = _extract_unit_sale_price(normalized, lines, effective_items)
+    if unit_sale_price:
+        fields['UNIT_SALE_PRICE'] = unit_sale_price
+
+    qty_field = _extract_net_quantity_field(normalized, lines)
+    if qty_field:
+        fields['DECLARED_NET_QUANTITY'] = qty_field
+
+    mfg_name, mfg_addr = _extract_manufacturer_and_address(lines, ocr_items=effective_items)
+    mkt_name, mkt_addr = _extract_marketer_and_address(lines, ocr_items=effective_items)
+    packer_name, packer_addr = _extract_packer_and_address(lines, ocr_items=effective_items)
+
+    if mfg_name and re.search(r'\b(?:address\s+and\s+manufacturing|manufacturing\s+address)\b', mfg_name, re.I):
+        mfg_name, mfg_addr = None, None
+
+    if mfg_name:
+        fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MANUFACTURER'}
+    if mfg_addr:
+        fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MANUFACTURER'}
+
+    if mkt_name:
+        fields['MARKETER_NAME'] = {'value': mkt_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MARKETER'}
+        if 'MANUFACTURER_NAME' not in fields:
+            fields['MANUFACTURER_NAME'] = {'value': mkt_name, 'confidence': 0.8, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
+    if mkt_addr:
+        fields['MARKETER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MARKETER'}
+        if 'MANUFACTURER_ADDRESS' not in fields:
+            fields['MANUFACTURER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.75, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
+
+    if packer_name:
+        fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'PACKER'}
+        if 'MANUFACTURER_NAME' not in fields:
+            fields['MANUFACTURER_NAME'] = {'value': packer_name, 'confidence': 0.78, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
+    if packer_addr:
+        fields['PACKER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'PACKER'}
+        if 'MANUFACTURER_ADDRESS' not in fields:
+            fields['MANUFACTURER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.68, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
+
+    # Collect distinct responsible entities with structured roles without merging
+    entities = []
+    if mfg_name:
+        entities.append({'role': 'MANUFACTURER', 'name': mfg_name, 'address': mfg_addr})
+    if mkt_name and mkt_name != mfg_name:
+        entities.append({'role': 'MARKETER', 'name': mkt_name, 'address': mkt_addr})
+    if packer_name and packer_name not in (mfg_name, mkt_name):
+        entities.append({'role': 'PACKER', 'name': packer_name, 'address': packer_addr})
+
+    if len(entities) > 1:
+        if 'MANUFACTURER_NAME' in fields:
+            fields['MANUFACTURER_NAME']['entities'] = entities
+
+        # Ambiguous address association check:
+        # If multiple distinct entities exist and their address association is shared, identical, or unlinked
+        addrs = [e.get('address') for e in entities if e.get('address')]
+        if len(entities) >= 2 and len(set(addrs)) == 1 and addrs[0]:
+            if 'MANUFACTURER_ADDRESS' in fields:
+                fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
+                fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
+                fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
+                    {'entity': e['name'], 'role': e['role'], 'address': addrs[0]} for e in entities
+                ]
+                fields['MANUFACTURER_ADDRESS']['reason'] = (
+                    f"Ambiguous address association between multiple declared entities: "
+                    f"{', '.join(e['name'] for e in entities)}"
+                )
+
+    # Check for multiple standalone corporate entities without explicit manufacturer/marketer prefixes
+    standalone_comps = []
+    for idx, line in enumerate(lines):
+        comp = _extract_company_entity_from_line(line)
+        if comp and not any(kw in line.lower() for kw in MANUFACTURER_KEYWORDS + MARKETER_KEYWORDS + PACKER_KEYWORDS):
+            standalone_comps.append((comp[0], idx, comp[1]))
+    if len(standalone_comps) >= 2 and not mfg_name and not mkt_name:
+        if 'MANUFACTURER_ADDRESS' in fields:
+            fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
+            fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
+            fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
+                {'entity': sc[0], 'address': fields['MANUFACTURER_ADDRESS'].get('value')}
+                for sc in standalone_comps
+            ]
+            fields['MANUFACTURER_ADDRESS']['reason'] = (
+                f"Ambiguous address association between competing entities: "
+                f"{', '.join(sc[0] for sc in standalone_comps)}"
+            )
+
+    for line_index, line in enumerate(lines):
+        lower = line.lower()
+        if any(keyword in lower for keyword in IMPORTER_KEYWORDS):
+            candidate = line
+            for kw in IMPORTER_KEYWORDS:
+                if kw in lower:
+                    candidate = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
+                    break
+            candidate = ' '.join([candidate, _lines_after_label(lines, line_index)]).strip()
+            if candidate:
+                fields['IMPORTER_NAME_ADDRESS'] = {'value': candidate[:500], 'confidence': 0.7, 'source': 'OCR'}
+            break
+
+    for line in lines:
+        lower = line.lower()
+        if any(keyword in lower for keyword in COUNTRY_OF_ORIGIN_KEYWORDS):
+            kw = next(k for k in COUNTRY_OF_ORIGIN_KEYWORDS if k in lower)
+            candidate = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
+            if candidate:
+                fields['COUNTRY_OF_ORIGIN'] = {'value': candidate[:100], 'confidence': 0.7, 'source': 'OCR'}
+            break
+
+    mfg_date = _extract_date_near_keyword(normalized, MFG_DATE_KEYWORDS, lines=lines, ocr_items=effective_items)
+    if mfg_date:
+        is_valid, norm_date, date_meta = parse_date_with_precision(mfg_date)
+        if is_valid and date_meta:
+            prec = date_meta["precision"]
+            parsed_comps = date_meta["parsed_components"]
+            if prec == DatePrecision.FULL_DATE.value:
+                fields['MANUFACTURE_DATE'] = build_date_candidate(
+                    raw_date=mfg_date,
+                    norm_val=norm_date,
+                    precision=DatePrecision.FULL_DATE.value,
+                    parsed_components=parsed_comps,
+                    source_label='MFD',
+                    semantic_type='MANUFACTURE_DATE',
+                    confidence=0.75,
+                    source='OCR',
+                )
+            else:
+                fields['MONTH_YEAR_MANUFACTURE'] = build_date_candidate(
+                    raw_date=mfg_date,
+                    norm_val=norm_date,
+                    precision=DatePrecision.MONTH_YEAR.value,
+                    parsed_components=parsed_comps,
+                    source_label='MFD',
+                    semantic_type='MONTH_YEAR_MANUFACTURE',
+                    confidence=0.75,
+                    source='OCR',
+                )
+                if re.fullmatch(r'\d{1,2}[/-]\d{2}', mfg_date.strip()):
+                    fields['MONTH_YEAR_MANUFACTURE']['value'] = norm_date
+        else:
+            fields['MANUFACTURE_DATE'] = {
+                'value': mfg_date,
+                'raw_value': mfg_date,
+                'raw_date': mfg_date,
+                'source_label': 'MFD',
+                'semantic_type': 'MANUFACTURE_DATE',
+                'confidence': 0.75,
+                'source': 'OCR',
+            }
+
+        # Some packages print compact paired dates such as "MFD 05/26;04/28".
+        # Treat the second date as use-before only when both dates are on the
+        # same manufacturing-label line; do not search unrelated package text.
+        if 'USE_BEFORE_DATE' not in fields:
+            for line in lines:
+                if not re.search(r'\b(?:mfd|mfg|manufactur\w*)\b', line, re.IGNORECASE):
+                    continue
+                date_tokens = []
+                for pattern in DATE_PATTERNS:
+                    for match in re.finditer(pattern, line, re.IGNORECASE):
+                        token = match.group(1)
+                        if _is_valid_date_token(token) and token not in date_tokens:
+                            date_tokens.append(token)
+                if len(date_tokens) != 2:
+                    continue
+                second_date = date_tokens[1]
+                second_valid, second_norm, second_meta = parse_date_with_precision(second_date)
+                if not second_valid or not second_meta:
+                    continue
+                fields['USE_BEFORE_DATE'] = {
+                    'value': second_norm,
+                    'raw_value': second_date,
+                    'raw_date': second_date,
+                    'normalized_value': second_norm,
+                    'normalized_date': second_norm,
+                    'source_label': 'DATE_PAIR',
+                    'semantic_type': 'USE_BY',
+                    'evidence': {'raw_text': line, 'label': 'DATE_PAIR'},
+                    'confidence': 0.65,
+                    'source': 'OCR',
+                }
+                break
+
+    packing_date = _extract_date_near_keyword(normalized, PACKING_DATE_KEYWORDS, lines=lines, ocr_items=effective_items)
+    if packing_date:
+        is_valid, norm_date, date_meta = parse_date_with_precision(packing_date)
+        if is_valid and date_meta:
+            prec = date_meta["precision"]
+            parsed_comps = date_meta["parsed_components"]
+            fields['PACKING_DATE'] = build_date_candidate(
+                raw_date=packing_date,
+                norm_val=norm_date,
+                precision=prec,
+                parsed_components=parsed_comps,
+                source_label='PKD',
+                semantic_type='PACKING_DATE',
+                confidence=0.75,
+                source='OCR',
+            )
+            if re.fullmatch(r'\d{1,2}[/-]\d{2}', packing_date.strip()):
+                fields['PACKING_DATE']['value'] = norm_date
+        else:
+            fields['PACKING_DATE'] = {
+                'value': packing_date,
+                'raw_value': packing_date,
+                'raw_date': packing_date,
+                'source_label': 'PKD',
+                'semantic_type': 'PACKING_DATE',
+                'confidence': 0.75,
+                'source': 'OCR',
+            }
+
+    best_before = _extract_date_near_keyword(normalized, BEST_BEFORE_KEYWORDS, lines=lines, ocr_items=effective_items)
+    if best_before:
+        fields['BEST_BEFORE_USE_BY'] = {
+            'value': best_before,
+            'raw_value': best_before,
+            'raw_date': best_before,
+            'normalized_value': best_before,
+            'normalized_date': best_before,
+            'source_label': 'BEST_BEFORE',
+            'semantic_type': 'BEST_BEFORE',
+            'evidence': {'raw_text': best_before, 'label': 'BEST_BEFORE'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
+    else:
+        for line in lines:
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in BEST_BEFORE_KEYWORDS):
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                if dur_match:
+                    dur_val = dur_match.group(1).strip()
+                    fields['BEST_BEFORE_USE_BY'] = {
+                        'value': dur_val,
+                        'raw_value': dur_val,
+                        'raw_date': dur_val,
+                        'normalized_value': dur_val,
+                        'normalized_date': dur_val,
+                        'source_label': 'BEST_BEFORE',
+                        'semantic_type': 'BEST_BEFORE_PERIOD',
+                        'evidence': {'raw_text': dur_val, 'label': 'BEST_BEFORE'},
+                        'confidence': 0.75,
+                        'source': 'OCR',
+                    }
+                    break
+
+    use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS, lines=lines, ocr_items=effective_items)
+    if use_by:
+        fields['USE_BEFORE_DATE'] = {
+            'value': use_by,
+            'raw_value': use_by,
+            'raw_date': use_by,
+            'normalized_value': use_by,
+            'normalized_date': use_by,
+            'source_label': 'USE_BY',
+            'semantic_type': 'USE_BY',
+            'evidence': {'raw_text': use_by, 'label': 'USE_BY'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
+    elif 'BEST_BEFORE_USE_BY' not in fields:
+        for line in lines:
+            line_lower = line.lower()
+            if any(keyword in line_lower for keyword in USE_BY_KEYWORDS):
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                if dur_match:
+                    dur_val = dur_match.group(1).strip()
+                    fields['USE_BEFORE_DATE'] = {
+                        'value': dur_val,
+                        'raw_value': dur_val,
+                        'raw_date': dur_val,
+                        'normalized_value': dur_val,
+                        'normalized_date': dur_val,
+                        'source_label': 'USE_BY',
+                        'semantic_type': 'USE_BY_PERIOD',
+                        'evidence': {'raw_text': dur_val, 'label': 'USE_BY'},
+                        'confidence': 0.75,
+                        'source': 'OCR',
+                    }
+                    break
+
+    expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS, lines=lines, ocr_items=effective_items)
+    if expiry_date:
+        fields['EXPIRY_DATE'] = {
+            'value': expiry_date,
+            'raw_value': expiry_date,
+            'raw_date': expiry_date,
+            'normalized_value': expiry_date,
+            'normalized_date': expiry_date,
+            'source_label': 'EXPIRY',
+            'semantic_type': 'EXPIRY_DATE',
+            'evidence': {'raw_text': expiry_date, 'label': 'EXPIRY'},
+            'confidence': 0.75,
+            'source': 'OCR',
+        }
+
+    fssai = _search_patterns(normalized, FSSAI_PATTERNS)
+    if fssai and 9 <= len(fssai) <= 14 and fssai.isdigit():
+        fields['FSSAI_LICENSE'] = {'value': fssai, 'confidence': 0.9, 'source': 'OCR'}
+
+    for line_index, line in enumerate(lines):
+        lower = line.lower()
+        if any(keyword in lower for keyword in INGREDIENT_KEYWORDS):
+            kw = next(k for k in INGREDIENT_KEYWORDS if k in lower)
+            raw_after = line[line.lower().find(kw) + len(kw):].strip(' :;,-')
+            cleaned_first = _cut_before_next_section(raw_after, 'ingredients')
+            cont_lines = _collect_continuation_lines(lines, line_index, 'ingredients', max_lines=8)
+            all_ing_parts = [cleaned_first] if cleaned_first else []
+            all_ing_parts.extend(cont_lines)
+            candidate = ' '.join(all_ing_parts).strip(' ,;')
+            if candidate:
+                fields['INGREDIENTS_LIST'] = {'value': candidate[:1000], 'confidence': 0.75, 'source': 'OCR'}
+            break
+
+    for line_index, line in enumerate(lines):
+        if any(keyword in line.lower() for keyword in NUTRITIONAL_KEYWORDS):
+            cont_lines = _collect_continuation_lines(lines, line_index, 'nutrition', max_lines=12)
+            panel = ' '.join([line.strip()] + cont_lines).strip()
+            fields['NUTRITIONAL_INFO'] = {'value': panel[:2000], 'confidence': 0.65, 'source': 'OCR', 'regulatory_source': 'FSSAI_FOOD_LABELING'}
+            break
+
+    if (category is None or category.upper() == 'FOOD') and any(keyword in normalized.lower() for keyword in VEG_NONVEG_KEYWORDS):
+        fields['VEG_NONVEG_SYMBOL'] = {'value': 'Text mention detected', 'confidence': 0.5, 'source': 'OCR'}
+
+    cc_field = _extract_consumer_care_structured(lines, normalized)
+    if cc_field:
+        fields['CONSUMER_CARE'] = cc_field
+
+    batch_field = _extract_batch_number(lines, normalized, effective_items)
+    if batch_field:
+        fields['BATCH_NUMBER'] = batch_field
+
+    compact_fields = _extract_compact_declaration_panel(lines, effective_items)
+    for field_name, compact_field in compact_fields.items():
+        fields.setdefault(field_name, compact_field)
+
+    for f_name, field_data in fields.items():
+        val_str = str(field_data.get('value', ''))
+        val_lower = val_str.lower()
+        if effective_items and val_lower:
+            matching_item = next(
+                (item for item in effective_items if val_lower in str(item.get('text', '')).lower()),
+                None,
+            )
+            if matching_item:
+                field_data.setdefault('source_image_index', matching_item.get('image_index'))
+                field_data.setdefault('bbox', matching_item.get('bbox'))
+                field_data['confidence'] = min(float(field_data.get('confidence') or 0), float(matching_item.get('confidence') or 0))
+
+        if not field_data.get('evidence_state'):
+            if field_data.get('status') == 'AMBIGUOUS' or field_data.get('is_ambiguous'):
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value
+            elif float(field_data.get('confidence') or 0.8) < 0.5:
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_LOW_CONFIDENCE.value
+            elif field_data.get('value'):
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+            else:
+                field_data['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value
+
+        # Attach canonical EvidenceCandidate schema
+        if 'evidence_candidate' not in field_data:
+            ev_candidate = EvidenceCandidate(
+                raw_text=field_data.get('raw_text', field_data.get('raw_value', val_str)),
+                normalized_text=field_data.get('normalized_value', val_str),
+                source_image=field_data.get('source', 'OCR'),
+                source_type=SourceType.OCR.value,
+                ocr_confidence=float(field_data.get('confidence') or 0.8),
+                bounding_box=field_data.get('bbox'),
+                line_id=field_data.get('line_index'),
+                semantic_section=field_data.get('semantic_section', 'UNKNOWN'),
+                anchor_label=field_data.get('source_label'),
+                anchor_relation=field_data.get('anchor_relation', AnchorRelation.SAME_LINE.value if field_data.get('source_label') else AnchorRelation.UNANCHORED.value),
+                candidate_field=f_name,
+                relevance_score=float(field_data.get('relevance_score') or 0.85),
+                validation_state=ValidationState.UNASSESSED.value,
+                evidence_state=field_data.get('evidence_state'),
+            )
+            field_data['evidence_candidate'] = ev_candidate.to_dict()
+
+        # Attach CanonicalFieldCandidate and structured provenance
+        if 'canonical_field_candidate' not in field_data:
+            cfc = CanonicalFieldCandidate(
+                field=f_name,
+                normalized_value=field_data.get('normalized_value', field_data.get('value')),
+                raw_text=field_data.get('raw_text', field_data.get('raw_value', val_str)),
+                anchor_label=field_data.get('source_label'),
+                semantic_section=field_data.get('semantic_section', 'UNKNOWN'),
+                source_image=field_data.get('source', 'OCR'),
+                bbox=field_data.get('bbox'),
+                relevance_score=float(field_data.get('relevance_score') or 0.85),
+                confidence=float(field_data.get('confidence') or 0.8),
+                validation_state=field_data.get('status', ValidationState.UNASSESSED.value),
+                evidence_state=field_data.get('evidence_state'),
+                rejection_reason=field_data.get('rejection_reason'),
+                provenance={
+                    'what': field_data.get('value'),
+                    'why': f"Associated with anchor label '{field_data.get('source_label', 'UNANCHORED')}' in section '{field_data.get('semantic_section', 'UNKNOWN')}'",
+                    'where': field_data.get('bbox') or {'line_index': field_data.get('line_index')},
+                    'which_label': field_data.get('source_label'),
+                    'which_image': field_data.get('source_image_index'),
+                    'confidence': float(field_data.get('confidence') or 0.8),
+                    'validation': field_data.get('status', 'UNASSESSED'),
+                },
+                metadata={k: v for k, v in field_data.items() if k not in ('evidence_candidate', 'canonical_field_candidate', 'provenance')},
+            )
+            field_data['canonical_field_candidate'] = cfc.to_dict()
+            field_data.setdefault('provenance', cfc.provenance)
+
+    logger.info(f"Extracted {len(fields)} declaration fields from OCR text")
+    return fields

@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 160" width="100%" height="100%">
+      
+    <defs>
+      <!-- Shield Green to Blue Gradient -->
+      <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#16A34A"/>
+        <stop offset="35%" stop-color="#10B981"/>
+        <stop offset="70%" stop-color="#059669"/>
+        <stop offset="100%" stop-color="#0284C7"/>
+      </linearGradient>
+
+      <!-- Magnifier Lens Gradient -->
+      <linearGradient id="magGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0A2540"/>
+        <stop offset="45%" stop-color="#0E3D6E"/>
+        <stop offset="100%" stop-color="#071B33"/>
+      </linearGradient>
+
+      <!-- Magnifier Dark Mode Gradient -->
+      <linearGradient id="magGradDark" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#38BDF8"/>
+        <stop offset="50%" stop-color="#0284C7"/>
+        <stop offset="100%" stop-color="#0369A1"/>
+      </linearGradient>
+
+      <!-- Handle Navy Gradient -->
+      <linearGradient id="handleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0E3D6E"/>
+        <stop offset="100%" stop-color="#06182D"/>
+      </linearGradient>
+
+      <!-- Triangle Green in letter A -->
+      <linearGradient id="greenTriangle" x1="0%" y1="100%" x2="0%" y2="0%">
+        <stop offset="0%" stop-color="#059669"/>
+        <stop offset="100%" stop-color="#10B981"/>
+      </linearGradient>
+    </defs>
+    
+      
+    <g transform="translate(-35, -5) scale(0.44)" class="lmai-emblem">
+      <!-- 1. Protective Shield Contour -->
+      <path d="M 216 48
+               L 112 94
+               C 112 94, 106 216, 216 272
+               C 232 263, 250 250, 265 233"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="19"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+      <!-- 2. Magnifier Handle (angled ~135°) -->
+      <path d="M 292 232 L 352 292"
+            stroke="#FFFFFF"
+            stroke-width="32"
+            stroke-linecap="round"/>
+
+      <!-- 3. Magnifier Outer Rim -->
+      <circle cx="236" cy="176" r="83"
+              fill="none"
+              stroke="#FFFFFF"
+              stroke-width="22"/>
+
+      <!-- 4. Inner Lens Background -->
+      <circle cx="236" cy="176" r="72"
+              fill="none"/>
+
+      <!-- 5. Packaged Commodity (Gable-top Carton in Perspective) -->
+      <g stroke="#FFFFFF" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round" fill="none">
+        <!-- Top Seam Ridge -->
+        <path d="M 198 118 L 260 118" stroke-width="7"/>
+        <!-- Slanted Gable Roof -->
+        <path d="M 198 118 L 178 155 L 246 155 L 260 118"/>
+        <!-- 3D Gable Side Facet -->
+        <path d="M 260 118 L 279 140 L 265 155 L 246 155"/>
+        <path d="M 279 140 L 265 155 L 265 220 L 279 201 Z"/>
+        <!-- Front Main Body Container -->
+        <rect x="178" y="155" width="68" height="65" rx="2"/>
+      </g>
+
+      <!-- 6. White Statutory Verification Label -->
+      <rect x="187" y="164" width="50" height="47" rx="3"
+            fill="none" stroke="#FFFFFF" stroke-width="3.5"/>
+
+      <!-- 7. Mandatory Label Declarations (Text Lines) -->
+      <line x1="193" y1="173" x2="227" y2="173" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+      <line x1="193" y1="181" x2="219" y2="181" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+      <line x1="193" y1="189" x2="211" y2="189" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round"/>
+
+      <!-- 8. Emerald Verification Checkmark -->
+      <path d="M 203 199 L 212 208 L 229 191"
+            fill="none"
+            stroke="#FFFFFF"
+            stroke-width="6.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+      <!-- 9. Scales of Justice (Legal Metrology Balance) -->
+      <g stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <!-- Central Support Pillar & Finial -->
+        <line x1="362" y1="144" x2="362" y2="204" stroke-width="4.5"/>
+        <path d="M 358 144 L 362 137 L 366 144 Z" fill="#FFFFFF" stroke-width="1.5"/>
+        <!-- Pedestal Base -->
+        <path d="M 352 208 C 356 204, 368 204, 372 208 Z" fill="#FFFFFF" stroke-width="1.5"/>
+        <line x1="346" y1="208" x2="378" y2="208" stroke-width="4.5"/>
+
+        <!-- Horizontal Fulcrum Beam -->
+        <line x1="334" y1="149" x2="390" y2="149" stroke-width="4"/>
+
+        <!-- Left Balance Pan & Cords -->
+        <line x1="336" y1="150" x2="324" y2="178" stroke-width="2.2"/>
+        <line x1="336" y1="150" x2="348" y2="178" stroke-width="2.2"/>
+        <path d="M 320 178 Q 336 190 352 178 Z" fill="none" stroke-width="3.5"/>
+
+        <!-- Right Balance Pan & Cords -->
+        <line x1="388" y1="150" x2="376" y2="178" stroke-width="2.2"/>
+        <line x1="388" y1="150" x2="400" y2="178" stroke-width="2.2"/>
+        <path d="M 372 178 Q 388 190 404 178 Z" fill="none" stroke-width="3.5"/>
+      </g>
+    </g>
+    
+      
+    <g transform="translate(175, 30) scale(0.72)">
+      <!-- Letter L -->
+      <path d="M 0 0 L 26 0 L 26 71 L 74 71 L 74 95 L 0 95 Z" fill="#FFFFFF"/>
+
+      <!-- Letter M -->
+      <path d="M 86 0 L 117 0 L 143 56 L 169 0 L 200 0 L 200 95 L 175 95 L 175 35 L 152 82 L 134 82 L 111 35 L 111 95 L 86 95 Z" fill="#FFFFFF"/>
+
+      <!-- Letter A Outer with counter cutout -->
+      <path d="M 246 0 L 274 0 L 310 95 L 282 95 L 273 69 L 247 69 L 238 95 L 210 95 Z
+               M 260 21 L 251 51 L 269 51 Z"
+            fill-rule="evenodd"
+            fill="#FFFFFF"/>
+
+      <!-- Letter A: Vibrant Green Counter Triangle Signature -->
+      <polygon points="260,20 249,52 271,52" fill="url(#greenTriangle)"/>
+
+      <!-- Letter I -->
+      <path d="M 322 0 L 348 0 L 348 95 L 322 95 Z" fill="#FFFFFF"/>
+    </g>
+    
+      
+    <text x="177" y="135"
+          text-anchor="start"
+          font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+          font-size="31"
+          font-weight="800"
+          letter-spacing="0.28em"
+          fill="#FFFFFF">INSPECTOR</text>
+    
+    </svg>

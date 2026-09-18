@@ -1,0 +1,227 @@
+.processing-page {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.processing-container {
+  padding: 1.75rem;
+  background: #FFFFFF;
+}
+
+.processing-header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 1.25rem;
+}
+
+.processing-header__text h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+/* Preview Strip */
+.processing-preview-strip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.processing-thumbnail-box {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-medium);
+  flex-shrink: 0;
+  background-color: #0F172A;
+}
+
+.processing-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnail-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #FFFFFF;
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+}
+
+/* Pipeline Stages List */
+.pipeline-stages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 1.5rem;
+}
+
+.pipeline-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background-color: var(--bg-surface-muted);
+  transition: all 0.2s ease;
+}
+
+.pipeline-stage--completed {
+  background-color: var(--status-pass-bg);
+  border-color: var(--status-pass-border);
+}
+
+.pipeline-stage--active {
+  background-color: var(--primary-50);
+  border-color: var(--primary-100);
+  box-shadow: 0 0 0 1px var(--primary-500);
+  animation: stagePulse 2s infinite ease-in-out;
+}
+
+@keyframes stagePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px var(--primary-500);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--primary-400), 0 2px 8px rgba(37, 99, 235, 0.12);
+  }
+}
+
+.pipeline-stage--error {
+  background-color: var(--status-fail-bg);
+  border-color: var(--status-fail-border);
+  box-shadow: 0 0 0 1px var(--status-fail-border);
+}
+
+.pipeline-stage--pending {
+  opacity: 0.6;
+}
+
+.stage-icon-box {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-title {
+  font-size: 0.825rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.pipeline-stage--completed .stage-title {
+  color: var(--status-pass-text);
+}
+
+.pipeline-stage--active .stage-title {
+  color: var(--primary-800);
+}
+
+.stage-detail {
+  font-size: 0.725rem;
+  color: var(--text-muted);
+}
+
+.stage-status-text {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.pipeline-stage--completed .stage-status-text {
+  color: var(--status-pass-text);
+}
+
+.pipeline-stage--active .stage-status-text {
+  color: var(--primary-700);
+}
+
+.pipeline-stage--error .stage-title {
+  color: var(--status-fail-text);
+}
+
+.pipeline-stage--error .stage-status-text {
+  color: var(--status-fail-text);
+}
+
+.upload-progress-bar-container {
+  width: 100%;
+  max-width: 280px;
+  height: 4px;
+  background-color: var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.35rem;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-600), var(--accent-teal-500));
+  transition: width 0.2s ease;
+}
+
+/* Processing Error State */
+.processing-error-state {
+  text-align: center;
+  padding: 1.5rem;
+  background-color: var(--status-fail-bg);
+  border: 1px solid var(--status-fail-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.5rem;
+}
+
+.error-icon-box {
+  margin-bottom: 0.75rem;
+}
+
+.error-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--status-fail-text);
+  margin-bottom: 0.35rem;
+}
+
+.error-message {
+  font-size: 0.85rem;
+  color: var(--text-main);
+  margin-bottom: 0.5rem;
+  font-family: ui-monospace, monospace;
+}
+
+.error-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.processing-footer {
+  text-align: center;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1rem;
+}

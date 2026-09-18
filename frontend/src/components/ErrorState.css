@@ -1,0 +1,61 @@
+.error-state {
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  background-color: var(--status-fail-bg);
+  border: 1px solid var(--status-fail-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 1.25rem;
+}
+
+.error-state__icon-box {
+  flex-shrink: 0;
+  color: var(--status-fail-solid);
+}
+
+.error-state__body {
+  flex: 1;
+}
+
+.error-state__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--status-fail-text);
+  margin-bottom: 0.25rem;
+}
+
+.error-state__message {
+  font-size: 0.825rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.error-state__reason {
+  background-color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  margin-bottom: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.error-state__reason-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.error-state__reason-text {
+  color: var(--status-fail-text);
+  word-break: break-word;
+}
+
+.error-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
