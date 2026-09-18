@@ -37,6 +37,8 @@ class ScanResponse(BaseModel):
     inspection_date: Optional[datetime] = None
     regulatory_snapshot: Optional[str] = None
     regulatory_snapshot_label: Optional[str] = None
+    analysis_source: Optional[str] = None
+    llm_metadata: Optional[dict] = None
 
 
 class InspectionDetail(BaseModel):
@@ -56,6 +58,8 @@ class InspectionDetail(BaseModel):
     notes: Optional[str] = None
     regulatory_snapshot: Optional[str] = None
     regulatory_snapshot_label: Optional[str] = None
+    analysis_source: Optional[str] = None
+    llm_metadata: Optional[dict] = None
     created_at: Optional[datetime] = None
     product: Optional[dict] = None
     images: List[dict] = []
@@ -85,6 +89,7 @@ class InspectionSummary(BaseModel):
     inspector_name: Optional[str] = None
     created_at: Optional[datetime] = None
     report: Optional[dict] = None
+    analysis_source: Optional[str] = None
 
     class Config:
         from_attributes = True

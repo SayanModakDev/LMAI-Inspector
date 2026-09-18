@@ -264,6 +264,17 @@ const ResultHero = ({
                 <span className="badge badge-gray text-2xs font-semibold">{categoryName}</span>
               </>
             )}
+            {inspection.analysis_source && (
+              <>
+                <span className="results-hero-dot">•</span>
+                <span
+                  className="badge badge-primary text-2xs font-semibold"
+                  title="Evidence extraction & resolution methodology"
+                >
+                  {inspection.analysis_source}
+                </span>
+              </>
+            )}
           </div>
 
           {/* Primary Status + Secondary Attention Count + Compact Reasons */}

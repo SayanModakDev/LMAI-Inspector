@@ -68,7 +68,7 @@ def get_applicable_rules(
                 continue
             if norm_pkg == 'WHOLESALE' and rule_pkg not in ('ALL', 'WHOLESALE'):
                 continue
-        elif norm_pkg == 'RETAIL':
+        elif norm_pkg in ('RETAIL', 'NOT_DETECTED', 'ALL'):
             if rule_pkg not in ('ALL', 'RETAIL'):
                 continue
         else:
