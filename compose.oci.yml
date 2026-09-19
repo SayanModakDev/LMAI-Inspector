@@ -1,0 +1,37 @@
+services:
+  backend:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: lmai-inspector-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env.oci}
+      GEMINI_ENABLED: ${GEMINI_ENABLED:-true}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      FRONTEND_URL: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env.oci}
+      CORS_ORIGINS: ${PUBLIC_ORIGIN}
+      PUBLIC_BASE_URL: ${PUBLIC_ORIGIN}
+      UPLOAD_DIR: /data/uploads
+      REPORT_DIR: /data/generated_reports
+      OCR_CONCURRENCY: "1"
+      PADDLE_CPU_THREADS: "1"
+    volumes:
+      - ${LMAI_DATA_DIR:-./oci-data}:/data
+    expose:
+      - "8000"
+
+  frontend:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: lmai-inspector-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"

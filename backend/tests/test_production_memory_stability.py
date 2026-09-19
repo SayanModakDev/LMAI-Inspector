@@ -100,7 +100,7 @@ def test_four_panel_inspection_pipeline_completes(four_panel_image_bytes):
     assert "inspection_id" in payload
     assert payload["inspection_id"] > 0
     assert len(payload.get("images", [])) == 4
-    assert payload.get("overall_result") in ["COMPLIANT", "NON-COMPLIANT", "NOT_VERIFIABLE", "NEEDS_REVIEW"]
+    assert payload.get("overall_result") in ["COMPLIANT", "NON_COMPLIANT", "REVIEW_REQUIRED"]
     assert len(payload.get("rule_results", [])) > 0
 
     post_rss = force_garbage_collection()

@@ -126,7 +126,7 @@ def test_pdf_report_overall_results_compliant_and_non_compliant(db_session):
     db_session.commit()
     rep_nc = generate_inspection_pdf(insp_nc, db_session)
     text_nc = _extract_pdf_text(rep_nc.file_path)
-    assert "NON-COMPLIANT" in text_nc or "0 \x97 NON-COMPLIANT" in text_nc
+    assert "NON_COMPLIANT" in text_nc
 
 
 def test_pdf_report_declared_net_quantity_decomposition(db_session):

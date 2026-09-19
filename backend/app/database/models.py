@@ -53,7 +53,8 @@ class Inspection(Base):
     package_type = Column(String(50), default="NOT_DETECTED")  # RETAIL, WHOLESALE, NOT_DETECTED
     import_status = Column(String(50), default="NOT_DETECTED")  # DOMESTIC, IMPORTED, NOT_DETECTED
     quantity_type = Column(String(50), nullable=True)  # WEIGHT, VOLUME, COUNT, LENGTH, AREA
-    overall_result = Column(String(50), nullable=True)  # COMPLIANT, NON-COMPLIANT, NOT_VERIFIABLE
+    # Canonical software-only Automated Label Screening result.
+    overall_result = Column(String(50), nullable=True)  # COMPLIANT, NON_COMPLIANT, REVIEW_REQUIRED
     priority = Column(String(20), default="MEDIUM")  # LOW, MEDIUM, HIGH
     image_path = Column(String(500), nullable=True)
     processed_image_path = Column(String(500), nullable=True)
@@ -217,7 +218,7 @@ class RuleResult(Base):
     inspection_id = Column(Integer, ForeignKey("inspections.id"), nullable=False)
     rule_id = Column(String(50), nullable=False)
     parameter = Column(String(100), nullable=False)
-    status = Column(String(30), nullable=False)  # PASS, FAIL, NOT_APPLICABLE, NOT_VERIFIABLE
+    status = Column(String(64), nullable=False)  # Includes OUT_OF_SCOPE_PHYSICAL_VERIFICATION
     message = Column(Text, nullable=True)
     evidence_data = Column(JSON, nullable=True)  # Extracted evidence details
     rule_version = Column(String(50), nullable=True)

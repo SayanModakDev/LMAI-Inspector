@@ -202,7 +202,7 @@ def test_rule_engine_missing_evidence_is_not_verifiable():
     rule_results, overall_result = evaluate_rules(applicable_rules, {})
 
     assert rule_results[0]['status'] == 'NOT_VERIFIABLE'
-    assert overall_result == 'NOT_VERIFIABLE'
+    assert overall_result == 'REVIEW_REQUIRED'
 
 
 def test_rule_engine_weak_ocr_evidence_is_not_verifiable():
@@ -223,7 +223,7 @@ def test_rule_engine_weak_ocr_evidence_is_not_verifiable():
     )
 
     assert rule_results[0]['status'] == 'NOT_VERIFIABLE'
-    assert overall_result == 'NOT_VERIFIABLE'
+    assert overall_result == 'REVIEW_REQUIRED'
 
 
 def test_extractor_preserves_lines_and_does_not_invent_generic_name():
@@ -368,7 +368,7 @@ def test_manufactured_by_company_name_never_treated_as_date():
     rules = [{'rule_id': 'PC-ALL-009', 'parameter': 'MONTH_YEAR_MANUFACTURE', 'required': True}]
     results, overall = evaluate_rules(rules, fields)
     assert results[0]['status'] == 'NOT_VERIFIABLE'
-    assert overall == 'NOT_VERIFIABLE'
+    assert overall == 'REVIEW_REQUIRED'
 
 
 def test_best_before_classified_separately():
@@ -919,7 +919,7 @@ def test_conflicting_mrp_multi_image():
     assert results[0]['status'] == 'NOT_VERIFIABLE'
     assert results[0]['binary'] == 0
     assert results[0]['review_required'] is True
-    assert overall == 'NOT_VERIFIABLE'
+    assert overall == 'REVIEW_REQUIRED'
     findings = build_inspection_findings(results)
     assert len(findings['needs_review']) == 1
 
@@ -948,7 +948,7 @@ def test_conflicting_product_name_multi_image():
     assert results[0]['status'] == 'NOT_VERIFIABLE'
     assert results[0]['binary'] == 0
     assert results[0]['review_required'] is True
-    assert overall == 'NOT_VERIFIABLE'
+    assert overall == 'REVIEW_REQUIRED'
     findings = build_inspection_findings(results)
     assert len(findings['needs_review']) == 1
 

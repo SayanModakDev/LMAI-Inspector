@@ -11,7 +11,6 @@ from app.reports.pdf_report import generate_inspection_pdf
 from app.rules.rule_engine import (
     build_inspection_findings,
     calculate_rule_summary,
-    derive_overall_result,
     derive_screening_result,
 )
 from app.rules.applicability import get_applicable_rules
@@ -47,8 +46,11 @@ def get_history(
         norm = normalize_status(status)
         if norm == InspectionStatus.NON_COMPLIANT:
             query = query.filter(models.Inspection.overall_result.in_(["NON_COMPLIANT", "NON-COMPLIANT"]))
-        elif norm == InspectionStatus.NOT_VERIFIABLE:
-            query = query.filter(models.Inspection.overall_result.in_(["NOT_VERIFIABLE", "NEEDS_REVIEW", "NOT-VERIFIABLE", "NEEDS-REVIEW"]))
+        elif norm == InspectionStatus.REVIEW_REQUIRED:
+            query = query.filter(models.Inspection.overall_result.in_([
+                "REVIEW_REQUIRED", "REVIEW-REQUIRED", "NOT_VERIFIABLE",
+                "NEEDS_REVIEW", "NOT-VERIFIABLE", "NEEDS-REVIEW",
+            ]))
         elif norm == InspectionStatus.COMPLIANT:
             query = query.filter(models.Inspection.overall_result == "COMPLIANT")
         elif norm == InspectionStatus.NOT_APPLICABLE:
@@ -76,6 +78,7 @@ def get_history(
                 package_type=str(i.package_type) if i.package_type is not None else "NOT_DETECTED",
                 import_status=str(i.import_status) if i.import_status is not None else "NOT_DETECTED",
                 overall_result=str(normalize_status(str(i.overall_result)) if i.overall_result is not None else None),
+                screening_result=str(normalize_status(str(i.overall_result)) if i.overall_result is not None else None),
                 priority=str(i.priority or "MEDIUM"),
                 inspector_name=str(i.inspector_name) if i.inspector_name is not None else None,
                 created_at=created_dt,
@@ -95,7 +98,10 @@ def get_dashboard(db: Session = Depends(get_db)):
     total = db.query(models.Inspection).count()
     compliant = db.query(models.Inspection).filter(models.Inspection.overall_result == "COMPLIANT").count()
     non_compliant = db.query(models.Inspection).filter(models.Inspection.overall_result.in_(["NON_COMPLIANT", "NON-COMPLIANT"])).count()
-    not_verifiable = db.query(models.Inspection).filter(models.Inspection.overall_result.in_(["NOT_VERIFIABLE", "NEEDS_REVIEW", "NOT-VERIFIABLE", "NEEDS-REVIEW"])).count()
+    review_required = db.query(models.Inspection).filter(models.Inspection.overall_result.in_([
+        "REVIEW_REQUIRED", "REVIEW-REQUIRED", "NOT_VERIFIABLE",
+        "NEEDS_REVIEW", "NOT-VERIFIABLE", "NEEDS-REVIEW",
+    ])).count()
     not_applicable = db.query(models.Inspection).filter(models.Inspection.overall_result.in_(["NOT_APPLICABLE", "NOT-APPLICABLE"])).count()
     
     food = db.query(models.Inspection).filter(models.Inspection.category == "FOOD").count()
@@ -132,7 +138,8 @@ def get_dashboard(db: Session = Depends(get_db)):
         total_inspections=total,
         compliant=compliant,
         non_compliant=non_compliant,
-        not_verifiable=not_verifiable,
+        review_required=review_required,
+        not_verifiable=review_required,
         not_applicable=not_applicable,
         food_inspections=food,
         cosmetic_inspections=cosmetic,
@@ -185,8 +192,19 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         deduped_results.append(r_item)
     rule_results = deduped_results
     rule_summary = calculate_rule_summary(rule_results)
-    derived_overall = derive_overall_result(rule_results)
     screening_result = derive_screening_result(rule_results)
+    physical_verification = [
+        result for result in rule_results
+        if result.get("rule_id") in ("PC-ALL-012", "PC-ALL-013")
+        or result.get("parameter") in ("ACTUAL_NET_CONTENT", "FONT_SIZE_COMPLIANCE")
+        or result.get("status") == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+    ]
+    for result in physical_verification:
+        result["status"] = "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+        result["screening_scope"] = "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+        result["binary"] = None
+        result["review_required"] = False
+        result["legally_applicable"] = True
     ocr_payload_data = ocr_result.get("ocr_data") if ocr_result else {}
     cached_images_data = ocr_payload_data.get("images", []) if isinstance(ocr_payload_data, dict) else []
 
@@ -308,8 +326,10 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         "package_type": inspection.package_type,
         "import_status": inspection.import_status,
         "quantity_type": inspection.quantity_type,
-        "overall_result": str(normalize_status(derived_overall) or normalize_status(str(inspection.overall_result) if inspection.overall_result is not None else None) or inspection.overall_result or ""),
+        "overall_result": str(screening_result),
         "screening_result": str(screening_result),
+        "screening_scope": "AUTOMATED_LABEL_SCREENING",
+        "physical_verification": physical_verification,
         "priority": inspection.priority,
         "image_path": format_public_url(f"/uploads/{inspection.image_path}") if inspection.image_path else None,
         "inspector_name": inspection.inspector_name,
@@ -341,7 +361,7 @@ def generate_report(inspection_id: int, db: Session = Depends(get_db)):
 
     try:
         if inspection.rule_results:
-            canonical_result = str(derive_overall_result(list(inspection.rule_results)))
+            canonical_result = str(derive_screening_result(list(inspection.rule_results)))
             if inspection.overall_result != canonical_result:
                 inspection.overall_result = canonical_result
                 db.commit()

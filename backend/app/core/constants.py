@@ -22,10 +22,13 @@ class CanonicalStatus(str):
 class InspectionStatus:
     COMPLIANT = CanonicalStatus("COMPLIANT")
     NON_COMPLIANT = CanonicalStatus("NON_COMPLIANT")
-    NOT_VERIFIABLE = CanonicalStatus("NOT_VERIFIABLE")
+    REVIEW_REQUIRED = CanonicalStatus("REVIEW_REQUIRED")
+    # Source-code compatibility alias; serialized inspection results use the
+    # canonical REVIEW_REQUIRED vocabulary.
+    NOT_VERIFIABLE = REVIEW_REQUIRED
     NOT_APPLICABLE = CanonicalStatus("NOT_APPLICABLE")
 
-    ALL = [COMPLIANT, NON_COMPLIANT, NOT_VERIFIABLE, NOT_APPLICABLE]
+    ALL = [COMPLIANT, NON_COMPLIANT, REVIEW_REQUIRED]
 
 
 class RuleStatus(str, Enum):
@@ -35,6 +38,7 @@ class RuleStatus(str, Enum):
     FAIL = "FAIL"
     NOT_VERIFIABLE = "NOT_VERIFIABLE"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+    OUT_OF_SCOPE_PHYSICAL_VERIFICATION = "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
 
 
 def normalize_rule_status(status: Any) -> RuleStatus:
@@ -54,6 +58,8 @@ def normalize_rule_status(status: Any) -> RuleStatus:
         return RuleStatus.FAIL
     if cleaned in ("NOT_APPLICABLE", "NOTAPPLICABLE", "NA", "N_A"):
         return RuleStatus.NOT_APPLICABLE
+    if cleaned == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION":
+        return RuleStatus.OUT_OF_SCOPE_PHYSICAL_VERIFICATION
     if cleaned in (
         "NOT_VERIFIABLE",
         "NEEDS_REVIEW",
@@ -76,8 +82,15 @@ def normalize_status(status: Optional[str]) -> Optional[str]:
     if not status:
         return None
     cleaned = status.strip().upper().replace("-", "_").replace(" ", "_")
-    if cleaned in ("NEEDS_REVIEW", "NOT_VERIFIABLE", "REVIEW", "NOT_DETECTED", "MANUAL_CHECK"):
-        return InspectionStatus.NOT_VERIFIABLE
+    if cleaned in (
+        "REVIEW_REQUIRED",
+        "NEEDS_REVIEW",
+        "NOT_VERIFIABLE",
+        "REVIEW",
+        "NOT_DETECTED",
+        "MANUAL_CHECK",
+    ):
+        return InspectionStatus.REVIEW_REQUIRED
     if cleaned in ("NON_COMPLIANT", "NONCOMPLIANT"):
         return InspectionStatus.NON_COMPLIANT
     if cleaned == "COMPLIANT":

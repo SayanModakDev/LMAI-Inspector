@@ -262,4 +262,4 @@ def test_scan_pipeline_all_images_no_text_detected(tmp_path, monkeypatch):
     assert response.status_code == 200, response.text
     data = response.json()
     assert "inspection_id" in data
-    assert data.get("overall_result") in ("NON-COMPLIANT", "NOT_VERIFIABLE", "REQUIRES_REVIEW")
+    assert data.get("overall_result") in ("NON_COMPLIANT", "REVIEW_REQUIRED")

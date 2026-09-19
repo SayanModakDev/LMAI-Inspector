@@ -106,10 +106,10 @@ def sync_rules_to_db() -> None:
 
 
 def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
-    """Calculate canonical summary counts over final evaluated rule rows.
+    """Calculate canonical counts for applicable image-screening rule rows.
 
-    Guarantees summary counters exactly match the matrix table row count:
-    passed + failed + review + not_applicable == total
+    Physical-verification rows are recorded separately and cannot inflate the
+    image-screening PASS/FAIL/REVIEW/NOT_APPLICABLE counts.
     """
     seen_rule_ids = set()
     deduped = []
@@ -125,10 +125,14 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
     failed = 0
     review = 0
     not_applicable = 0
+    out_of_scope_physical = 0
 
     from app.core.constants import RuleStatus, normalize_rule_status
 
     for r in deduped:
+        if _is_physical_verification_rule(r):
+            out_of_scope_physical += 1
+            continue
         raw_status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
         status = normalize_rule_status(raw_status)
         if status == RuleStatus.PASS:
@@ -153,6 +157,8 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
         'na_count': not_applicable,
         'not_applicable_count': not_applicable,
         'total_rules': total,
+        'out_of_scope_physical': out_of_scope_physical,
+        'out_of_scope_physical_count': out_of_scope_physical,
     }
 
 
@@ -233,11 +239,11 @@ def _is_blocking_for_automated_screening(r: Any) -> bool:
 
 
 def derive_overall_result(rule_results: List[Any]) -> str:
-    """Derive the complete inspection result from canonical rule outcomes.
+    """Derive the canonical software-only Automated Label Screening result.
 
-    NOT_APPLICABLE rows are excluded. Confirmed failures take precedence over
-    unresolved checks; any remaining unresolved applicable check prevents a
-    complete inspection from being labelled compliant.
+    Physical-verification rules and NOT_APPLICABLE rows are excluded. A
+    confirmed image-based failure takes precedence; any unresolved applicable
+    image check requires review. No evaluated image checks also requires review.
     """
     from app.core.constants import InspectionStatus, RuleStatus, normalize_rule_status
     seen_rule_ids = set()
@@ -252,34 +258,30 @@ def derive_overall_result(rule_results: List[Any]) -> str:
 
     applicable_statuses = []
     for r in deduped:
+        if _is_physical_verification_rule(r):
+            continue
         raw_status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
         status = normalize_rule_status(raw_status)
-        if status != RuleStatus.NOT_APPLICABLE:
+        if status not in (
+            RuleStatus.NOT_APPLICABLE,
+            RuleStatus.OUT_OF_SCOPE_PHYSICAL_VERIFICATION,
+        ):
             applicable_statuses.append(status)
 
     if not applicable_statuses:
-        return InspectionStatus.NOT_VERIFIABLE
+        return InspectionStatus.REVIEW_REQUIRED
     if RuleStatus.FAIL in applicable_statuses:
         return InspectionStatus.NON_COMPLIANT
     if RuleStatus.NOT_VERIFIABLE in applicable_statuses:
-        return InspectionStatus.NOT_VERIFIABLE
+        return InspectionStatus.REVIEW_REQUIRED
     if all(status == RuleStatus.PASS for status in applicable_statuses):
         return InspectionStatus.COMPLIANT
-    return InspectionStatus.NOT_VERIFIABLE
+    return InspectionStatus.REVIEW_REQUIRED
 
 
 def derive_screening_result(rule_results: List[Any]) -> str:
-    """Derive the automatic image-screening result without physical checks.
-
-    This is informational only. ``derive_overall_result`` remains the legal
-    inspection outcome and includes every applicable physical requirement.
-    """
-    image_results = [
-        result
-        for result in (rule_results or [])
-        if not _is_physical_verification_rule(result)
-    ]
-    return derive_overall_result(image_results)
+    """Compatibility name for the canonical Automated Label Screening result."""
+    return derive_overall_result(rule_results)
 
 
 def reconcile_persisted_overall_results(db: Session) -> int:
@@ -296,7 +298,7 @@ def reconcile_persisted_overall_results(db: Session) -> int:
         rule_results = list(getattr(inspection, "rule_results", None) or [])
         if not rule_results:
             continue
-        canonical = str(derive_overall_result(rule_results))
+        canonical = str(derive_screening_result(rule_results))
         stored = normalize_status(getattr(inspection, "overall_result", None))
         if stored != canonical or getattr(inspection, "overall_result", None) != canonical:
             inspection.overall_result = canonical
@@ -455,8 +457,18 @@ def resolve_canonical_field_evidence(
     return field_data
 
 
-def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
-    """Evaluate applicable rules via deterministic validators and never treat missing OCR as an automatic legal FAIL."""
+def evaluate_rules(
+    applicable_rules: List[Dict[str, Any]],
+    extracted_fields: Dict[str, Any],
+    *,
+    include_physical_verification: bool = False,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Evaluate rules for software-only image screening.
+
+    Physical validators remain available for future measurement workflows via
+    ``include_physical_verification=True``. Active image screening records those
+    rules explicitly as out of scope without calling a physical validator.
+    """
     from app.rules.validators import dispatch_validator
 
     # Deduplicate applicable rules by rule_id preserving order
@@ -481,6 +493,49 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
         required = rule.get('required', True)
         severity = rule.get('severity', 'HIGH')
         verification_type = rule.get('verification_type', 'IMAGE_VERIFIABLE')
+
+        if _is_physical_verification_rule(rule) and not include_physical_verification:
+            message = (
+                "Outside software-only image screening scope; calibrated physical "
+                "measurement is required for verification."
+            )
+            evidence_data = {
+                'status': 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION',
+                'verification_type': verification_type,
+                'legally_applicable': True,
+                'screening_scope': 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION',
+            }
+            results.append({
+                'rule_id': rule_id,
+                'parameter': parameter,
+                'status': 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION',
+                'binary': None,
+                'message': message,
+                'reason': message,
+                'evidence_data': evidence_data,
+                'rule_version': rule.get('rule_version'),
+                'regulatory_source': rule.get('regulatory_source', 'LEGAL_METROLOGY'),
+                'rule_reference': rule.get('rule_reference'),
+                'rule_reference_status': rule.get('rule_reference_status') or rule.get('verification_status', 'VERIFIED'),
+                'citation': rule.get('citation') or rule.get('rule_reference'),
+                'citation_text': rule.get('citation_text'),
+                'verification_status': rule.get('verification_status') or rule.get('rule_reference_status', 'VERIFIED'),
+                'source_authority': rule.get('source_authority'),
+                'source_document': rule.get('source_document'),
+                'source_url': rule.get('source_url') or rule.get('source_link'),
+                'screening_scope': 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION',
+                'notes': rule.get('notes') or rule.get('exception'),
+                'review_required': False,
+                'severity': severity,
+                'evidence_state': 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION',
+                'validation_result': None,
+                'candidate_classification': None,
+                'competing_evidence': None,
+                'verification_type': verification_type,
+                'required': required,
+                'legally_applicable': True,
+            })
+            continue
 
         # Resolve field evidence with statutory date/role equivalence
         field_data = resolve_canonical_field_evidence(parameter, rule, extracted_fields)
@@ -592,6 +647,11 @@ def build_inspection_findings(rule_results: List[Dict[str, Any]]) -> Dict[str, L
     verified, review, failed, physical_unverified = [], [], [], []
     for result in rule_results:
         parameter = str(result.get('parameter', '')).replace('_', ' ').title()
+        if _is_physical_verification_rule(result):
+            physical_unverified.append(
+                f"{parameter}: {result.get('message', 'physical verification is outside image-screening scope')}"
+            )
+            continue
         status = normalize_rule_status(result.get('status'))
         if status == RuleStatus.PASS:
             verified.append(f"{parameter}: {result.get('message', 'evidence detected')}")
@@ -600,13 +660,12 @@ def build_inspection_findings(rule_results: List[Dict[str, Any]]) -> Dict[str, L
         elif status == RuleStatus.NOT_VERIFIABLE:
             finding = f"{parameter}: {result.get('message', 'not verifiable')}"
             review.append(finding)
-            if _is_physical_verification_rule(result):
-                physical_unverified.append(finding)
     return {
         'verified': verified,
         'needs_review': review,
         'failed': failed,
         'physical_unverified': physical_unverified,
+        'out_of_scope_physical_verification': physical_unverified,
     }
 
 

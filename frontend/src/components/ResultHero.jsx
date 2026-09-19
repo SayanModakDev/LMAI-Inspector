@@ -25,7 +25,7 @@ import './ResultHero.css';
  * ResultHero Component
  * Primary inspection result header adhering strictly to backend source of truth:
  * - Summary counts derived directly from backend summary object
- * - Canonical overall status (COMPLIANT, NON-COMPLIANT, NOT VERIFIABLE)
+ * - Canonical image-screening status (COMPLIANT, NON-COMPLIANT, REVIEW REQUIRED)
  * - Concise dynamic explanation based on backend findings
  * - Product Identity conflict handling (never picks an arbitrary winner)
  * - Metadata summary bar
@@ -41,23 +41,35 @@ const ResultHero = ({
   if (!inspection) return null;
 
   const [showDetails, setShowDetails] = React.useState(false);
+  const isPhysicalRule = (r) =>
+    r.status === 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION' ||
+    r.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
+    r.verification_type === 'PHYSICAL_CHECK' ||
+    r.rule_id === 'PC-ALL-012' ||
+    r.rule_id === 'PC-ALL-013' ||
+    r.parameter === 'ACTUAL_NET_CONTENT' ||
+    r.parameter === 'FONT_SIZE_COMPLIANCE';
+  const imageRules = ruleResults.filter((r) => !isPhysicalRule(r));
+  const physicalRules = inspection.physical_verification?.length
+    ? inspection.physical_verification
+    : ruleResults.filter(isPhysicalRule);
 
   // 1. Strict Canonical Summary Counts (directly from backend summary)
   const summary = inspection.summary || {};
   const passCount =
     summary.passed_count ??
     summary.passed ??
-    ruleResults.filter((r) => r.status === 'PASS').length;
+    imageRules.filter((r) => r.status === 'PASS').length;
 
   const failCount =
     summary.failed_count ??
     summary.failed ??
-    ruleResults.filter((r) => r.status === 'FAIL').length;
+    imageRules.filter((r) => r.status === 'FAIL').length;
 
   const reviewCount =
     summary.review_count ??
     summary.review ??
-    ruleResults.filter(
+    imageRules.filter(
       (r) =>
         r.status === 'NOT_VERIFIABLE' ||
         r.status === 'MANUAL_CHECK' ||
@@ -69,11 +81,11 @@ const ResultHero = ({
     summary.not_applicable_count ??
     summary.na_count ??
     summary.not_applicable ??
-    ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
+    imageRules.filter((r) => r.status === 'NOT_APPLICABLE').length;
 
   // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
-  const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
-  let canonicalStatus = 'NOT_VERIFIABLE';
+  const rawStatus = (inspection.screening_result || inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
+  let canonicalStatus = 'REVIEW_REQUIRED';
   let bannerModifier = 'review';
 
   if (rawStatus === 'COMPLIANT') {
@@ -83,12 +95,12 @@ const ResultHero = ({
     canonicalStatus = 'NON_COMPLIANT';
     bannerModifier = 'non-compliant';
   } else {
-    canonicalStatus = 'NOT_VERIFIABLE';
+    canonicalStatus = 'REVIEW_REQUIRED';
     bannerModifier = 'review';
   }
 
   // 3. Collect Review / Failure Reasons Dynamically
-  const reviewRules = ruleResults.filter(
+  const reviewRules = imageRules.filter(
     (r) =>
       r.status === 'NOT_VERIFIABLE' ||
       r.status === 'MANUAL_CHECK' ||
@@ -96,16 +108,7 @@ const ResultHero = ({
       r.status === 'NEEDS_REVIEW'
   );
 
-  const failRules = ruleResults.filter((r) => r.status === 'FAIL');
-  const physicalReviewRules = reviewRules.filter(
-    (r) =>
-      r.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
-      r.verification_type === 'PHYSICAL_CHECK' ||
-      r.rule_id === 'PC-ALL-012' ||
-      r.rule_id === 'PC-ALL-013' ||
-      r.parameter === 'ACTUAL_NET_CONTENT' ||
-      r.parameter === 'FONT_SIZE_COMPLIANCE'
-  );
+  const failRules = imageRules.filter((r) => r.status === 'FAIL');
 
   // Helper to format parameter labels cleanly without legal conclusions
   const formatParamLabel = (param) => {
@@ -142,14 +145,10 @@ const ResultHero = ({
       };
     }
 
-    if (canonicalStatus === 'NOT_VERIFIABLE') {
-      const onlyPhysicalChecksRemain =
-        reviewRules.length > 0 && physicalReviewRules.length === reviewRules.length;
+    if (canonicalStatus === 'REVIEW_REQUIRED') {
       return {
-        secondary: onlyPhysicalChecksRemain
-          ? `${physicalReviewRules.length} physical check${physicalReviewRules.length === 1 ? '' : 's'} remain unverified`
-          : `${reviewCount} check${reviewCount === 1 ? '' : 's'} remain not verifiable`,
-        main: `${passCount} checks passed. ${failCount} confirmed failures. ${reviewCount} applicable checks remain unverified.`,
+        secondary: `${reviewCount} image-based check${reviewCount === 1 ? '' : 's'} require review`,
+        main: `${passCount} checks passed. ${failCount} confirmed failures. ${reviewCount} applicable image-based checks require review.`,
         reasons: reviewRules
           .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} is not verifiable`)
           .filter(Boolean),
@@ -230,7 +229,7 @@ const ResultHero = ({
 
   // Compact review reasons list derived dynamically from backend findings
   const compactReviewReasons = React.useMemo(() => {
-    if (canonicalStatus !== 'NOT_VERIFIABLE') return [];
+    if (canonicalStatus !== 'REVIEW_REQUIRED') return [];
     const list = [];
     if (isProductNameConflict) {
       list.push('Conflicting information');
@@ -249,14 +248,13 @@ const ResultHero = ({
       if (p === 'PRODUCT_NAME' && isProductNameConflict) return;
       if (p === 'GENERIC_NAME' && hasGenericMissing) return;
       const label = formatParamLabel(p);
-      const isPhysical = physicalReviewRules.includes(r);
-      const entry = isPhysical ? `${label} requires physical measurement` : `${label} not verifiable`;
+      const entry = `${label} requires review`;
       if (!list.includes(entry) && list.length < 5) {
         list.push(entry);
       }
     });
     return list;
-  }, [canonicalStatus, isProductNameConflict, physicalReviewRules, reviewRules]);
+  }, [canonicalStatus, isProductNameConflict, reviewRules]);
 
   return (
     <div className="results-hero-container">
@@ -265,7 +263,7 @@ const ResultHero = ({
         <div className="results-hero-main">
           {/* Top Identifier Row */}
           <div className="results-hero-id-row">
-            <span className="results-hero-title">Inspection Dossier</span>
+            <span className="results-hero-title">Automated Label Screening</span>
             <span className="results-hero-id font-mono">#{inspection.id}</span>
             <span className="results-hero-dot">•</span>
             <span className="results-hero-timestamp">
@@ -448,6 +446,17 @@ const ResultHero = ({
           </div>
         </div>
       </div>
+
+      {physicalRules.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-500/10 border-b border-slate-500/20 text-xs text-secondary">
+          <MinusCircle size={14} className="shrink-0" />
+          <span>
+            Physical verification limitations: {physicalRules.length} check{physicalRules.length === 1 ? '' : 's'}
+            {' '}({physicalRules.map((r) => r.parameter?.replace(/_/g, ' ')).filter(Boolean).join(', ')})
+            {' '}are outside this software-only image screening and do not affect its result.
+          </span>
+        </div>
+      )}
 
       {/* Image Quality Gate Notice */}
       {inspection.image_quality && inspection.image_quality.overall_quality_status !== 'ACCEPT' && (
