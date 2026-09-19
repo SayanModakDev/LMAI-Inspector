@@ -87,7 +87,7 @@ const History = () => {
             {[
               { key: 'ALL', label: 'All Inspections' },
               { key: 'COMPLIANT', label: 'Compliant' },
-              { key: 'NOT_VERIFIABLE', label: 'Not Detected' },
+              { key: 'NOT_VERIFIABLE', label: 'Not Verifiable' },
               { key: 'NON_COMPLIANT', label: 'Non-Compliant' },
             ].map((tab) => (
               <button

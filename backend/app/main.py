@@ -49,8 +49,11 @@ async def lifespan(app: FastAPI):
     # Create database tables
     init_db()
     # Sync rule matrix from JSON into database
-    from app.rules.rule_engine import sync_rules_to_db
+    from app.database.connection import SessionLocal
+    from app.rules.rule_engine import reconcile_persisted_overall_results, sync_rules_to_db
     sync_rules_to_db()
+    with SessionLocal() as db:
+        reconcile_persisted_overall_results(db)
     print(f"✅ {settings.APP_NAME} v{settings.APP_VERSION} started")
     yield
     # --- Shutdown ---

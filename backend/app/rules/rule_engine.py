@@ -126,18 +126,19 @@ def calculate_rule_summary(rule_results: List[Any]) -> Dict[str, int]:
     review = 0
     not_applicable = 0
 
+    from app.core.constants import RuleStatus, normalize_rule_status
+
     for r in deduped:
-        status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
-        if status == 'PASS':
+        raw_status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+        status = normalize_rule_status(raw_status)
+        if status == RuleStatus.PASS:
             passed += 1
-        elif status == 'FAIL':
+        elif status == RuleStatus.FAIL:
             failed += 1
-        elif status in ('NOT_VERIFIABLE', 'NEEDS_REVIEW', 'REVIEW', 'MANUAL_CHECK'):
+        elif status == RuleStatus.NOT_VERIFIABLE:
             review += 1
-        elif status == 'NOT_APPLICABLE':
+        elif status == RuleStatus.NOT_APPLICABLE:
             not_applicable += 1
-        else:
-            review += 1
 
     total = passed + failed + review + not_applicable
     return {
@@ -192,6 +193,9 @@ def _is_uncontradicted_visual_candidate(r: Any) -> bool:
 def _is_physical_verification_rule(r: Any) -> bool:
     """Check if a rule result represents a physical verification requirement (caliper/scale)."""
     vtype = getattr(r, 'verification_type', None) or (r.get('verification_type') if isinstance(r, dict) else None)
+    evidence_data = getattr(r, 'evidence_data', None) or (r.get('evidence_data') if isinstance(r, dict) else None)
+    if not vtype and isinstance(evidence_data, dict):
+        vtype = evidence_data.get('verification_type')
     rid = getattr(r, 'rule_id', None) or (r.get('rule_id') if isinstance(r, dict) else None)
     param = getattr(r, 'parameter', None) or (r.get('parameter') if isinstance(r, dict) else None)
     return (
@@ -229,15 +233,13 @@ def _is_blocking_for_automated_screening(r: Any) -> bool:
 
 
 def derive_overall_result(rule_results: List[Any]) -> str:
-    """Derive overall inspection result from evaluated rule results.
+    """Derive the complete inspection result from canonical rule outcomes.
 
-    Priority Logic:
-    1. Deterministic FAIL -> NON_COMPLIANT
-    2. Blocking unresolved critical conflict or missing mandatory declaration -> NOT_VERIFIABLE
-    3. All image-detectable requirements pass and remaining unresolved items are non-blocking observations
-       or non-blocking visual candidates -> COMPLIANT
+    NOT_APPLICABLE rows are excluded. Confirmed failures take precedence over
+    unresolved checks; any remaining unresolved applicable check prevents a
+    complete inspection from being labelled compliant.
     """
-    from app.core.constants import InspectionStatus
+    from app.core.constants import InspectionStatus, RuleStatus, normalize_rule_status
     seen_rule_ids = set()
     deduped = []
     for r in (rule_results or []):
@@ -248,21 +250,61 @@ def derive_overall_result(rule_results: List[Any]) -> str:
             seen_rule_ids.add(rid)
         deduped.append(r)
 
-    has_fail = False
-    has_blocking_review = False
-
+    applicable_statuses = []
     for r in deduped:
-        status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
-        if status == 'FAIL':
-            has_fail = True
-        elif _is_blocking_for_automated_screening(r):
-            has_blocking_review = True
+        raw_status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+        status = normalize_rule_status(raw_status)
+        if status != RuleStatus.NOT_APPLICABLE:
+            applicable_statuses.append(status)
 
-    if has_fail:
-        return InspectionStatus.NON_COMPLIANT
-    if has_blocking_review:
+    if not applicable_statuses:
         return InspectionStatus.NOT_VERIFIABLE
-    return InspectionStatus.COMPLIANT
+    if RuleStatus.FAIL in applicable_statuses:
+        return InspectionStatus.NON_COMPLIANT
+    if RuleStatus.NOT_VERIFIABLE in applicable_statuses:
+        return InspectionStatus.NOT_VERIFIABLE
+    if all(status == RuleStatus.PASS for status in applicable_statuses):
+        return InspectionStatus.COMPLIANT
+    return InspectionStatus.NOT_VERIFIABLE
+
+
+def derive_screening_result(rule_results: List[Any]) -> str:
+    """Derive the automatic image-screening result without physical checks.
+
+    This is informational only. ``derive_overall_result`` remains the legal
+    inspection outcome and includes every applicable physical requirement.
+    """
+    image_results = [
+        result
+        for result in (rule_results or [])
+        if not _is_physical_verification_rule(result)
+    ]
+    return derive_overall_result(image_results)
+
+
+def reconcile_persisted_overall_results(db: Session) -> int:
+    """Repair stored inspection outcomes using their persisted rule rows.
+
+    This makes legacy history and regenerated reports use the same canonical
+    result as new scans. Inspections without evaluated rule rows are preserved.
+    """
+    from app.core.constants import normalize_status
+    from app.database.models import Inspection
+
+    changed = 0
+    for inspection in db.query(Inspection).all():
+        rule_results = list(getattr(inspection, "rule_results", None) or [])
+        if not rule_results:
+            continue
+        canonical = str(derive_overall_result(rule_results))
+        stored = normalize_status(getattr(inspection, "overall_result", None))
+        if stored != canonical or getattr(inspection, "overall_result", None) != canonical:
+            inspection.overall_result = canonical
+            changed += 1
+    if changed:
+        db.commit()
+        logger.warning("Reconciled %d persisted inspection overall result(s)", changed)
+    return changed
 
 
 def _is_usable_field_candidate(field_data: Optional[Dict[str, Any]], is_date: bool = False) -> bool:
@@ -545,16 +587,27 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
 
 def build_inspection_findings(rule_results: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """Create a concise, evidence-backed summary for UI and PDF."""
-    verified, review, failed = [], [], []
+    from app.core.constants import RuleStatus, normalize_rule_status
+
+    verified, review, failed, physical_unverified = [], [], [], []
     for result in rule_results:
         parameter = str(result.get('parameter', '')).replace('_', ' ').title()
-        if result.get('status') == 'PASS':
+        status = normalize_rule_status(result.get('status'))
+        if status == RuleStatus.PASS:
             verified.append(f"{parameter}: {result.get('message', 'evidence detected')}")
-        elif result.get('status') == 'FAIL':
+        elif status == RuleStatus.FAIL:
             failed.append(f"{parameter}: {result.get('message', 'not satisfied')}")
-        elif result.get('status') == 'NOT_VERIFIABLE':
-            review.append(f"{parameter}: {result.get('message', 'NOT DETECTED')}")
-    return {'verified': verified, 'needs_review': review, 'failed': failed}
+        elif status == RuleStatus.NOT_VERIFIABLE:
+            finding = f"{parameter}: {result.get('message', 'not verifiable')}"
+            review.append(finding)
+            if _is_physical_verification_rule(result):
+                physical_unverified.append(finding)
+    return {
+        'verified': verified,
+        'needs_review': review,
+        'failed': failed,
+        'physical_unverified': physical_unverified,
+    }
 
 
 def _is_usable_evidence(field_data: Dict[str, Any]) -> bool:
