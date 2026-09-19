@@ -215,8 +215,27 @@ class BenchmarkReportGenerator:
             lines.append(f"| `{err_k}` | {err_cnt} | {tax_desc.get(err_k, '')} |")
         lines.append("")
 
-        # 9. Case-by-Case Mismatch Details
-        lines.append("## 9. Per-Case Mismatch Log\n")
+        # 9. Image Quality Gate Performance
+        iqm = self.metrics.get("image_quality_metrics", {})
+        if iqm.get("gate_enabled"):
+            lines.append("## 9. Automatic Image Quality Gate Performance\n")
+            lines.append(f"- **Total Evaluated Cases:** {iqm.get('total_cases_evaluated', 0)}")
+            lines.append(f"- **Quality Accept Rate:** {round(iqm.get('quality_accept_rate', 0.0) * 100, 1)}%")
+            lines.append(f"- **Quality Warning Rate:** {round(iqm.get('quality_warn_rate', 0.0) * 100, 1)}%")
+            lines.append(f"- **Quality Recapture Rate:** {round(iqm.get('quality_recapture_rate', 0.0) * 100, 1)}%")
+            lines.append(f"- **False Recaptures (Valid Image Rejected):** {iqm.get('false_recapture_count', 0)}")
+            lines.append(f"- **Missed Bad Images (Deliberate Defect Accepted):** {iqm.get('missed_bad_image_count', 0)}\n")
+
+            t_break = iqm.get("tag_quality_breakdown", {})
+            if t_break:
+                lines.append("| Tag / Condition | Total Cases | ACCEPT | WARN | RECAPTURE | Accept % | Recapture % |")
+                lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+                for tag_k, tag_v in t_break.items():
+                    lines.append(f"| `{tag_k}` | {tag_v.get('total_cases', 0)} | {tag_v.get('accept', 0)} | {tag_v.get('warn', 0)} | {tag_v.get('recapture_required', 0)} | {round(tag_v.get('accept_rate', 0.0)*100, 1)}% | {round(tag_v.get('recapture_rate', 0.0)*100, 1)}% |")
+                lines.append("")
+
+        # 10. Case-by-Case Mismatch Details
+        lines.append("## 10. Per-Case Mismatch Log\n")
         mismatches = rlm.get("mismatches", [])
         if mismatches:
             lines.append("| Case ID | Rule ID | Expected | Actual | Error Category | Detail |")

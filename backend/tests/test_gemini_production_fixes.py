@@ -22,7 +22,7 @@ import io
 import json
 import pytest
 from unittest.mock import MagicMock, patch
-from PIL import Image
+from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -40,7 +40,11 @@ from app.llm.evidence_resolver import resolve_evidence_with_gemini
 
 
 def make_test_image_bytes():
-    img = Image.new("RGB", (100, 100), color=(255, 255, 255))
+    img = Image.new("RGB", (600, 600), color=(245, 245, 245))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([(20, 20), (580, 580)], outline=(50, 50, 50), width=2)
+    draw.text((40, 50), "TEST PRODUCT BRAND", fill=(0, 0, 0))
+    draw.text((40, 100), "MRP Rs. 100.00", fill=(0, 0, 0))
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     buf.seek(0)

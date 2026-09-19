@@ -181,6 +181,8 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
     rule_results = deduped_results
     rule_summary = calculate_rule_summary(rule_results)
     derived_overall = derive_overall_result(rule_results)
+    ocr_payload_data = ocr_result.get("ocr_data") if ocr_result else {}
+    cached_images_data = ocr_payload_data.get("images", []) if isinstance(ocr_payload_data, dict) else []
 
     images = [
         {
@@ -190,6 +192,11 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
             "image_path": format_public_url(f"/uploads/{image.file_name}"),
             "processed_file_name": image.processed_file_name,
             "source": image.source,
+            "quality": (
+                cached_images_data[image.image_index].get("quality")
+                if isinstance(cached_images_data, list) and len(cached_images_data) > image.image_index
+                else None
+            ),
         }
         for image in inspection.images
     ]
@@ -254,10 +261,12 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
     ocr_payload_data = ocr_result.get("ocr_data") if ocr_result else {}
     analysis_source = None
     llm_metadata = None
+    quality_summary = None
     if isinstance(ocr_payload_data, dict):
         registry_match = ocr_payload_data.get("registry_match")
         analysis_source = ocr_payload_data.get("analysis_source")
         llm_metadata = ocr_payload_data.get("llm_metadata")
+        quality_summary = ocr_payload_data.get("quality_summary")
 
     if not registry_match:
         from app.registry.matcher import match_product
@@ -313,6 +322,7 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         "registry_match": registry_match,
         "analysis_source": analysis_source,
         "llm_metadata": llm_metadata,
+        "image_quality": quality_summary,
     }
 
 @router.post("/report/{inspection_id}", response_model=schemas.MessageResponse)

@@ -183,3 +183,5 @@ class CaseEvaluation(BaseModel):
     review_required: bool = False
     clean_inspection: bool = False
     errors: List[Dict[str, Any]] = Field(default_factory=list)
+    quality_summary: Optional[Dict[str, Any]] = None
+    quality_status: Optional[str] = None

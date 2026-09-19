@@ -1,7 +1,7 @@
-"""Evidence-based package context detection for automatic inspections."""
+from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 
 def _evidence_text(raw_text: str, extracted_fields: Dict[str, Any]) -> str:
@@ -14,11 +14,11 @@ def _evidence_text(raw_text: str, extracted_fields: Dict[str, Any]) -> str:
     return " ".join(values).lower()
 
 
-def _match_count(text: str, patterns: tuple[str, ...]) -> int:
+def _match_count(text: str, patterns: Tuple[str, ...]) -> int:
     return sum(1 for pattern in patterns if re.search(pattern, text, re.IGNORECASE))
 
 
-def detect_package_context(raw_text: str, extracted_fields: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def detect_package_context(raw_text: str, extracted_fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Detect package type and origin from explicit, package-visible declarations.
 
     Ambiguous or contradictory evidence remains ``NOT_DETECTED`` rather than being

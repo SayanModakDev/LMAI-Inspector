@@ -436,6 +436,20 @@ const ResultHero = ({
         </div>
       </div>
 
+      {/* Image Quality Gate Notice */}
+      {inspection.image_quality && inspection.image_quality.overall_quality_status !== 'ACCEPT' && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs">
+          <AlertTriangle size={14} className="shrink-0 text-amber-500" />
+          <span>
+            {inspection.image_quality.overall_quality_status === 'RECAPTURE_REQUIRED'
+              ? 'Image Quality Alert: Submitted images had critical quality defects (blur, glare, or darkness). Recapture recommended.'
+              : inspection.image_quality.rejected_images > 0
+              ? `Image Quality Notice: Analysis proceeded with ${inspection.image_quality.accepted_images + inspection.image_quality.warning_images} usable panel(s); ${inspection.image_quality.rejected_images} panel excluded due to quality defects.`
+              : 'Image Quality Notice: Minor quality warnings detected (soft focus, lighting, or glare). Verification proceeded.'}
+          </span>
+        </div>
+      )}
+
       {/* Metadata Summary Bar */}
       <div className="result-summary-bar" role="region" aria-label="Key Inspection Metadata">
         {/* Product Identity / Conflict */}

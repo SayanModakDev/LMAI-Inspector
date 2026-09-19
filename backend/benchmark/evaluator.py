@@ -100,6 +100,44 @@ class BenchmarkEvaluator:
         errors: List[Dict[str, Any]] = []
 
         # -------------------------------------------------------------------
+        # Step 0: Pre-OCR Image Quality Gate
+        # -------------------------------------------------------------------
+        quality_started = time.perf_counter()
+        quality_summary_data = None
+        case_quality_status = None
+        usable_image_indices = list(range(len(case.images))) if case.images else []
+
+        quality_gate_enabled = getattr(settings, "IMAGE_QUALITY_GATE_ENABLED", True)
+        if quality_gate_enabled:
+            # Check real images if available on disk
+            real_images = [p for p in case.images if os.path.exists(p)]
+            if real_images:
+                try:
+                    from app.image_quality.analyzer import analyze_inspection_images
+                    from app.image_quality.policy import QualityPolicyConfig
+
+                    q_cfg = QualityPolicyConfig.from_settings(settings)
+                    q_sum = analyze_inspection_images(real_images, config=q_cfg)
+                    quality_summary_data = q_sum.model_dump()
+                    case_quality_status = q_sum.overall_quality_status.value
+                    usable_image_indices = q_sum.usable_image_indices
+                except Exception as q_exc:
+                    logger.error("Error evaluating image quality for benchmark case %s: %s", case.case_id, q_exc)
+            elif getattr(case, "mock_quality_status", None):
+                case_quality_status = case.mock_quality_status
+            elif case.mock_ocr_result and case.mock_ocr_result.get("quality_status"):
+                case_quality_status = case.mock_ocr_result.get("quality_status")
+            elif any(t in ("severely_blurred", "severe_glare", "unusable", "blackout", "unreadable") for t in case.tags):
+                case_quality_status = "RECAPTURE_REQUIRED"
+                usable_image_indices = []
+            elif any(t in ("blurry", "glare", "low_light", "small_text", "cropped") for t in case.tags):
+                case_quality_status = "WARN"
+            else:
+                case_quality_status = "ACCEPT"
+
+        timings["quality_ms"] = round((time.perf_counter() - quality_started) * 1000)
+
+        # -------------------------------------------------------------------
         # Step 1: OCR Processing (or Synthetic/Mock OCR)
         # -------------------------------------------------------------------
         ocr_started = time.perf_counter()
@@ -107,7 +145,11 @@ class BenchmarkEvaluator:
         ocr_items: List[Dict[str, Any]] = []
         image_count = len(case.images)
 
-        if case.mock_ocr_result:
+        # If quality gate rejected ALL images, skip OCR completely
+        if quality_gate_enabled and case_quality_status == "RECAPTURE_REQUIRED" and not usable_image_indices:
+            logger.info("Quality gate RECAPTURE_REQUIRED for case %s; skipping OCR.", case.case_id)
+            timings["ocr_ms"] = 0
+        elif case.mock_ocr_result:
             # Reproducible offline/synthetic evaluation
             raw_text = case.mock_ocr_result.get("raw_text", "")
             ocr_items = case.mock_ocr_result.get("ocr_items", [])
@@ -123,6 +165,9 @@ class BenchmarkEvaluator:
                 for idx, img_path in enumerate(case.images):
                     if not os.path.exists(img_path):
                         errors.append({"stage": "IMAGE_LOADING", "detail": f"Image file not found: {img_path}"})
+                        continue
+                    if quality_gate_enabled and idx not in usable_image_indices:
+                        logger.info("Case %s image %d excluded from OCR due to quality gate", case.case_id, idx)
                         continue
                     prep_started = time.perf_counter()
                     proc_path, _ = preprocess_image(img_path, output_dir=settings.UPLOAD_DIR, filename_prefix=f"bm_{case.case_id}_{idx}")
@@ -464,6 +509,8 @@ class BenchmarkEvaluator:
             review_required=review_required,
             clean_inspection=clean_inspection,
             errors=errors,
+            quality_summary=quality_summary_data,
+            quality_status=case_quality_status,
         )
 
     def evaluate_dataset(self, cases: List[BenchmarkCase]) -> List[CaseEvaluation]:

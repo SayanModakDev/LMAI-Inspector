@@ -238,6 +238,9 @@ const Scan = () => {
               <div className="upload-dropzone__formats text-xs text-muted mt-3">
                 Accepted: JPEG, PNG, WebP • High resolution recommended (≥1000px)
               </div>
+              <div className="text-2xs text-muted mt-1 opacity-80">
+                Quality tips: Hold camera steady • Ensure adequate lighting • Avoid direct glare • Keep labels in focus
+              </div>
             </div>
           )}
 
