@@ -25,7 +25,7 @@ import './ResultHero.css';
  * ResultHero Component
  * Primary inspection result header adhering strictly to backend source of truth:
  * - Summary counts derived directly from backend summary object
- * - Canonical overall status (COMPLIANT, NON-COMPLIANT, NOT DETECTED)
+ * - Canonical overall status (COMPLIANT, NON-COMPLIANT, NOT VERIFIABLE)
  * - Concise dynamic explanation based on backend findings
  * - Product Identity conflict handling (never picks an arbitrary winner)
  * - Metadata summary bar
@@ -73,17 +73,17 @@ const ResultHero = ({
 
   // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
   const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
-  let canonicalStatus = 'NOT VERIFIABLE';
+  let canonicalStatus = 'NOT_VERIFIABLE';
   let bannerModifier = 'review';
 
   if (rawStatus === 'COMPLIANT') {
     canonicalStatus = 'COMPLIANT';
     bannerModifier = 'compliant';
   } else if (rawStatus === 'NON_COMPLIANT') {
-    canonicalStatus = 'NON-COMPLIANT';
+    canonicalStatus = 'NON_COMPLIANT';
     bannerModifier = 'non-compliant';
   } else {
-    canonicalStatus = 'NOT VERIFIABLE';
+    canonicalStatus = 'NOT_VERIFIABLE';
     bannerModifier = 'review';
   }
 
@@ -97,6 +97,15 @@ const ResultHero = ({
   );
 
   const failRules = ruleResults.filter((r) => r.status === 'FAIL');
+  const physicalReviewRules = reviewRules.filter(
+    (r) =>
+      r.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
+      r.verification_type === 'PHYSICAL_CHECK' ||
+      r.rule_id === 'PC-ALL-012' ||
+      r.rule_id === 'PC-ALL-013' ||
+      r.parameter === 'ACTUAL_NET_CONTENT' ||
+      r.parameter === 'FONT_SIZE_COMPLIANCE'
+  );
 
   // Helper to format parameter labels cleanly without legal conclusions
   const formatParamLabel = (param) => {
@@ -125,7 +134,7 @@ const ResultHero = ({
 
   // 4. Concise Dynamic Explanation
   const getExplanationContent = () => {
-    if (canonicalStatus === 'NON-COMPLIANT') {
+    if (canonicalStatus === 'NON_COMPLIANT') {
       return {
         secondary: `${failRules.length} declaration${failRules.length === 1 ? '' : 's'} failed validation`,
         main: 'Screening identified declarations that did not satisfy validation rules.',
@@ -133,12 +142,16 @@ const ResultHero = ({
       };
     }
 
-    if (canonicalStatus === 'NOT DETECTED') {
+    if (canonicalStatus === 'NOT_VERIFIABLE') {
+      const onlyPhysicalChecksRemain =
+        reviewRules.length > 0 && physicalReviewRules.length === reviewRules.length;
       return {
-        secondary: `${reviewCount} declaration${reviewCount === 1 ? '' : 's'} not detected`,
-        main: 'Some package details were not detected in the image.',
+        secondary: onlyPhysicalChecksRemain
+          ? `${physicalReviewRules.length} physical check${physicalReviewRules.length === 1 ? '' : 's'} remain unverified`
+          : `${reviewCount} check${reviewCount === 1 ? '' : 's'} remain not verifiable`,
+        main: `${passCount} checks passed. ${failCount} confirmed failures. ${reviewCount} applicable checks remain unverified.`,
         reasons: reviewRules
-          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} not detected`)
+          .map((r) => r.reason || r.message || `${formatParamLabel(r.parameter)} is not verifiable`)
           .filter(Boolean),
       };
     }
@@ -217,7 +230,7 @@ const ResultHero = ({
 
   // Compact review reasons list derived dynamically from backend findings
   const compactReviewReasons = React.useMemo(() => {
-    if (canonicalStatus !== 'NOT DETECTED') return [];
+    if (canonicalStatus !== 'NOT_VERIFIABLE') return [];
     const list = [];
     if (isProductNameConflict) {
       list.push('Conflicting information');
@@ -236,14 +249,14 @@ const ResultHero = ({
       if (p === 'PRODUCT_NAME' && isProductNameConflict) return;
       if (p === 'GENERIC_NAME' && hasGenericMissing) return;
       const label = formatParamLabel(p);
-      const isMissing = (r.reason || '').toLowerCase().includes('not detected');
-      const entry = `${label} not detected`;
+      const isPhysical = physicalReviewRules.includes(r);
+      const entry = isPhysical ? `${label} requires physical measurement` : `${label} not verifiable`;
       if (!list.includes(entry) && list.length < 5) {
         list.push(entry);
       }
     });
     return list;
-  }, [canonicalStatus, isProductNameConflict, reviewRules]);
+  }, [canonicalStatus, isProductNameConflict, physicalReviewRules, reviewRules]);
 
   return (
     <div className="results-hero-container">

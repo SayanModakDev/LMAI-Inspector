@@ -1,7 +1,8 @@
 """
 Canonical Status Constants for Legal Metrology Inspections.
 """
-from typing import Optional
+from enum import Enum
+from typing import Any, Optional
 
 
 class CanonicalStatus(str):
@@ -25,6 +26,47 @@ class InspectionStatus:
     NOT_APPLICABLE = CanonicalStatus("NOT_APPLICABLE")
 
     ALL = [COMPLIANT, NON_COMPLIANT, NOT_VERIFIABLE, NOT_APPLICABLE]
+
+
+class RuleStatus(str, Enum):
+    """Canonical outcomes emitted by deterministic rule evaluation."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+    NOT_VERIFIABLE = "NOT_VERIFIABLE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+def normalize_rule_status(status: Any) -> RuleStatus:
+    """Map rule, evidence, and legacy display statuses to a rule outcome.
+
+    Unknown, missing, and evidence-only states are conservative: they remain
+    unresolved and can never silently become a pass.
+    """
+    raw_status = getattr(status, "value", status)
+    if raw_status is None:
+        return RuleStatus.NOT_VERIFIABLE
+
+    cleaned = str(raw_status).strip().upper().replace("-", "_").replace(" ", "_")
+    if cleaned in ("PASS", "COMPLIANT"):
+        return RuleStatus.PASS
+    if cleaned in ("FAIL", "NON_COMPLIANT", "NONCOMPLIANT"):
+        return RuleStatus.FAIL
+    if cleaned in ("NOT_APPLICABLE", "NOTAPPLICABLE", "NA", "N_A"):
+        return RuleStatus.NOT_APPLICABLE
+    if cleaned in (
+        "NOT_VERIFIABLE",
+        "NEEDS_REVIEW",
+        "REVIEW",
+        "NOT_DETECTED",
+        "EVIDENCE_NOT_DETECTED",
+        "MANUAL_CHECK",
+        "UNKNOWN",
+        "UNASSESSED",
+        "CONFLICTING_EVIDENCE",
+    ):
+        return RuleStatus.NOT_VERIFIABLE
+    return RuleStatus.NOT_VERIFIABLE
 
 
 def normalize_status(status: Optional[str]) -> Optional[str]:

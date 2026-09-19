@@ -2,7 +2,7 @@
 Final Integration Audit Tests for SIH26034.
 
 Verifies acceptance scenarios TEST A through TEST J end-to-end:
-  TEST A — Compliant label (all mandatory declarations present & valid -> COMPLIANT, binaries=1)
+  TEST A — Image screening passes while unresolved physical checks keep the inspection NOT_VERIFIABLE
   TEST B — Missing quantity unit (quantity 500, unit missing -> FAIL, binary=0, never silent PASS)
   TEST C — Missing required declaration (never disappears, shows clear reason and review/fail state)
   TEST D — Uncertain OCR (low confidence -> NOT_VERIFIABLE, binary=None, never auto PASS/FAIL)
@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.extraction.declaration_extractor import extract_declarations, merge_extracted_fields
-from app.rules.rule_engine import evaluate_rules, sync_rules_to_db
+from app.rules.rule_engine import derive_screening_result, evaluate_rules, sync_rules_to_db
 from app.rules.applicability import get_applicable_rules
 from app.classification.category_classifier import classify_category
 from app.core.constants import InspectionStatus
@@ -32,6 +32,7 @@ from app.reports.pdf_report import generate_inspection_pdf
 from app.database import models
 from app.database.connection import SessionLocal
 from app.api.scan import merge_product_evidence
+from app.api.inspections import generate_report as generate_report_endpoint, get_inspection_detail
 
 
 @pytest.fixture
@@ -54,9 +55,9 @@ def client():
 # ---------------------------------------------------------------------------
 def test_acceptance_test_a_compliant_label(db_session):
     """
-    TEST A: Compliant label.
+    TEST A: Complete inspection remains unresolved until physical checks are supplied.
     Valid declared quantity + unit, valid MRP, required declarations detected,
-    parameter binaries mostly/all 1, overall COMPLIANT.
+    image-screening result COMPLIANT, overall NOT_VERIFIABLE.
     """
     sync_rules_to_db()
     db_rules = db_session.query(models.Rule).filter(models.Rule.is_active == True).all()
@@ -89,7 +90,8 @@ def test_acceptance_test_a_compliant_label(db_session):
     }
 
     results, overall = evaluate_rules(applicable, extracted_fields)
-    assert overall == InspectionStatus.COMPLIANT
+    assert derive_screening_result(results) == InspectionStatus.COMPLIANT
+    assert overall == InspectionStatus.NOT_VERIFIABLE
     # Verify mandatory parameters pass with binary 1
     net_qty_res = next(r for r in results if r["parameter"] in ("DECLARED_NET_QUANTITY", "NET_QUANTITY"))
     assert net_qty_res["status"] == "PASS"
@@ -464,6 +466,62 @@ def test_acceptance_test_j_pdf_report(db_session):
     assert "pending verification" in full_text.lower()
     assert "500" in full_text
     assert "NON-COMPLIANT" in full_text
+
+
+def test_overall_result_is_consistent_in_database_api_and_pdf(db_session):
+    """A legacy false-COMPLIANT row is repaired before API/PDF presentation."""
+    inspection = models.Inspection(
+        product_name="Synthetic Sensodyne",
+        category="COSMETIC",
+        overall_result="COMPLIANT",
+        package_type="RETAIL",
+        import_status="DOMESTIC",
+    )
+    db_session.add(inspection)
+    db_session.flush()
+
+    for index in range(12):
+        db_session.add(models.RuleResult(
+            inspection_id=inspection.id,
+            rule_id=f"SYN-PASS-{index + 1:02d}",
+            parameter=f"DECLARATION_{index + 1:02d}",
+            status="PASS",
+            message="Applicable image-based declaration passed.",
+            evidence_data={"binary": 1},
+        ))
+    for rule_id, parameter in (
+        ("PC-ALL-012", "ACTUAL_NET_CONTENT"),
+        ("PC-ALL-013", "FONT_SIZE_COMPLIANCE"),
+    ):
+        db_session.add(models.RuleResult(
+            inspection_id=inspection.id,
+            rule_id=rule_id,
+            parameter=parameter,
+            status="NOT_VERIFIABLE",
+            message="Physical measurement was not supplied.",
+            evidence_data={
+                "binary": None,
+                "verification_type": "PHYSICAL_VERIFICATION_REQUIRED",
+            },
+        ))
+    db_session.commit()
+    inspection_id = inspection.id
+
+    generate_report_endpoint(inspection_id, db_session)
+    db_session.expire_all()
+    stored = db_session.query(models.Inspection).filter(models.Inspection.id == inspection_id).one()
+    assert stored.overall_result == InspectionStatus.NOT_VERIFIABLE
+
+    api_payload = get_inspection_detail(inspection_id, db_session)
+    assert api_payload["overall_result"] == InspectionStatus.NOT_VERIFIABLE
+    assert api_payload["screening_result"] == InspectionStatus.COMPLIANT
+    assert api_payload["summary"]["passed_count"] == 12
+    assert api_payload["summary"]["review_count"] == 2
+
+    full_text = _extract_pdf_text(stored.report.file_path)
+    assert "OVERALL COMPLIANCE RATING: NOT_VERIFIABLE" in full_text
+    assert "12 checks passed. 0 confirmed failures. 2 physical checks remain unverified." in full_text
+    assert "OVERALL COMPLIANCE RATING: COMPLIANT" not in full_text
 
 
 def test_acceptance_test_k_health_endpoint_and_branding():

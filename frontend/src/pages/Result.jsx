@@ -216,7 +216,7 @@ const Result = () => {
             {[
               { id: 'ALL', label: 'All', count: ruleResults.length },
               { id: 'FAIL', label: 'Fail', count: failCount },
-              { id: 'REVIEW', label: 'Not Detected', count: reviewCount },
+              { id: 'REVIEW', label: 'Not Verifiable', count: reviewCount },
               { id: 'PASS', label: 'Pass', count: passCount },
               { id: 'NA', label: 'N/A', count: naCount },
             ].map((f) => (
@@ -352,7 +352,10 @@ const Result = () => {
                                     (rule.status === 'FAIL'
                                       ? 'Declaration failed automatic validation.'
                                       : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
-                                      ? 'This package detail was not detected.'
+                                      ? (rule.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
+                                         rule.verification_type === 'PHYSICAL_CHECK'
+                                          ? 'A physical measurement is required to complete this check.'
+                                          : 'This package detail could not be verified from the submitted evidence.')
                                       : 'Declaration satisfies verified rule criteria.')}
                                 </div>
                               </div>

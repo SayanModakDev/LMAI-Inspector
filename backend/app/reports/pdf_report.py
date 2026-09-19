@@ -26,9 +26,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from app.core.config import get_settings
-from app.core.constants import InspectionStatus, normalize_status
+from app.core.constants import InspectionStatus, RuleStatus, normalize_rule_status, normalize_status
 from app.database import models
-from app.rules.rule_engine import build_inspection_findings
+from app.rules.rule_engine import build_inspection_findings, _is_physical_verification_rule
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -372,20 +372,35 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         except Exception as e:
             logger.warning("Could not query DB evidences: %s", e)
 
-    # Compute summary counters and overall status using shared rule_engine methods
-    from app.rules.rule_engine import calculate_rule_summary, derive_overall_result
+    # Compute display counters from the finalized rule rows. The overall result is
+    # supplied by canonical aggregation before report generation and is not
+    # independently re-derived by this presentation layer.
+    from app.rules.rule_engine import calculate_rule_summary
     summary_counts = calculate_rule_summary(results_list)
     passed_count = summary_counts['passed']
     failed_count = summary_counts['failed']
     review_count = summary_counts['review']
     na_count = summary_counts['not_applicable']
 
-    # Determine canonical overall result from the final rule-result collection (or inspection fallback if empty)
-    if results_list:
-        derived_overall = derive_overall_result(results_list)
-        canonical_result = normalize_status(derived_overall) or InspectionStatus.NOT_VERIFIABLE
+    canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
+    physical_review_count = sum(
+        1
+        for result in results_list
+        if normalize_rule_status(getattr(result, "status", None)) == RuleStatus.NOT_VERIFIABLE
+        and _is_physical_verification_rule(result)
+    )
+    if review_count and physical_review_count == review_count:
+        summary_sentence = (
+            f"{passed_count} checks passed. {failed_count} confirmed failures. "
+            f"{physical_review_count} physical checks remain unverified."
+        )
+    elif review_count:
+        summary_sentence = (
+            f"{passed_count} checks passed. {failed_count} confirmed failures. "
+            f"{review_count} applicable checks remain unverified."
+        )
     else:
-        canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
+        summary_sentence = f"{passed_count} checks passed. {failed_count} confirmed failures."
     # Detect whether this inspection resulted from an all-recapture image acquisition failure
     is_recapture = (
         canonical_result == "IMAGE_RECAPTURE_REQUIRED"
@@ -410,19 +425,19 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_bg = colors.HexColor('#E8F5E9')
         overall_border = colors.HexColor('#2E7D32')
         overall_color = '#1B5E20'
-        overall_desc = "All detected package declarations passed the applicable automatic checks."
+        overall_desc = summary_sentence
     elif canonical_result == InspectionStatus.NON_COMPLIANT:
         overall_label = "NON-COMPLIANT"
         overall_bg = colors.HexColor('#FFEBEE')
         overall_border = colors.HexColor('#C62828')
         overall_color = '#B71C1C'
-        overall_desc = "One or more mandatory statutory declarations failed deterministic validation requirements."
+        overall_desc = summary_sentence
     else:
         overall_label = "NOT_VERIFIABLE"
         overall_bg = colors.HexColor('#FFF8E1')
         overall_border = colors.HexColor('#F57F17')
         overall_color = '#B45309'
-        overall_desc = "Some package details could not be read clearly or verified from the submitted images."
+        overall_desc = summary_sentence
 
     # Context is detected from package evidence; unknown values remain explicit.
     pkg_display = inspection.package_type or "NOT_DETECTED"
@@ -593,10 +608,19 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             _safe_html_p(f"<b><font color='#B71C1C'>Critical Violations ({len(findings['failed'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['failed']), small_style),
         ])
-    if findings['needs_review']:
+    non_physical_review = [
+        finding for finding in findings['needs_review']
+        if finding not in findings['physical_unverified']
+    ]
+    if non_physical_review:
         findings_rows.append([
-            _safe_html_p(f"<b><font color='#B45309'>Not Detected ({len(findings['needs_review'])}):</font></b>", small_bold),
-            _safe_html_p(", ".join(findings['needs_review']), small_style),
+            _safe_html_p(f"<b><font color='#B45309'>Not Verifiable ({len(non_physical_review)}):</font></b>", small_bold),
+            _safe_html_p(", ".join(non_physical_review), small_style),
+        ])
+    if findings['physical_unverified']:
+        findings_rows.append([
+            _safe_html_p(f"<b><font color='#B45309'>Physical Checks Unverified ({len(findings['physical_unverified'])}):</font></b>", small_bold),
+            _safe_html_p(", ".join(findings['physical_unverified']), small_style),
         ])
     if findings['verified']:
         findings_rows.append([
@@ -735,8 +759,9 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             binary_p = _safe_html_p("<b><font color='#1B5E20'>1</font></b>", small_bold)
         elif binary_val == 0 or r.status == "FAIL":
             binary_p = _safe_html_p("<b><font color='#B71C1C'>0</font></b>", small_bold)
-        elif r.status in ("NOT_VERIFIABLE", "NEEDS_REVIEW"):
-            binary_p = _safe_html_p("<b><font color='#B45309'>NOT DETECTED</font></b>", small_bold)
+        elif normalize_rule_status(r.status) == RuleStatus.NOT_VERIFIABLE:
+            unresolved_label = "NOT VERIFIABLE" if _is_physical_verification_rule(r) else "NOT DETECTED"
+            binary_p = _safe_html_p(f"<b><font color='#B45309'>{unresolved_label}</font></b>", small_bold)
         else:
             binary_p = _safe_html_p("<b><font color='#64748B'>N/A</font></b>", small_bold)
 
@@ -745,8 +770,9 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             status_p = _safe_html_p("<b><font color='#1B5E20'>PASS</font></b>", small_bold)
         elif r.status == "FAIL":
             status_p = _safe_html_p("<b><font color='#B71C1C'>FAIL</font></b>", small_bold)
-        elif r.status in ("NOT_VERIFIABLE", "NEEDS_REVIEW"):
-            status_p = _safe_html_p("<b><font color='#B45309'>NOT DETECTED</font></b>", small_bold)
+        elif normalize_rule_status(r.status) == RuleStatus.NOT_VERIFIABLE:
+            unresolved_label = "NOT VERIFIABLE" if _is_physical_verification_rule(r) else "NOT DETECTED"
+            status_p = _safe_html_p(f"<b><font color='#B45309'>{unresolved_label}</font></b>", small_bold)
         else:
             status_p = _safe_html_p("<b><font color='#64748B'>NOT_APPLICABLE</font></b>", small_bold)
 
@@ -976,6 +1002,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             ),
             _safe_html_p(
                 f"<b>Overall result:</b> {canonical_result}<br/>"
+                f"<b>Summary:</b> {summary_sentence}<br/>"
                 "The result was generated automatically from the submitted package images.",
                 small_style,
             ),

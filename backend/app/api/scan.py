@@ -17,7 +17,12 @@ from app.extraction.declaration_extractor import extract_declarations, merge_pro
 from app.ocr.ocr_service import run_ocr
 from app.ocr.preprocessing import preprocess_image
 from app.rules.applicability import get_applicable_rules
-from app.rules.rule_engine import evaluate_rules, build_inspection_findings, calculate_rule_summary
+from app.rules.rule_engine import (
+    build_inspection_findings,
+    calculate_rule_summary,
+    derive_screening_result,
+    evaluate_rules,
+)
 from app.reports.pdf_report import generate_inspection_pdf
 from app.utils.helpers import (
     generate_filename,
@@ -272,6 +277,7 @@ async def perform_scan(
                 rule_results=[],
                 summary={"passed": 0, "failed": 0, "review": 0, "not_applicable": 0},
                 overall_result=overall_result,
+                screening_result=InspectionStatus.NOT_VERIFIABLE,
                 priority="HIGH",
                 evidence=[],
                 review_notes=quality_review_notes,
@@ -668,6 +674,7 @@ async def perform_scan(
 
         rule_started = time.perf_counter()
         rule_results, overall_result = evaluate_rules(applicable_rules, extracted_fields)
+        screening_result = derive_screening_result(rule_results)
         timings['rule_evaluation_ms'] = round((time.perf_counter() - rule_started) * 1000)
         priority = 'HIGH' if overall_result == 'NON-COMPLIANT' else 'MEDIUM'
 
@@ -850,6 +857,7 @@ async def perform_scan(
             rule_results=rule_results,
             summary=calculate_rule_summary(rule_results),
             overall_result=overall_result,
+            screening_result=screening_result,
             priority=priority,
             evidence=[],
             review_notes=all_review_notes,
