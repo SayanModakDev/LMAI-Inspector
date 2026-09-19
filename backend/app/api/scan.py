@@ -164,7 +164,7 @@ async def perform_scan(
         timings["image_quality_ms"] = quality_ms
 
         # If ALL images require recapture, do not run OCR or Gemini.
-        # Return a controlled NOT_VERIFIABLE inspection response.
+        # Return a controlled REVIEW_REQUIRED screening response.
         if getattr(settings, "IMAGE_QUALITY_GATE_ENABLED", True) and len(usable_image_indices) == 0 and len(original_paths) > 0:
             logger.warning("All submitted inspection images require recapture. Skipping OCR and Gemini.")
             for image_index, original_path in enumerate(original_paths):
@@ -199,7 +199,7 @@ async def perform_scan(
             current_date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
             snapshot_meta = derive_dynamic_regulatory_snapshot(applicable_rules=[], inspection_date=current_date_str)
 
-            overall_result = InspectionStatus.NOT_VERIFIABLE
+            overall_result = InspectionStatus.REVIEW_REQUIRED
             db_inspection = models.Inspection(
                 image_path=safe_filenames[0] if safe_filenames else None,
                 processed_image_path=safe_filenames[0] if safe_filenames else None,
@@ -277,7 +277,9 @@ async def perform_scan(
                 rule_results=[],
                 summary={"passed": 0, "failed": 0, "review": 0, "not_applicable": 0},
                 overall_result=overall_result,
-                screening_result=InspectionStatus.NOT_VERIFIABLE,
+                screening_result=InspectionStatus.REVIEW_REQUIRED,
+                screening_scope="AUTOMATED_LABEL_SCREENING",
+                physical_verification=[],
                 priority="HIGH",
                 evidence=[],
                 review_notes=quality_review_notes,
@@ -687,8 +689,15 @@ async def perform_scan(
         rule_started = time.perf_counter()
         rule_results, overall_result = evaluate_rules(applicable_rules, extracted_fields)
         screening_result = derive_screening_result(rule_results)
+        # Both fields intentionally expose the same canonical software-only
+        # result for API compatibility. Physical checks are separate records.
+        overall_result = screening_result
+        physical_verification = [
+            result for result in rule_results
+            if result.get('status') == 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION'
+        ]
         timings['rule_evaluation_ms'] = round((time.perf_counter() - rule_started) * 1000)
-        priority = 'HIGH' if overall_result == 'NON-COMPLIANT' else 'MEDIUM'
+        priority = 'HIGH' if overall_result == 'NON_COMPLIANT' else 'MEDIUM'
 
         db_inspection = models.Inspection(
             product_name=extracted_fields.get('PRODUCT_NAME', {}).get('value', 'NOT_DETECTED'),
@@ -870,6 +879,8 @@ async def perform_scan(
             summary=calculate_rule_summary(rule_results),
             overall_result=overall_result,
             screening_result=screening_result,
+            screening_scope="AUTOMATED_LABEL_SCREENING",
+            physical_verification=physical_verification,
             priority=priority,
             evidence=[],
             review_notes=all_review_notes,

@@ -442,7 +442,7 @@ class TestRuleEvaluationAndCompliance:
         results, overall = evaluate_rules([rule], fields)
         assert results[0]["binary"] == 0
         assert results[0]["status"] == "NOT_VERIFIABLE"
-        assert overall == "NOT_VERIFIABLE"
+        assert overall == "REVIEW_REQUIRED"
 
     def test_invalid_declaration_fails_rule_and_marks_non_compliant(self):
         """Invalid fractional count declaration (10.5 tablets) evaluates to binary 0, FAIL, and NON_COMPLIANT."""

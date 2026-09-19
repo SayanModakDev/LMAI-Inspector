@@ -84,18 +84,18 @@ const Dashboard = () => {
           subtitle="All recorded screenings"
         />
         <MetricCard
-          label="Passed (Compliant)"
+          label="Automated Screening: Compliant"
           value={stats?.compliant ?? 0}
           status="pass"
           icon={<CheckCircle2 size={18} />}
-          subtitle="Meets all verified rules"
+          subtitle="All applicable image checks passed"
         />
         <MetricCard
-          label="Not Detected"
-          value={stats?.not_verifiable ?? 0}
+          label="Review Required"
+          value={stats?.review_required ?? stats?.not_verifiable ?? 0}
           status="review"
           icon={<AlertTriangle size={18} />}
-          subtitle="Declarations not detected in package images"
+          subtitle="Unresolved applicable image evidence"
         />
         <MetricCard
           label="Failed (Non-Compliant)"

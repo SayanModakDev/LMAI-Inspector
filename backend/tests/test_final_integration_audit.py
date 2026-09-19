@@ -2,7 +2,7 @@
 Final Integration Audit Tests for SIH26034.
 
 Verifies acceptance scenarios TEST A through TEST J end-to-end:
-  TEST A — Image screening passes while unresolved physical checks keep the inspection NOT_VERIFIABLE
+  TEST A — Image screening passes while physical checks are recorded out of scope
   TEST B — Missing quantity unit (quantity 500, unit missing -> FAIL, binary=0, never silent PASS)
   TEST C — Missing required declaration (never disappears, shows clear reason and review/fail state)
   TEST D — Uncertain OCR (low confidence -> NOT_VERIFIABLE, binary=None, never auto PASS/FAIL)
@@ -32,7 +32,12 @@ from app.reports.pdf_report import generate_inspection_pdf
 from app.database import models
 from app.database.connection import SessionLocal
 from app.api.scan import merge_product_evidence
-from app.api.inspections import generate_report as generate_report_endpoint, get_inspection_detail
+from app.api.inspections import (
+    generate_report as generate_report_endpoint,
+    get_dashboard,
+    get_history,
+    get_inspection_detail,
+)
 
 
 @pytest.fixture
@@ -55,9 +60,9 @@ def client():
 # ---------------------------------------------------------------------------
 def test_acceptance_test_a_compliant_label(db_session):
     """
-    TEST A: Complete inspection remains unresolved until physical checks are supplied.
+    TEST A: Complete automated label screening is independent of physical checks.
     Valid declared quantity + unit, valid MRP, required declarations detected,
-    image-screening result COMPLIANT, overall NOT_VERIFIABLE.
+    canonical image-screening result COMPLIANT.
     """
     sync_rules_to_db()
     db_rules = db_session.query(models.Rule).filter(models.Rule.is_active == True).all()
@@ -91,7 +96,11 @@ def test_acceptance_test_a_compliant_label(db_session):
 
     results, overall = evaluate_rules(applicable, extracted_fields)
     assert derive_screening_result(results) == InspectionStatus.COMPLIANT
-    assert overall == InspectionStatus.NOT_VERIFIABLE
+    assert overall == InspectionStatus.COMPLIANT
+    physical_rows = [r for r in results if r["rule_id"] in ("PC-ALL-012", "PC-ALL-013")]
+    assert len(physical_rows) == 2
+    assert all(r["status"] == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION" for r in physical_rows)
+    assert all(r["status"] != "NOT_APPLICABLE" for r in physical_rows)
     # Verify mandatory parameters pass with binary 1
     net_qty_res = next(r for r in results if r["parameter"] in ("DECLARED_NET_QUANTITY", "NET_QUANTITY"))
     assert net_qty_res["status"] == "PASS"
@@ -465,7 +474,7 @@ def test_acceptance_test_j_pdf_report(db_session):
     assert "disclaimer" in full_text.lower()
     assert "pending verification" in full_text.lower()
     assert "500" in full_text
-    assert "NON-COMPLIANT" in full_text
+    assert "NON_COMPLIANT" in full_text
 
 
 def test_overall_result_is_consistent_in_database_api_and_pdf(db_session):
@@ -510,18 +519,36 @@ def test_overall_result_is_consistent_in_database_api_and_pdf(db_session):
     generate_report_endpoint(inspection_id, db_session)
     db_session.expire_all()
     stored = db_session.query(models.Inspection).filter(models.Inspection.id == inspection_id).one()
-    assert stored.overall_result == InspectionStatus.NOT_VERIFIABLE
+    assert stored.overall_result == InspectionStatus.COMPLIANT
 
     api_payload = get_inspection_detail(inspection_id, db_session)
-    assert api_payload["overall_result"] == InspectionStatus.NOT_VERIFIABLE
+    assert api_payload["overall_result"] == InspectionStatus.COMPLIANT
     assert api_payload["screening_result"] == InspectionStatus.COMPLIANT
     assert api_payload["summary"]["passed_count"] == 12
-    assert api_payload["summary"]["review_count"] == 2
+    assert api_payload["summary"]["review_count"] == 0
+    assert api_payload["summary"]["out_of_scope_physical_count"] == 2
+    assert len(api_payload["physical_verification"]) == 2
+    assert all(
+        row["status"] == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+        for row in api_payload["physical_verification"]
+    )
+
+    history_item = next(
+        item for item in get_history(status="COMPLIANT", db=db_session)
+        if item.id == inspection_id
+    )
+    assert history_item.overall_result == InspectionStatus.COMPLIANT
+    assert history_item.screening_result == InspectionStatus.COMPLIANT
+
+    dashboard = get_dashboard(db_session)
+    recent_item = next(item for item in dashboard.recent_inspections if item["id"] == inspection_id)
+    assert recent_item["result"] == InspectionStatus.COMPLIANT
+    assert dashboard.compliant >= 1
 
     full_text = _extract_pdf_text(stored.report.file_path)
-    assert "OVERALL COMPLIANCE RATING: NOT_VERIFIABLE" in full_text
-    assert "12 checks passed. 0 confirmed failures. 2 physical checks remain unverified." in full_text
-    assert "OVERALL COMPLIANCE RATING: COMPLIANT" not in full_text
+    assert "AUTOMATED LABEL SCREENING: COMPLIANT" in full_text
+    assert "12 checks passed. 0 confirmed failures." in full_text
+    assert "OUT-OF-SCOPE PHYSICAL VERIFICATION" in full_text.upper()
 
 
 def test_acceptance_test_k_health_endpoint_and_branding():

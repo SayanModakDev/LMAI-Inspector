@@ -7,7 +7,8 @@ import './StatusBadge.css';
  * Supports canonical statuses:
  * - COMPLIANT / PASS (1)
  * - NON_COMPLIANT / FAIL (0)
- * - NOT_VERIFIABLE / NEEDS_REVIEW / REVIEW / MANUAL_CHECK
+ * - REVIEW_REQUIRED / legacy unresolved aliases
+ * - OUT_OF_SCOPE_PHYSICAL_VERIFICATION
  * - NOT_APPLICABLE / NA
  * - PROCESSING
  */
@@ -20,16 +21,20 @@ const StatusBadge = ({ status, size = 'md', showBinary = false, className = '' }
 
   if (norm === 'COMPLIANT' || norm === 'PASS') {
     type = 'pass';
-    label = showBinary ? '1 — COMPLIANT' : (norm === 'PASS' ? 'PASS' : 'COMPLIANT');
+    label = norm === 'PASS' && showBinary ? '1 — PASS' : (norm === 'PASS' ? 'PASS' : 'COMPLIANT');
     Icon = CheckCircle2;
   } else if (norm === 'NON_COMPLIANT' || norm === 'FAIL') {
     type = 'fail';
-    label = showBinary ? '0 — NON-COMPLIANT' : (norm === 'FAIL' ? 'FAIL' : 'NON-COMPLIANT');
+    label = norm === 'FAIL' && showBinary ? '0 — FAIL' : (norm === 'FAIL' ? 'FAIL' : 'NON_COMPLIANT');
     Icon = XCircle;
-  } else if (norm === 'NOT_VERIFIABLE' || norm === 'NEEDS_REVIEW' || norm === 'REVIEW' || norm === 'MANUAL_CHECK') {
+  } else if (norm === 'REVIEW_REQUIRED' || norm === 'NOT_VERIFIABLE' || norm === 'NEEDS_REVIEW' || norm === 'REVIEW' || norm === 'MANUAL_CHECK') {
     type = 'review';
-    label = 'NOT VERIFIABLE';
+    label = 'REVIEW REQUIRED';
     Icon = AlertTriangle;
+  } else if (norm === 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION') {
+    type = 'na';
+    label = 'OUT OF SCOPE — PHYSICAL';
+    Icon = MinusCircle;
   } else if (norm === 'NOT_DETECTED') {
     type = 'review';
     label = 'NOT DETECTED';

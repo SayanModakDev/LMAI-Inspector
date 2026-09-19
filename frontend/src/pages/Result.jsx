@@ -162,7 +162,9 @@ const Result = () => {
     summary.not_applicable ??
     ruleResults.filter((r) => r.status === 'NOT_APPLICABLE').length;
 
-  const rawOverall = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_');
+  const rawOverall = (inspection.screening_result || inspection.overall_result || '').toUpperCase().replace(/-/g, '_');
+  const physicalCount = summary.out_of_scope_physical_count ??
+    ruleResults.filter((r) => r.status === 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION').length;
   // Filtered Rules for Matrix Table
   const filteredRules = ruleResults.filter((r) => {
     if (ruleFilter === 'FAIL' && r.status !== 'FAIL') return false;
@@ -176,6 +178,7 @@ const Result = () => {
     )
       return false;
     if (ruleFilter === 'NA' && r.status !== 'NOT_APPLICABLE') return false;
+    if (ruleFilter === 'PHYSICAL' && r.status !== 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION') return false;
 
     if (ruleSearch.trim()) {
       const q = ruleSearch.toLowerCase();
@@ -216,9 +219,10 @@ const Result = () => {
             {[
               { id: 'ALL', label: 'All', count: ruleResults.length },
               { id: 'FAIL', label: 'Fail', count: failCount },
-              { id: 'REVIEW', label: 'Not Verifiable', count: reviewCount },
+              { id: 'REVIEW', label: 'Review', count: reviewCount },
               { id: 'PASS', label: 'Pass', count: passCount },
               { id: 'NA', label: 'N/A', count: naCount },
+              { id: 'PHYSICAL', label: 'Physical Scope', count: physicalCount },
             ].map((f) => (
               <button
                 key={f.id}
@@ -349,7 +353,9 @@ const Result = () => {
                                 <span className="dossier-label">Automatic Result:</span>
                                 <div className="dossier-val text-muted text-xs">
                                   {rule.action_guidance ||
-                                    (rule.status === 'FAIL'
+                                    (rule.status === 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION'
+                                      ? 'This legally defined requirement needs calibrated physical verification and is excluded from the image-screening result.'
+                                      : rule.status === 'FAIL'
                                       ? 'Declaration failed automatic validation.'
                                       : rule.status === 'NOT_VERIFIABLE' || rule.status === 'REVIEW'
                                       ? (rule.verification_type === 'PHYSICAL_VERIFICATION_REQUIRED' ||
@@ -406,9 +412,9 @@ const Result = () => {
         <div className="report-summary-dossier">
           <div className="report-summary-header">
             <div className="report-title-block">
-              <h3 className="font-bold text-base">LEGAL METROLOGY COMPLIANCE INSPECTION REPORT</h3>
+              <h3 className="font-bold text-base">AUTOMATED LABEL SCREENING REPORT</h3>
               <span className="text-xs text-muted">
-                Official Screening Dossier • Legal Metrology (Packaged Commodities) Rules, 2011
+                Software-only image and label screening • Physical statutory verification not included
               </span>
             </div>
             <div className="report-status-badge">
@@ -452,7 +458,7 @@ const Result = () => {
 
           <div className="report-findings-box mt-4">
             <h5 className="font-semibold text-xs text-muted uppercase mb-2">
-              Compliance Findings Summary
+              Automated Label Screening Findings
             </h5>
             <ul className="report-findings-list">
               {inspection.findings?.failed?.map((f, idx) => (
@@ -468,6 +474,11 @@ const Result = () => {
               {inspection.findings?.verified?.map((v, idx) => (
                 <li key={idx} className="finding-item finding-item--pass">
                   <CheckCircle2 size={14} /> {v}
+                </li>
+              ))}
+              {inspection.findings?.out_of_scope_physical_verification?.map((p, idx) => (
+                <li key={idx} className="finding-item">
+                  <MinusCircle size={14} /> {p}
                 </li>
               ))}
             </ul>
