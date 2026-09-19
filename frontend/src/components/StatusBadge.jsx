@@ -28,6 +28,10 @@ const StatusBadge = ({ status, size = 'md', showBinary = false, className = '' }
     Icon = XCircle;
   } else if (norm === 'NOT_VERIFIABLE' || norm === 'NEEDS_REVIEW' || norm === 'REVIEW' || norm === 'MANUAL_CHECK') {
     type = 'review';
+    label = 'NOT VERIFIABLE';
+    Icon = AlertTriangle;
+  } else if (norm === 'NOT_DETECTED') {
+    type = 'review';
     label = 'NOT DETECTED';
     Icon = AlertTriangle;
   } else if (norm === 'NOT_APPLICABLE' || norm === 'NA') {

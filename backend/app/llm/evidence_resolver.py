@@ -9,6 +9,12 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
+from app.extraction.declaration_extractor import (
+    is_valid_date_candidate,
+    DATE_FIELDS,
+    DATE_PREFIX_RE,
+    parse_date_with_precision,
+)
 from app.llm.gemini_client import GeminiClient
 from app.llm.grounding_validator import EvidenceGroundingValidator
 from app.llm.schemas import (
@@ -224,6 +230,22 @@ def resolve_evidence_with_gemini(
         det_candidate = deterministic_fields.get(field_name)
 
         if decl.status == "RESOLVED" and decl.value:
+            # Enforce date eligibility for statutory date fields
+            if field_name in DATE_FIELDS:
+                val_ok = is_valid_date_candidate(decl.value) or is_valid_date_candidate(decl.normalized_value)
+                if not val_ok:
+                    logger.info("Rejecting ineligible date candidate for %s: %r", field_name, decl.value)
+                    if det_candidate and is_valid_date_candidate(det_candidate.get("value")):
+                        merged_fields[field_name] = dict(det_candidate)
+                    else:
+                        merged_fields[field_name] = {
+                            "value": None,
+                            "status": "NOT_FOUND",
+                            "confidence": 0.0,
+                            "review_notes": f"Ineligible date phrase '{decl.value}' rejected by date validator",
+                        }
+                    continue
+
             # Construct unified canonical field dictionary
             source_img_idx = decl.source_evidence[0].image_index if decl.source_evidence else 0
             unified_bbox = decl.source_evidence[0].bbox if decl.source_evidence else None
@@ -262,6 +284,101 @@ def resolve_evidence_with_gemini(
             merged_fields[field_name] = merged_field
 
         elif decl.status == "CONFLICT":
+            if field_name in DATE_FIELDS:
+                # Filter conflict candidates to only valid date declarations
+                valid_date_cands = []
+                seen_vals = set()
+
+                if decl.value and decl.value != "CONFLICTING_DECLARATIONS" and is_valid_date_candidate(decl.value):
+                    clean_v = decl.value.strip()
+                    if clean_v.lower() not in seen_vals:
+                        seen_vals.add(clean_v.lower())
+                        valid_date_cands.append({
+                            "value": clean_v,
+                            "confidence": decl.confidence,
+                            "source_evidence": decl.source_evidence,
+                            "bbox": decl.source_evidence[0].bbox if decl.source_evidence else None,
+                            "source_image_index": decl.source_evidence[0].image_index if decl.source_evidence else 0,
+                        })
+
+                for alt in decl.alternatives:
+                    alt_val = alt.value if hasattr(alt, "value") else alt.get("value")
+                    if alt_val and is_valid_date_candidate(alt_val):
+                        clean_alt = str(alt_val).strip()
+                        if clean_alt.lower() not in seen_vals:
+                            seen_vals.add(clean_alt.lower())
+                            alt_ev = alt.source_evidence if hasattr(alt, "source_evidence") else alt.get("source_evidence", [])
+                            alt_conf = alt.confidence if hasattr(alt, "confidence") else alt.get("confidence", 0.9)
+                            valid_date_cands.append({
+                                "value": clean_alt,
+                                "confidence": alt_conf,
+                                "source_evidence": alt_ev,
+                                "bbox": alt_ev[0].bbox if alt_ev and hasattr(alt_ev[0], "bbox") else None,
+                                "source_image_index": alt_ev[0].image_index if alt_ev and hasattr(alt_ev[0], "image_index") else 0,
+                            })
+
+                if not valid_date_cands:
+                    merged_fields[field_name] = {
+                        "value": None,
+                        "status": "NOT_FOUND",
+                        "confidence": 0.0,
+                    }
+                    continue
+                elif len(valid_date_cands) == 1:
+                    # Non-date noise eliminated; single valid date remains
+                    cand = valid_date_cands[0]
+                    ev_list = [
+                        ev.model_dump() if hasattr(ev, "model_dump") else ev
+                        for ev in cand["source_evidence"]
+                    ]
+                    merged_fields[field_name] = {
+                        "value": cand["value"],
+                        "normalized_value": cand["value"],
+                        "confidence": round(float(cand["confidence"]), 3),
+                        "source": "OCR_GEMINI_RESOLVED",
+                        "extraction_method": "GEMINI_SEMANTIC_RESOLVER",
+                        "source_image_index": cand["source_image_index"],
+                        "bbox": cand["bbox"],
+                        "resolution_note": f"Filtered invalid date candidates, accepting valid date '{cand['value']}'",
+                        "source_evidence": ev_list,
+                        "status": "VALID",
+                        "evidence_state": "EVIDENCE_VERIFIED",
+                    }
+                    continue
+                else:
+                    # Check if multiple candidates represent equivalent dates (e.g. 04/28 vs 04/2028)
+                    norm_dates = []
+                    all_parsed = True
+                    for c in valid_date_cands:
+                        core = DATE_PREFIX_RE.sub("", c["value"]).strip()
+                        ok, norm, _ = parse_date_with_precision(core)
+                        if ok and norm:
+                            norm_dates.append(norm)
+                        else:
+                            all_parsed = False
+                            break
+                    if all_parsed and len(set(norm_dates)) == 1:
+                        # Equivalent dates agree
+                        cand = valid_date_cands[0]
+                        ev_list = [
+                            ev.model_dump() if hasattr(ev, "model_dump") else ev
+                            for ev in cand["source_evidence"]
+                        ]
+                        merged_fields[field_name] = {
+                            "value": cand["value"],
+                            "normalized_value": norm_dates[0],
+                            "confidence": round(float(cand["confidence"]), 3),
+                            "source": "OCR_GEMINI_RESOLVED",
+                            "extraction_method": "GEMINI_SEMANTIC_RESOLVER",
+                            "source_image_index": cand["source_image_index"],
+                            "bbox": cand["bbox"],
+                            "resolution_note": f"Consolidated equivalent date formats to '{norm_dates[0]}'",
+                            "source_evidence": ev_list,
+                            "status": "VALID",
+                            "evidence_state": "EVIDENCE_VERIFIED",
+                        }
+                        continue
+
             # True conflict confirmed by LLM evidence interpretation
             merged_fields[field_name] = {
                 "value": decl.value or "CONFLICTING_DECLARATIONS",
@@ -278,9 +395,10 @@ def resolve_evidence_with_gemini(
             # If Gemini explicitly says NOT_FOUND but deterministic found a plausible candidate,
             # retain deterministic candidate with lowered confidence for inspector review
             if det_candidate and det_candidate.get("value"):
-                det_copy = dict(det_candidate)
-                det_copy.setdefault("review_notes", "Deterministic candidate unconfirmed by semantic resolver")
-                merged_fields[field_name] = det_copy
+                if field_name not in DATE_FIELDS or is_valid_date_candidate(det_candidate.get("value")):
+                    det_copy = dict(det_candidate)
+                    det_copy.setdefault("review_notes", "Deterministic candidate unconfirmed by semantic resolver")
+                    merged_fields[field_name] = det_copy
 
     total_resolver_ms = round((time.perf_counter() - timing_start) * 1000)
     llm_metadata["total_resolver_ms"] = total_resolver_ms

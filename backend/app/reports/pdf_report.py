@@ -21,6 +21,8 @@ from reportlab.platypus import (
     Image as RLImage,
     HRFlowable,
 )
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 from app.core.config import get_settings
@@ -35,6 +37,112 @@ logger = logging.getLogger(__name__)
 STATUTORY_DISCLAIMER = (
     "This software generates automatic package-image screening results. It is not itself a government authority or a statutory certificate."
 )
+
+_REGISTERED_UNICODE_FONT = False
+_CANONICAL_FONT_NORMAL = "Helvetica"
+_CANONICAL_FONT_BOLD = "Helvetica-Bold"
+_CANONICAL_FONT_OBLIQUE = "Helvetica-Oblique"
+_CANONICAL_FONT_BOLD_OBLIQUE = "Helvetica-BoldOblique"
+
+
+def _setup_pdf_fonts() -> None:
+    """Discover and register system TrueType fonts supporting Unicode / Indian Rupee symbol (₹).
+    Falls back gracefully to Helvetica with safe text rendering when no suitable TTF is found.
+    """
+    global _REGISTERED_UNICODE_FONT, _CANONICAL_FONT_NORMAL, _CANONICAL_FONT_BOLD, _CANONICAL_FONT_OBLIQUE, _CANONICAL_FONT_BOLD_OBLIQUE
+    if _REGISTERED_UNICODE_FONT:
+        return
+
+    candidates = [
+        # Windows standard fonts with U+20B9 Rupee glyph
+        {
+            "family": "LMAI-Sans",
+            "normal": "C:/Windows/Fonts/arial.ttf",
+            "bold": "C:/Windows/Fonts/arialbd.ttf",
+            "italic": "C:/Windows/Fonts/ariali.ttf",
+            "boldItalic": "C:/Windows/Fonts/arialbi.ttf",
+        },
+        {
+            "family": "LMAI-Sans",
+            "normal": "C:/Windows/Fonts/segoeui.ttf",
+            "bold": "C:/Windows/Fonts/segoeuib.ttf",
+            "italic": "C:/Windows/Fonts/segoeuii.ttf",
+            "boldItalic": "C:/Windows/Fonts/segoeuiz.ttf",
+        },
+        # Linux standard fonts
+        {
+            "family": "LMAI-Sans",
+            "normal": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "italic": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+            "boldItalic": "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        },
+        {
+            "family": "LMAI-Sans",
+            "normal": "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "italic": "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+            "boldItalic": "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+        },
+        {
+            "family": "LMAI-Sans",
+            "normal": "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "bold": "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            "italic": "/usr/share/fonts/dejavu/DejaVuSans-Oblique.ttf",
+            "boldItalic": "/usr/share/fonts/dejavu/DejaVuSans-BoldOblique.ttf",
+        },
+        {
+            "family": "LMAI-Sans",
+            "normal": "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "bold": "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "italic": "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf",
+            "boldItalic": "/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf",
+        },
+    ]
+
+    for cand in candidates:
+        normal_path = cand["normal"]
+        if os.path.exists(normal_path):
+            try:
+                fam = cand["family"]
+                bold_path = cand.get("bold") if cand.get("bold") and os.path.exists(cand["bold"]) else normal_path
+                italic_path = cand.get("italic") if cand.get("italic") and os.path.exists(cand["italic"]) else normal_path
+                bi_path = cand.get("boldItalic") if cand.get("boldItalic") and os.path.exists(cand["boldItalic"]) else bold_path
+
+                pdfmetrics.registerFont(TTFont(fam, normal_path))
+                pdfmetrics.registerFont(TTFont(f"{fam}-Bold", bold_path))
+                pdfmetrics.registerFont(TTFont(f"{fam}-Italic", italic_path))
+                pdfmetrics.registerFont(TTFont(f"{fam}-BoldItalic", bi_path))
+
+                pdfmetrics.registerFontFamily(
+                    fam,
+                    normal=fam,
+                    bold=f"{fam}-Bold",
+                    italic=f"{fam}-Italic",
+                    boldItalic=f"{fam}-BoldItalic",
+                )
+                _CANONICAL_FONT_NORMAL = fam
+                _CANONICAL_FONT_BOLD = f"{fam}-Bold"
+                _CANONICAL_FONT_OBLIQUE = f"{fam}-Italic"
+                _CANONICAL_FONT_BOLD_OBLIQUE = f"{fam}-BoldItalic"
+                _REGISTERED_UNICODE_FONT = True
+                logger.info("Registered Unicode TrueType font %s from %s", fam, normal_path)
+                return
+            except Exception as e:
+                logger.warning("Could not register font %s: %s", normal_path, e)
+
+    _REGISTERED_UNICODE_FONT = False
+
+
+_setup_pdf_fonts()
+
+
+def _clean_pdf_text(text: str) -> str:
+    """Ensure characters that standard fonts cannot display are safely represented."""
+    if not _REGISTERED_UNICODE_FONT:
+        # Fallback when running on Type 1 Helvetica without Unicode glyph U+20B9
+        return text.replace("₹", "Rs. ")
+    return text
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -62,10 +170,10 @@ class NumberedCanvas(canvas.Canvas):
 
         # Running header (pages 2 and higher)
         if self._pageNumber > 1:
-            self.setFont("Helvetica-Bold", 8)
+            self.setFont(_CANONICAL_FONT_BOLD, 8)
             self.setFillColor(colors.HexColor("#173F5F"))
             self.drawString(12 * mm, height - 10 * mm, "LMAI INSPECTOR")
-            self.setFont("Helvetica", 8)
+            self.setFont(_CANONICAL_FONT_NORMAL, 8)
             self.setFillColor(colors.HexColor("#64748B"))
             self.drawString(42 * mm, height - 10 * mm, "— Statutory Label Compliance Screening Report")
             self.drawRightString(width - 12 * mm, height - 10 * mm, f"Page {self._pageNumber} of {total_pages}")
@@ -78,11 +186,11 @@ class NumberedCanvas(canvas.Canvas):
         self.setLineWidth(0.5)
         self.line(12 * mm, 12 * mm, width - 12 * mm, 12 * mm)
 
-        self.setFont("Helvetica-Oblique", 7.5)
+        self.setFont(_CANONICAL_FONT_OBLIQUE, 7.5)
         self.setFillColor(colors.HexColor("#64748B"))
         self.drawString(12 * mm, 8 * mm, STATUTORY_DISCLAIMER)
 
-        self.setFont("Helvetica", 7.5)
+        self.setFont(_CANONICAL_FONT_NORMAL, 7.5)
         self.drawRightString(width - 12 * mm, 8 * mm, f"Page {self._pageNumber} of {total_pages}")
 
         self.restoreState()
@@ -94,6 +202,7 @@ def _paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
         text = "—"
     else:
         text = str(value)
+    text = _clean_pdf_text(text)
     # Convert existing break tags to \n, strip stray tags, then xml escape
     text = re.sub(r'<\s*br\s*/?\s*>', '\n', text, flags=re.I)
     text = re.sub(r'<[^>]+>', '', text)
@@ -110,7 +219,7 @@ def _paragraph(value: Any, style: ParagraphStyle) -> Paragraph:
 
 def _safe_html_p(html_text: str, style: ParagraphStyle) -> Paragraph:
     """Render paragraph containing approved inline markup."""
-    return Paragraph(html_text, style)
+    return Paragraph(_clean_pdf_text(html_text), style)
 
 
 def _clean_ref(value: Optional[str]) -> str:
@@ -167,21 +276,21 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     # Custom typography styles
     title_style = ParagraphStyle(
         'DocTitle',
-        fontName='Helvetica-Bold',
+        fontName=_CANONICAL_FONT_BOLD,
         fontSize=17,
         leading=21,
         textColor=colors.HexColor('#173F5F'),
     )
     subtitle_style = ParagraphStyle(
         'DocSubtitle',
-        fontName='Helvetica',
+        fontName=_CANONICAL_FONT_NORMAL,
         fontSize=8.5,
         leading=11,
         textColor=colors.HexColor('#475569'),
     )
     heading_style = ParagraphStyle(
         'SectionHeading',
-        fontName='Helvetica-Bold',
+        fontName=_CANONICAL_FONT_BOLD,
         fontSize=11,
         leading=14,
         textColor=colors.HexColor('#173F5F'),
@@ -190,35 +299,35 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     )
     body_style = ParagraphStyle(
         'TableBody',
-        fontName='Helvetica',
+        fontName=_CANONICAL_FONT_NORMAL,
         fontSize=8,
         leading=10.5,
         textColor=colors.HexColor('#1E293B'),
     )
     body_bold = ParagraphStyle(
         'TableBodyBold',
-        fontName='Helvetica-Bold',
+        fontName=_CANONICAL_FONT_BOLD,
         fontSize=8,
         leading=10.5,
         textColor=colors.HexColor('#1E293B'),
     )
     small_style = ParagraphStyle(
         'TableSmall',
-        fontName='Helvetica',
+        fontName=_CANONICAL_FONT_NORMAL,
         fontSize=7.5,
         leading=9.5,
         textColor=colors.HexColor('#334155'),
     )
     small_bold = ParagraphStyle(
         'TableSmallBold',
-        fontName='Helvetica-Bold',
+        fontName=_CANONICAL_FONT_BOLD,
         fontSize=7.5,
         leading=9.5,
         textColor=colors.HexColor('#0F172A'),
     )
     th_style = ParagraphStyle(
         'TableHeader',
-        fontName='Helvetica-Bold',
+        fontName=_CANONICAL_FONT_BOLD,
         fontSize=7.5,
         leading=9.5,
         textColor=colors.white,
@@ -290,11 +399,11 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_color = '#B71C1C'
         overall_desc = "One or more mandatory statutory declarations failed deterministic validation requirements."
     else:
-        overall_label = "NOT DETECTED"
+        overall_label = "NOT_VERIFIABLE"
         overall_bg = colors.HexColor('#FFF8E1')
         overall_border = colors.HexColor('#F57F17')
         overall_color = '#B45309'
-        overall_desc = "Some package details could not be read clearly from the submitted images."
+        overall_desc = "Some package details could not be read clearly or verified from the submitted images."
 
     # Context is detected from package evidence; unknown values remain explicit.
     pkg_display = inspection.package_type or "NOT_DETECTED"
@@ -420,12 +529,12 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(banner_table)
     story.append(Spacer(1, 4 * mm))
 
-    # 4. Summary Metrics Cards (Passed, Failed, Not Detected, Not Applicable)
+    # 4. Summary Metrics Cards (Passed, Failed, Not Verifiable, Not Applicable)
     summary_cards = [
         [
             _safe_html_p(f"<font size='13' color='#1B5E20'><b>{passed_count}</b></font><br/><font size='7.5' color='#1B5E20'><b>PASSED</b></font>", ParagraphStyle('Card1', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#B71C1C'><b>{failed_count}</b></font><br/><font size='7.5' color='#B71C1C'><b>FAILED</b></font>", ParagraphStyle('Card2', parent=body_style, alignment=1)),
-            _safe_html_p(f"<font size='13' color='#B45309'><b>{review_count}</b></font><br/><font size='7.5' color='#B45309'><b>NOT DETECTED</b></font>", ParagraphStyle('Card3', parent=body_style, alignment=1)),
+            _safe_html_p(f"<font size='13' color='#B45309'><b>{review_count}</b></font><br/><font size='7.5' color='#B45309'><b>NOT VERIFIABLE</b></font>", ParagraphStyle('Card3', parent=body_style, alignment=1)),
             _safe_html_p(f"<font size='13' color='#475569'><b>{na_count}</b></font><br/><font size='7.5' color='#475569'><b>NOT APPLICABLE</b></font>", ParagraphStyle('Card4', parent=body_style, alignment=1)),
         ]
     ]
@@ -830,7 +939,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             _safe_html_p(
                 "<b>Automatic inspection:</b><br/>"
                 f"<b>Inspection ID:</b> #{inspection.id}<br/>"
-                f"<b>Inspection Date:</b> {date_str[:10]}"
+                f"<b>Inspection Date:</b> {date_str}"
                 f"{review_summary_text}",
                 small_style,
             ),

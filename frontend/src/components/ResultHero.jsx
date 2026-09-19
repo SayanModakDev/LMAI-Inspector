@@ -73,7 +73,7 @@ const ResultHero = ({
 
   // 2. Canonical Overall Status Normalization (strictly 3 allowed states)
   const rawStatus = (inspection.overall_result || '').toUpperCase().replace(/-/g, '_').trim();
-  let canonicalStatus = 'NOT DETECTED';
+  let canonicalStatus = 'NOT VERIFIABLE';
   let bannerModifier = 'review';
 
   if (rawStatus === 'COMPLIANT') {
@@ -83,7 +83,7 @@ const ResultHero = ({
     canonicalStatus = 'NON-COMPLIANT';
     bannerModifier = 'non-compliant';
   } else {
-    canonicalStatus = 'NOT DETECTED';
+    canonicalStatus = 'NOT VERIFIABLE';
     bannerModifier = 'review';
   }
 

@@ -295,7 +295,52 @@ async def perform_scan(
             if llm_cat and llm_cat in supported_categories:
                 category = llm_cat
                 cat_confidence = float(llm_pkg_context_data.get('confidence') or 0.85)
-        product_type = classification.get('product_type') or extracted_fields.get('PRODUCT_TYPE', {}).get('value', 'UNKNOWN')
+        # Product type resolution precedence:
+        # 1. Deterministic classification if specific and known
+        # 2. Extracted fields PRODUCT_TYPE if known
+        # 3. LLM package context product_type if known
+        # 4. Fallback to UNKNOWN
+        class_pt = classification.get('product_type')
+        ext_pt = (
+            extracted_fields.get('PRODUCT_TYPE', {}).get('value')
+            if isinstance(extracted_fields.get('PRODUCT_TYPE'), dict)
+            else None
+        )
+        llm_pt = llm_pkg_context_data.get('product_type') if llm_pkg_context_data else None
+
+        if class_pt and class_pt not in ('UNKNOWN', 'NOT_DETECTED', 'ALL'):
+            final_product_type = class_pt
+        elif ext_pt and ext_pt not in ('UNKNOWN', 'NOT_DETECTED', 'ALL'):
+            final_product_type = ext_pt
+        elif getattr(settings, "GEMINI_AUTO_SCOPE", True) and llm_pt and llm_pt not in ('UNKNOWN', 'NOT_DETECTED', 'ALL'):
+            final_product_type = llm_pt
+        else:
+            final_product_type = class_pt or ext_pt or llm_pt or 'UNKNOWN'
+
+        product_type = final_product_type
+
+        # Synchronize extracted_fields so Overview, Evidence Audit, DB record, and PDF match identically
+        if product_type and product_type != 'UNKNOWN':
+            if 'PRODUCT_TYPE' not in extracted_fields or not isinstance(extracted_fields['PRODUCT_TYPE'], dict):
+                extracted_fields['PRODUCT_TYPE'] = {
+                    'value': product_type,
+                    'confidence': cat_confidence if cat_confidence > 0 else 0.9,
+                    'source': 'CLASSIFICATION',
+                    'status': 'VALID',
+                }
+            else:
+                extracted_fields['PRODUCT_TYPE']['value'] = product_type
+
+        if category and category != 'UNKNOWN':
+            if 'CATEGORY' not in extracted_fields or not isinstance(extracted_fields['CATEGORY'], dict):
+                extracted_fields['CATEGORY'] = {
+                    'value': category,
+                    'confidence': cat_confidence if cat_confidence > 0 else 0.9,
+                    'source': 'CLASSIFICATION',
+                    'status': 'VALID',
+                }
+            else:
+                extracted_fields['CATEGORY']['value'] = category
 
         # Reference Product Registry matching (Supporting evidence only — does not alter statutory compliance)
         from app.registry.matcher import match_product, improve_candidate_ranking
