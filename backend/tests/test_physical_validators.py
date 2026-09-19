@@ -27,6 +27,7 @@ from app.rules.validators import (
     DEFAULT_PARAMETER_VALIDATION_METHODS,
 )
 from app.rules.rule_engine import evaluate_rules, derive_overall_result
+from app.core.constants import InspectionStatus
 
 
 # ---------------------------------------------------------------------------
@@ -399,15 +400,17 @@ def test_10_rule_engine_integration_pc_all_012_and_013():
     r_012 = by_id["PC-ALL-012"]
     r_013 = by_id["PC-ALL-013"]
 
-    # In standard automated scan without physical scale/caliper, both safely evaluate to NOT_VERIFIABLE
-    assert r_012["status"] == "NOT_VERIFIABLE"
-    assert r_013["status"] == "NOT_VERIFIABLE"
+    # Active software-only screening records both rules in a separate scope.
+    assert r_012["status"] == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+    assert r_013["status"] == "OUT_OF_SCOPE_PHYSICAL_VERIFICATION"
+    assert r_012["status"] != "NOT_APPLICABLE"
+    assert r_013["status"] != "NOT_APPLICABLE"
     assert "Unknown validation method" not in r_012["message"]
     assert "Unknown validation method" not in r_013["message"]
 
     # In standard automated scan, physical checks do not block overall compliance
     # (they are non-blocking physical verification requirements)
-    assert overall in ("COMPLIANT", "NOT_VERIFIABLE")
+    assert overall in (InspectionStatus.COMPLIANT, InspectionStatus.REVIEW_REQUIRED)
 
     # Now provide physical scale measurement in extracted_fields
     extracted_fields_with_scale = dict(extracted_fields)
@@ -417,7 +420,11 @@ def test_10_rule_engine_integration_pc_all_012_and_013():
         "source": "CALIBRATED_SCALE",
         "is_physical_measurement": True,
     }
-    results_scale, overall_scale = evaluate_rules(all_rules, extracted_fields_with_scale)
+    results_scale, overall_scale = evaluate_rules(
+        all_rules,
+        extracted_fields_with_scale,
+        include_physical_verification=True,
+    )
     by_id_scale = {r["rule_id"]: r for r in results_scale}
     assert by_id_scale["PC-ALL-012"]["status"] == "PASS"
     assert by_id_scale["PC-ALL-012"]["binary"] == 1

@@ -25,6 +25,8 @@ class ScanResponse(BaseModel):
     summary: Optional[Dict[str, int]] = None
     overall_result: Optional[str] = None
     screening_result: Optional[str] = None
+    screening_scope: str = "AUTOMATED_LABEL_SCREENING"
+    physical_verification: List[dict] = []
     priority: str = "MEDIUM"
     evidence: List[dict] = []
     review_notes: List[str] = []
@@ -55,6 +57,8 @@ class InspectionDetail(BaseModel):
     quantity_type: Optional[str] = None
     overall_result: Optional[str] = None
     screening_result: Optional[str] = None
+    screening_scope: str = "AUTOMATED_LABEL_SCREENING"
+    physical_verification: List[dict] = []
     priority: str = "MEDIUM"
     image_path: Optional[str] = None
     inspector_name: Optional[str] = None
@@ -89,6 +93,7 @@ class InspectionSummary(BaseModel):
     package_type: Optional[str] = "NOT_DETECTED"
     import_status: Optional[str] = "NOT_DETECTED"
     overall_result: Optional[str] = None
+    screening_result: Optional[str] = None
     priority: str = "MEDIUM"
     inspector_name: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -107,6 +112,8 @@ class DashboardStats(BaseModel):
     total_inspections: int = 0
     compliant: int = 0
     non_compliant: int = 0
+    review_required: int = 0
+    # Compatibility alias for clients released before REVIEW_REQUIRED.
     not_verifiable: int = 0
     not_applicable: int = 0
     food_inspections: int = 0

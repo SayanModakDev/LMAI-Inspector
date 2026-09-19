@@ -464,7 +464,7 @@ class TestReviewStatusInRuleEvaluation:
         assert results[0]['status'] == 'NOT_VERIFIABLE'
         assert results[0]['binary'] == 0
         assert results[0]['review_required'] is True
-        assert overall == 'NOT_VERIFIABLE'
+        assert overall == 'REVIEW_REQUIRED'
 
     def test_conflicting_evidence_produces_not_verifiable(self):
         """CONFLICTING_EVIDENCE status should also produce NOT_VERIFIABLE."""

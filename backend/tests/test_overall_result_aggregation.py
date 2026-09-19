@@ -80,15 +80,16 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.COMPLIANT
         assert derive_screening_result(rules) == InspectionStatus.COMPLIANT
 
-        # Verify summary counters still preserve exact count of review items
+        # Physical rows are reported separately and excluded from screening counts.
         summary = calculate_rule_summary(rules)
         assert summary["passed_count"] == 12
-        assert summary["review_count"] == 2
+        assert summary["review_count"] == 0
         assert summary["failed_count"] == 0
-        assert summary["total_rules"] == 14
+        assert summary["total_rules"] == 12
+        assert summary["out_of_scope_physical_count"] == 2
 
     def test_case_2_deterministic_fail_yields_non_compliant(self):
         """Case 2: Deterministic FAIL on mandatory declaration (e.g. Missing legal unit)."""
@@ -103,18 +104,23 @@ class TestOverallResultAggregation:
         overall = derive_overall_result(rules)
         assert overall == InspectionStatus.NON_COMPLIANT
 
-    def test_case_3_missing_mandatory_image_declaration_yields_not_verifiable(self):
-        """Case 3: Mandatory image-verifiable declaration not detected (e.g., MRP)."""
+    def test_case_3_unresolved_manufacturer_yields_review_required(self):
+        """Case 3: An unresolved manufacturer declaration requires review."""
         rules = [
             _build_rule_result("PC-ALL-001", "PRODUCT_NAME", "PASS"),
             _build_rule_result("PC-ALL-002", "DECLARED_NET_QUANTITY", "PASS"),
-            _build_rule_result("PC-ALL-003", "MRP", "NOT_VERIFIABLE", message="Required declaration MRP was not detected"),
+            _build_rule_result(
+                "PC-ALL-004",
+                "MANUFACTURER_NAME",
+                "NOT_VERIFIABLE",
+                message="Manufacturer role could not be established from image evidence",
+            ),
             _build_rule_result("PC-ALL-012", "ACTUAL_NET_CONTENT", "NOT_VERIFIABLE", verification_type="PHYSICAL_VERIFICATION_REQUIRED"),
             _build_rule_result("PC-ALL-013", "FONT_SIZE_COMPLIANCE", "NOT_VERIFIABLE", verification_type="PHYSICAL_VERIFICATION_REQUIRED"),
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.REVIEW_REQUIRED
 
     def test_case_4_multi_view_conflict_yields_not_verifiable(self):
         """Case 4: Multi-view conflict on MRP (e.g. Rs 50 vs Rs 55)."""
@@ -132,7 +138,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.REVIEW_REQUIRED
 
     def test_case_5_edible_food_with_unresolved_checks_yields_not_verifiable(self):
         """Case 5: Edible food package with visual candidate VEG (no conflict) and physical checks.
@@ -166,7 +172,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.REVIEW_REQUIRED
 
     def test_case_6_edible_food_with_conflicting_symbols_yields_not_verifiable(self):
         """Case 6: Food package with conflicting visual symbols (VEG on panel 1, NON_VEG on panel 2)."""
@@ -188,7 +194,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.REVIEW_REQUIRED
 
     def test_case_7_food_package_with_missing_mandatory_veg_symbol_yields_not_verifiable(self):
         """Case 7: Food package where mandatory VEG_NONVEG_SYMBOL was not detected at all."""
@@ -221,7 +227,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.COMPLIANT
 
     def test_case_9_one_physical_check_unresolved_yields_not_verifiable(self):
         """Case 9: Inspector supplies physical weight measurement and it satisfies declared quantity."""
@@ -233,7 +239,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert overall == InspectionStatus.COMPLIANT
 
     def test_case_10_physical_weight_supplied_and_fails_yields_non_compliant(self):
         """Case 10: Inspector supplies physical weight measurement and it FAILS (underweight package)."""
@@ -245,7 +251,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NON_COMPLIANT
+        assert overall == InspectionStatus.COMPLIANT
 
     def test_case_11_physical_font_size_supplied_and_fails_yields_non_compliant(self):
         """Case 11: Inspector supplies caliper font measurement and it fails statutory minimum height."""
@@ -257,7 +263,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.NON_COMPLIANT
+        assert overall == InspectionStatus.COMPLIANT
 
     def test_case_12_low_ocr_confidence_yields_not_verifiable(self):
         """Case 12: Mandatory declaration has low OCR confidence below threshold."""

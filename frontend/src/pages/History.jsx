@@ -87,7 +87,7 @@ const History = () => {
             {[
               { key: 'ALL', label: 'All Inspections' },
               { key: 'COMPLIANT', label: 'Compliant' },
-              { key: 'NOT_VERIFIABLE', label: 'Not Verifiable' },
+              { key: 'REVIEW_REQUIRED', label: 'Review Required' },
               { key: 'NON_COMPLIANT', label: 'Non-Compliant' },
             ].map((tab) => (
               <button
@@ -136,7 +136,7 @@ const History = () => {
                     <th>Product Declaration</th>
                     <th>Category</th>
                     <th>Scope</th>
-                    <th>Overall Status</th>
+                    <th>Automated Label Screening</th>
                     <th>Inspection Report</th>
                     <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
@@ -169,7 +169,7 @@ const History = () => {
                         <div className="text-muted font-mono">{item.import_status || 'NOT_DETECTED'}</div>
                       </td>
                       <td>
-                        <StatusBadge status={item.overall_result} size="sm" showBinary={true} />
+                        <StatusBadge status={item.screening_result || item.overall_result} size="sm" showBinary={true} />
                       </td>
                       <td>
                         {item.report ? (

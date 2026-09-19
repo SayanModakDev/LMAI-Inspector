@@ -291,7 +291,7 @@ class TestSemanticFieldOwnership:
         assert by_id["PC-ALL-002"]["competing_evidence"] is not None
         assert by_id["PC-ALL-004"]["status"] == "PASS"
 
-        assert overall in ("REQUIRES_REVIEW", "NOT_VERIFIABLE", "NON-COMPLIANT")
+        assert overall in ("REVIEW_REQUIRED", "NON_COMPLIANT")
         summary = calculate_rule_summary(results)
         assert summary["review_count"] == 1
         assert summary["passed_count"] == 1
@@ -639,4 +639,3 @@ class TestBrandNonBrandSemanticIsolation:
         assert qty.get("unit") == "g"
         assert qty.get("derived_total_quantity") == 500
         assert fields.get("BRAND", {}).get("value") == "Parle"
-

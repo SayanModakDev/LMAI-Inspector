@@ -91,7 +91,7 @@ const Reports = () => {
                     <FileText size={18} className="text-primary" />
                     <span className="font-mono font-bold text-sm">Report #{item.id}</span>
                   </div>
-                  <StatusBadge status={item.overall_result} size="sm" showBinary={true} />
+                  <StatusBadge status={item.screening_result || item.overall_result} size="sm" showBinary={true} />
                 </div>
 
                 <div className="report-card__body">

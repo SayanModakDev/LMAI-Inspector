@@ -28,7 +28,11 @@ from reportlab.pdfgen import canvas
 from app.core.config import get_settings
 from app.core.constants import InspectionStatus, RuleStatus, normalize_rule_status, normalize_status
 from app.database import models
-from app.rules.rule_engine import build_inspection_findings, _is_physical_verification_rule
+from app.rules.rule_engine import (
+    build_inspection_findings,
+    derive_screening_result,
+    _is_physical_verification_rule,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -382,22 +386,16 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     review_count = summary_counts['review']
     na_count = summary_counts['not_applicable']
 
-    canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
-    physical_review_count = sum(
-        1
-        for result in results_list
-        if normalize_rule_status(getattr(result, "status", None)) == RuleStatus.NOT_VERIFIABLE
-        and _is_physical_verification_rule(result)
+    canonical_result = (
+        derive_screening_result(results_list)
+        if results_list
+        else normalize_status(inspection.overall_result) or InspectionStatus.REVIEW_REQUIRED
     )
-    if review_count and physical_review_count == review_count:
+    physical_review_count = sum(1 for result in results_list if _is_physical_verification_rule(result))
+    if review_count:
         summary_sentence = (
             f"{passed_count} checks passed. {failed_count} confirmed failures. "
-            f"{physical_review_count} physical checks remain unverified."
-        )
-    elif review_count:
-        summary_sentence = (
-            f"{passed_count} checks passed. {failed_count} confirmed failures. "
-            f"{review_count} applicable checks remain unverified."
+            f"{review_count} applicable image-based checks require review."
         )
     else:
         summary_sentence = f"{passed_count} checks passed. {failed_count} confirmed failures."
@@ -415,7 +413,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     )
 
     if is_recapture:
-        overall_label = "IMAGE_RECAPTURE_REQUIRED"
+        overall_label = "REVIEW REQUIRED"
         overall_bg = colors.HexColor('#FEF3C7')
         overall_border = colors.HexColor('#D97706')
         overall_color = '#92400E'
@@ -427,13 +425,13 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         overall_color = '#1B5E20'
         overall_desc = summary_sentence
     elif canonical_result == InspectionStatus.NON_COMPLIANT:
-        overall_label = "NON-COMPLIANT"
+        overall_label = "NON_COMPLIANT"
         overall_bg = colors.HexColor('#FFEBEE')
         overall_border = colors.HexColor('#C62828')
         overall_color = '#B71C1C'
         overall_desc = summary_sentence
     else:
-        overall_label = "NOT_VERIFIABLE"
+        overall_label = "REVIEW REQUIRED"
         overall_bg = colors.HexColor('#FFF8E1')
         overall_border = colors.HexColor('#F57F17')
         overall_color = '#B45309'
@@ -548,11 +546,11 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(meta_table)
     story.append(Spacer(1, 4 * mm))
 
-    # 3. Large Overall Compliance Result Banner
+    # 3. Large Automated Label Screening Result Banner
     banner_content = [
         [
             _safe_html_p(
-                f"<font size='15' color='{overall_color}'><b>OVERALL COMPLIANCE RATING: {overall_label}</b></font><br/>"
+                f"<font size='15' color='{overall_color}'><b>AUTOMATED LABEL SCREENING: {overall_label}</b></font><br/>"
                 f"<font size='8.5' color='#334155'>{overall_desc}</font>",
                 ParagraphStyle('BannerP', parent=body_style, alignment=1),
             )
@@ -570,7 +568,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(banner_table)
     story.append(Spacer(1, 4 * mm))
 
-    # 4. Summary Metrics Cards (Passed, Failed, Not Verifiable, Not Applicable)
+    # 4. Summary Metrics Cards (Passed, Failed, Review Required, Not Applicable)
     summary_cards = [
         [
             _safe_html_p(f"<font size='13' color='#1B5E20'><b>{passed_count}</b></font><br/><font size='7.5' color='#1B5E20'><b>PASSED</b></font>", ParagraphStyle('Card1', parent=body_style, alignment=1)),
@@ -614,7 +612,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     ]
     if non_physical_review:
         findings_rows.append([
-            _safe_html_p(f"<b><font color='#B45309'>Not Verifiable ({len(non_physical_review)}):</font></b>", small_bold),
+            _safe_html_p(f"<b><font color='#B45309'>Review Required ({len(non_physical_review)}):</font></b>", small_bold),
             _safe_html_p(", ".join(non_physical_review), small_style),
         ])
     if findings['physical_unverified']:
@@ -759,8 +757,11 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             binary_p = _safe_html_p("<b><font color='#1B5E20'>1</font></b>", small_bold)
         elif binary_val == 0 or r.status == "FAIL":
             binary_p = _safe_html_p("<b><font color='#B71C1C'>0</font></b>", small_bold)
+        elif _is_physical_verification_rule(r):
+            unresolved_label = "OUT OF SCOPE"
+            binary_p = _safe_html_p(f"<b><font color='#64748B'>{unresolved_label}</font></b>", small_bold)
         elif normalize_rule_status(r.status) == RuleStatus.NOT_VERIFIABLE:
-            unresolved_label = "NOT VERIFIABLE" if _is_physical_verification_rule(r) else "NOT DETECTED"
+            unresolved_label = "NOT DETECTED"
             binary_p = _safe_html_p(f"<b><font color='#B45309'>{unresolved_label}</font></b>", small_bold)
         else:
             binary_p = _safe_html_p("<b><font color='#64748B'>N/A</font></b>", small_bold)
@@ -770,8 +771,10 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
             status_p = _safe_html_p("<b><font color='#1B5E20'>PASS</font></b>", small_bold)
         elif r.status == "FAIL":
             status_p = _safe_html_p("<b><font color='#B71C1C'>FAIL</font></b>", small_bold)
+        elif _is_physical_verification_rule(r):
+            status_p = _safe_html_p("<b><font color='#64748B'>OUT OF SCOPE - PHYSICAL</font></b>", small_bold)
         elif normalize_rule_status(r.status) == RuleStatus.NOT_VERIFIABLE:
-            unresolved_label = "NOT VERIFIABLE" if _is_physical_verification_rule(r) else "NOT DETECTED"
+            unresolved_label = "NOT DETECTED"
             status_p = _safe_html_p(f"<b><font color='#B45309'>{unresolved_label}</font></b>", small_bold)
         else:
             status_p = _safe_html_p("<b><font color='#64748B'>NOT_APPLICABLE</font></b>", small_bold)
@@ -988,6 +991,25 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     story.append(limitations_box)
     story.append(Spacer(1, 3 * mm))
 
+    physical_limitations_text = (
+        "<b>Out-of-Scope Physical Verification:</b> "
+        f"{physical_review_count} physical rule(s) were excluded from the automated label-screening result. "
+        "PC-ALL-012 (actual net content) requires a calibrated quantity measurement; "
+        "PC-ALL-013 (font-size compliance) requires calibrated physical size measurement. "
+        "These requirements remain legally defined and are not classified as NOT_APPLICABLE."
+    )
+    physical_limitations_box = Table(
+        [[_safe_html_p(physical_limitations_text, small_style)]],
+        colWidths=[273 * mm],
+    )
+    physical_limitations_box.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(physical_limitations_box)
+    story.append(Spacer(1, 3 * mm))
+
     # Automatic result summary.
     review_summary_text = ""
 
@@ -1001,9 +1023,9 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
                 small_style,
             ),
             _safe_html_p(
-                f"<b>Overall result:</b> {canonical_result}<br/>"
+                f"<b>Automated Label Screening:</b> {'REVIEW REQUIRED' if canonical_result == InspectionStatus.REVIEW_REQUIRED else canonical_result}<br/>"
                 f"<b>Summary:</b> {summary_sentence}<br/>"
-                "The result was generated automatically from the submitted package images.",
+                "The result was generated automatically from the submitted package images and does not verify physical statutory requirements.",
                 small_style,
             ),
         ]
