@@ -16,6 +16,7 @@ from app.llm.schemas import (
     ResolvedDeclaration,
     SourceEvidence,
 )
+from app.core.ontology import extract_contextual_emails
 
 logger = logging.getLogger(__name__)
 
@@ -617,6 +618,15 @@ class EvidenceGroundingValidator:
         all_grounded_text = (combined_grounded_raw + " " + " ".join(referenced_token_texts)).strip()
 
         test_value = decl_copy.normalized_value or decl_copy.value or ""
+
+        if decl_copy.field == "CONSUMER_CARE" and "@" in test_value:
+            claimed_emails = {item["value"].lower() for item in extract_contextual_emails(test_value)}
+            supported_emails = {item["value"].lower() for item in extract_contextual_emails(all_grounded_text)}
+            if claimed_emails and not claimed_emails.issubset(supported_emails):
+                decl_copy.status = "NOT_FOUND"
+                decl_copy.confidence = 0.0
+                decl_copy.resolution_note = "Email normalization is not supported by the referenced OCR label context."
+                return False, [decl_copy.resolution_note], decl_copy
 
         is_grounded, grounding_reason, score = evaluate_grounding_match(
             decl_copy.field,

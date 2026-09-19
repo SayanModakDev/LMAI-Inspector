@@ -13,7 +13,11 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from app.core.ontology import (
     QuantityType,
+    STRICT_EMAIL_RE,
+    assess_address_structure,
+    extract_contextual_emails,
     extract_quantity_value_unit,
+    normalize_contextual_email,
     normalize_unit,
 )
 from app.extraction.cleaner import is_artifact_token
@@ -994,7 +998,9 @@ def validate_address_present(
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
 
-    # Address should contain sufficient descriptive information
+    # Obvious fragments can still be deterministically invalid.  Longer partial
+    # OCR, however, is uncertainty rather than proof that the printed package is
+    # legally incomplete.
     alphanumeric_count = len(re.sub(r'[^A-Za-z0-9]', '', raw_val))
     if alphanumeric_count < 5:
         return ValidationResult(
@@ -1003,6 +1009,47 @@ def validate_address_present(
             reason=f"Address declaration is incomplete or too short: '{raw_val}'.",
             normalized_value=raw_val,
             evidence=evidence,
+        )
+
+    role = str(evidence.get("role") or evidence.get("entity_type") or "MANUFACTURER").upper()  # type: ignore[union-attr]
+    if rule.get("parameter") == "MANUFACTURER_ADDRESS" and role in ("MARKETER", "UNASSOCIATED"):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "An address was detected, but it is not grounded as the manufacturer or packer "
+                "address required by this declaration."
+            ),
+            normalized_value=raw_val,
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+        )
+
+    structure = assess_address_structure(raw_val)
+    if not structure["sufficient"]:
+        printed_complete = bool(
+            evidence.get("printed_declaration_complete") is True  # type: ignore[union-attr]
+            or evidence.get("ocr_coverage_complete") is True  # type: ignore[union-attr]
+        )
+        status = "FAIL" if printed_complete else "NOT_VERIFIABLE"
+        return ValidationResult(
+            status=status,
+            binary=0,
+            reason=(
+                f"Detected address evidence is structurally incomplete: '{raw_val}'. "
+                + (
+                    "Complete image coverage confirms the printed declaration lacks sufficient postal-address components."
+                    if printed_complete
+                    else "The available OCR may be partial, so package non-compliance cannot be concluded."
+                )
+            ),
+            normalized_value=raw_val,
+            evidence=evidence,
+            evidence_state=(
+                EvidenceAvailabilityState.EVIDENCE_VERIFIED.value
+                if printed_complete
+                else EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+            ),
         )
 
     return ValidationResult(
@@ -1240,17 +1287,53 @@ def validate_consumer_care_present(
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
     channels_detected: List[str] = []
+    normalized_channels: List[str] = []
+    raw_context = str(evidence.get("raw_text") or evidence.get("raw_value") or raw_val)  # type: ignore[union-attr]
+
+    if str(evidence.get("source") or "").upper() == "OCR_GEMINI_RESOLVED" and not evidence.get("source_evidence"):  # type: ignore[union-attr]
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason="Consumer-care value from the semantic resolver has no OCR source evidence.",
+            normalized_value=raw_val,
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+        )
+
+    structured_contacts = evidence.get("contacts") if isinstance(evidence, dict) else None
+    contact_values = structured_contacts if isinstance(structured_contacts, list) else []
 
     # 1. Phone or Toll-free number
-    if re.search(r'\b1800[\s\-]?\d{3}[\s\-]?\d{3,4}\b', raw_val):
+    phone_source = " ".join(
+        str(contact.get("contact_value") or "")
+        for contact in contact_values
+        if isinstance(contact, dict) and str(contact.get("contact_type") or "").upper() in ("PHONE", "TOLL_FREE")
+    ) or raw_val
+    toll_free_match = re.search(r'\b1800[\s\-]?\d{3}[\s\-]?\d{3,4}\b', phone_source)
+    phone_match = re.search(r'\b(?:\+91[\s-]?)?[6-9]\d{9}\b|\b\d{3,5}[\s-]\d{6,8}\b', phone_source)
+    if toll_free_match:
         channels_detected.append("toll-free phone")
-    elif re.search(r'\b(?:\+91[\s-]?)?[6-9]\d{9}\b|\b\d{3,5}[\s-]\d{6,8}\b', raw_val):
+        normalized_channels.append(toll_free_match.group(0))
+    elif phone_match:
         channels_detected.append("telephone")
+        normalized_channels.append(phone_match.group(0))
 
     # 2. Email address
-    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', raw_val)
-    if email_match:
-        channels_detected.append(f"email ({email_match.group(0)})")
+    normalized_emails: List[str] = []
+    if contact_values:
+        for contact in contact_values:
+            if not isinstance(contact, dict) or str(contact.get("contact_type") or "").upper() != "EMAIL":
+                continue
+            contact_value = str(contact.get("contact_value") or "")
+            normalized = normalize_contextual_email(contact_value, raw_context)
+            if normalized and STRICT_EMAIL_RE.fullmatch(normalized):
+                normalized_emails.append(normalized)
+    else:
+        normalized_emails = [item["value"] for item in extract_contextual_emails(raw_context)]
+    if normalized_emails:
+        email_value = normalized_emails[0]
+        channels_detected.append(f"email ({email_value})")
+        normalized_channels.append(email_value)
 
     # 3. Postal or customer care address with pincode / P.O. Box / helpline keyword
     if re.search(r'\b(?:p\.?o\.?\s*box|care@|helpline|toll\s*free|customer\s*care)\b', raw_val, re.I):
@@ -1274,7 +1357,7 @@ def validate_consumer_care_present(
         status="PASS",
         binary=1,
         reason=f"Detected consumer care contact details ({', '.join(channels_detected)}): {raw_val}",
-        normalized_value=raw_val,
+        normalized_value=", ".join(normalized_channels) or raw_val,
         evidence=evidence,
     )
 

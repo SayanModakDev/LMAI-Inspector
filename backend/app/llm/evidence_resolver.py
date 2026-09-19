@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
+from app.core.ontology import assess_address_structure, extract_contextual_emails
 from app.extraction.declaration_extractor import (
     is_valid_date_candidate,
     DATE_FIELDS,
@@ -230,6 +231,31 @@ def resolve_evidence_with_gemini(
         det_candidate = deterministic_fields.get(field_name)
 
         if decl.status == "RESOLVED" and decl.value:
+            source_context = "\n".join(ev.raw_text for ev in decl.source_evidence if ev.raw_text)
+
+            # Semantic association cannot turn a marketer/customer-care address
+            # into a manufacturer address merely because the text is grounded.
+            address_role_conflict = False
+            if field_name == "MANUFACTURER_ADDRESS":
+                lowered_context = source_context.lower()
+                det_role = str((det_candidate or {}).get("role") or (det_candidate or {}).get("entity_type") or "").upper()
+                address_role_conflict = bool(
+                    det_role == "MARKETER"
+                    or (
+                        any(marker in lowered_context for marker in ("marketed by", "marketer", "consumer care", "customer care"))
+                        and not any(marker in lowered_context for marker in ("manufactured by", "manufacturer", "packed by", "packer"))
+                    )
+                )
+                llm_structure = assess_address_structure(decl.value)
+                det_structure = assess_address_structure(str(det_candidate.get("value") or "")) if det_candidate else {"sufficient": False}
+                if (not llm_structure["sufficient"] or address_role_conflict) and det_structure["sufficient"] and det_role in ("MANUFACTURER", "PACKER"):
+                    retained = dict(det_candidate)
+                    retained["review_notes"] = (
+                        "Retained fuller role-associated deterministic address; semantic candidate was partial or role-conflicting."
+                    )
+                    merged_fields[field_name] = retained
+                    continue
+
             # Enforce date eligibility for statutory date fields
             if field_name in DATE_FIELDS:
                 val_ok = is_valid_date_candidate(decl.value) or is_valid_date_candidate(decl.normalized_value)
@@ -251,9 +277,27 @@ def resolve_evidence_with_gemini(
             unified_bbox = decl.source_evidence[0].bbox if decl.source_evidence else None
             ocr_conf = decl.source_evidence[0].ocr_confidence if decl.source_evidence else 0.9
 
+            resolved_value = decl.value
+            normalized_value = decl.normalized_value or decl.value
+            normalized_contacts: List[Dict[str, str]] = []
+            if field_name == "CONSUMER_CARE":
+                email_context = "\n".join(part for part in (source_context, decl.value) if part)
+                for email in extract_contextual_emails(email_context):
+                    if email["raw_value"] in resolved_value:
+                        resolved_value = resolved_value.replace(email["raw_value"], email["value"])
+                    if email["raw_value"] in normalized_value:
+                        normalized_value = normalized_value.replace(email["raw_value"], email["value"])
+                    normalized_contacts.append({
+                        "contact_type": "EMAIL",
+                        "contact_value": email["value"],
+                        "raw_contact_value": email["raw_value"],
+                    })
+
             merged_field = {
-                "value": decl.value,
-                "normalized_value": decl.normalized_value or decl.value,
+                "value": resolved_value,
+                "raw_value": decl.value,
+                "raw_text": source_context or decl.value,
+                "normalized_value": normalized_value,
                 "confidence": round(decl.confidence, 3),
                 "source": "OCR_GEMINI_RESOLVED",
                 "extraction_method": "GEMINI_SEMANTIC_RESOLVER",
@@ -270,6 +314,25 @@ def resolve_evidence_with_gemini(
                     else []
                 ),
             }
+
+            if normalized_contacts:
+                merged_field["contacts"] = normalized_contacts
+                merged_field["contact_type"] = normalized_contacts[0]["contact_type"]
+                merged_field["contact_value"] = normalized_contacts[0]["contact_value"]
+
+            if field_name == "MANUFACTURER_ADDRESS":
+                structure = assess_address_structure(resolved_value)
+                merged_field["address_structure"] = structure
+                merged_field["address_completeness"] = structure["completeness"]
+                if not structure["sufficient"] or address_role_conflict:
+                    merged_field["status"] = "PARTIAL"
+                    merged_field["evidence_state"] = "EVIDENCE_DETECTED_UNASSOCIATED"
+                    merged_field["role"] = "UNASSOCIATED" if address_role_conflict else "MANUFACTURER"
+                    merged_field["review_notes"] = (
+                        "Grounded address text belongs to a different entity role."
+                        if address_role_conflict
+                        else "Grounded OCR contains only partial manufacturer-address evidence."
+                    )
 
             # Special preservation of unit/quantity attributes for DECLARED_NET_QUANTITY
             if field_name == "DECLARED_NET_QUANTITY":
