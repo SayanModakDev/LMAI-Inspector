@@ -55,3 +55,8 @@ backend/ocr_variants/*
 
 # Local npm CLI/cache
 frontend/.npm-cli/
+
+# Benchmark local images & output
+benchmark_data/packages/*
+!benchmark_data/packages/.gitkeep
+benchmark_output/

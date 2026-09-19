@@ -1,0 +1,371 @@
+{
+  "version": "1.0.0",
+  "dataset_name": "LMAI Inspector Reference Benchmark Suite",
+  "description": "Fictional packaged commodity benchmark cases spanning retail food, cosmetics, wholesale packages, and statutory violations.",
+  "cases": [
+    {
+      "case_id": "PKG001",
+      "product_name": "NutriOats Digestive Cookies",
+      "description": "Clean retail food packaging with full statutory declarations and vegetarian symbol",
+      "images": [
+        "packages/PKG001/front.jpg",
+        "packages/PKG001/back.jpg"
+      ],
+      "expected_context": {
+        "category": "FOOD",
+        "product_type": "BISCUIT",
+        "package_type": "RETAIL",
+        "import_status": "DOMESTIC"
+      },
+      "expected_declarations": {
+        "PRODUCT_NAME": {
+          "value": "NutriOats Digestive Cookies",
+          "required": true
+        },
+        "GENERIC_NAME": {
+          "value": "Biscuits",
+          "required": true
+        },
+        "DECLARED_NET_QUANTITY": {
+          "value": "250 g",
+          "required": true,
+          "normalized_value": "250 g"
+        },
+        "MRP": {
+          "value": "₹45.00",
+          "required": true,
+          "normalized_value": "45.00"
+        },
+        "MANUFACTURER_NAME": {
+          "value": "NutriBake Foods India Pvt Ltd",
+          "required": true
+        },
+        "MANUFACTURER_ADDRESS": {
+          "value": "Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018",
+          "required": true
+        },
+        "CONSUMER_CARE": {
+          "value": "Email: care@nutribake.in, Ph: 1800-222-1111",
+          "required": true
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "value": "04/2024",
+          "required": true,
+          "normalized_value": "04/2024"
+        },
+        "BATCH_NUMBER": {
+          "value": "NB-402",
+          "required": true
+        },
+        "BEST_BEFORE_USE_BY": {
+          "value": "6 months from manufacture",
+          "required": true
+        },
+        "FSSAI_LICENSE": {
+          "value": "10014011005544",
+          "required": true
+        },
+        "VEG_NONVEG_SYMBOL": {
+          "value": "VEGETARIAN",
+          "required": true
+        }
+      },
+      "expected_rules": {
+        "PC-ALL-001": "PASS",
+        "PC-ALL-002": "PASS",
+        "PC-ALL-003": "PASS",
+        "PC-ALL-004": "PASS",
+        "PC-ALL-005": "PASS",
+        "PC-ALL-006": "PASS",
+        "PC-ALL-012": "NOT_VERIFIABLE"
+      },
+      "expected_overall_result": "COMPLIANT",
+      "notes": [
+        "All declarations clearly legible",
+        "Physical weight check (PC-ALL-012) is image unverified but non-blocking"
+      ],
+      "tags": [
+        "clean",
+        "food",
+        "retail",
+        "domestic",
+        "biscuit",
+        "compliant"
+      ],
+      "mock_ocr_result": {
+        "image_count": 2,
+        "raw_text": "NutriOats Digestive Cookies\nGeneric Name: Biscuits\nNet Qty: 250 g\nMRP: Rs. 45.00 (Incl. of all taxes)\nFor Retail Sale\nManufactured by: NutriBake Foods India Pvt Ltd\nAt: Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018\nCustomer Care: care@nutribake.in, Ph: 1800-222-1111\nDate of Mfg: 04/2024\nBatch No: NB-402\nBest Before: 6 months from manufacture\nFSSAI Lic. No. 10014011005544\n100% Vegetarian Made in India",
+        "ocr_items": [
+          {"token_id": 0, "text": "NutriOats", "confidence": 0.98, "bbox": [50, 40, 200, 70], "image_index": 0},
+          {"token_id": 1, "text": "Digestive Cookies", "confidence": 0.98, "bbox": [50, 75, 280, 105], "image_index": 0},
+          {"token_id": 2, "text": "Generic Name: Biscuits", "confidence": 0.96, "bbox": [50, 120, 240, 140], "image_index": 0},
+          {"token_id": 3, "text": "Net Qty: 250 g", "confidence": 0.97, "bbox": [50, 160, 200, 185], "image_index": 0},
+          {"token_id": 4, "text": "MRP: Rs. 45.00 (Incl. of all taxes)", "confidence": 0.96, "bbox": [50, 200, 320, 225], "image_index": 0},
+          {"token_id": 5, "text": "For Retail Sale", "confidence": 0.95, "bbox": [50, 240, 180, 260], "image_index": 0},
+          {"token_id": 6, "text": "Manufactured by: NutriBake Foods India Pvt Ltd", "confidence": 0.96, "bbox": [50, 30, 400, 55], "image_index": 1},
+          {"token_id": 7, "text": "At: Plot 42, Industrial Area, Sector 5, Pune, Maharashtra 411018", "confidence": 0.95, "bbox": [50, 60, 450, 85], "image_index": 1},
+          {"token_id": 8, "text": "Customer Care: care@nutribake.in, Ph: 1800-222-1111", "confidence": 0.94, "bbox": [50, 95, 380, 120], "image_index": 1},
+          {"token_id": 9, "text": "Date of Mfg: 04/2024", "confidence": 0.97, "bbox": [50, 130, 220, 150], "image_index": 1},
+          {"token_id": 10, "text": "Batch No: NB-402", "confidence": 0.95, "bbox": [50, 160, 190, 180], "image_index": 1},
+          {"token_id": 11, "text": "Best Before: 6 months from manufacture", "confidence": 0.95, "bbox": [50, 190, 320, 210], "image_index": 1},
+          {"token_id": 12, "text": "FSSAI Lic. No. 10014011005544", "confidence": 0.97, "bbox": [50, 220, 280, 240], "image_index": 1},
+          {"token_id": 13, "text": "100% Vegetarian Made in India", "confidence": 0.96, "bbox": [50, 250, 260, 270], "image_index": 1}
+        ]
+      }
+    },
+    {
+      "case_id": "PKG002",
+      "product_name": "AuraGlow Herbal Face Wash",
+      "description": "Clean retail cosmetic squeeze tube with cosmetic-specific declarations",
+      "images": [
+        "packages/PKG002/front.jpg",
+        "packages/PKG002/back.jpg"
+      ],
+      "expected_context": {
+        "category": "COSMETIC",
+        "product_type": "FACE_CREAM",
+        "package_type": "RETAIL",
+        "import_status": "DOMESTIC"
+      },
+      "expected_declarations": {
+        "PRODUCT_NAME": {
+          "value": "AuraGlow Herbal Face Wash",
+          "required": true
+        },
+        "GENERIC_NAME": {
+          "value": "Face Wash",
+          "required": true
+        },
+        "DECLARED_NET_QUANTITY": {
+          "value": "150 ml",
+          "required": true,
+          "normalized_value": "150 ml"
+        },
+        "MRP": {
+          "value": "₹199.00",
+          "required": true,
+          "normalized_value": "199.00"
+        },
+        "MANUFACTURER_NAME": {
+          "value": "Aura Wellness Cosmetics Pvt Ltd",
+          "required": true
+        },
+        "MANUFACTURER_ADDRESS": {
+          "value": "Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403",
+          "required": true
+        },
+        "CONSUMER_CARE": {
+          "value": "feedback@auraglow.in",
+          "required": true
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "value": "02/2024",
+          "required": true,
+          "normalized_value": "02/2024"
+        },
+        "BATCH_NUMBER": {
+          "value": "AG-881",
+          "required": true
+        },
+        "EXPIRY_DATE": {
+          "value": "01/2026",
+          "required": true,
+          "normalized_value": "01/2026"
+        }
+      },
+      "expected_rules": {
+        "PC-ALL-001": "PASS",
+        "PC-ALL-002": "PASS",
+        "PC-ALL-003": "PASS",
+        "PC-ALL-004": "PASS",
+        "PC-ALL-005": "PASS",
+        "PC-FOOD-001": "NOT_APPLICABLE"
+      },
+      "expected_overall_result": "COMPLIANT",
+      "notes": [
+        "Cosmetic item: FSSAI and food veg-symbol rules must remain NOT_APPLICABLE"
+      ],
+      "tags": [
+        "clean",
+        "cosmetic",
+        "retail",
+        "domestic",
+        "compliant"
+      ],
+      "mock_ocr_result": {
+        "image_count": 2,
+        "raw_text": "AuraGlow Herbal Face Wash\nCosmetic For external use only\nGeneric Name: Face Wash\nNet Volume: 150 ml\nMaximum Retail Price: ₹ 199.00\nFor Retail Sale Made in India\nMfd by: Aura Wellness Cosmetics Pvt Ltd\nAt: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403\nConsumer Helpline: feedback@auraglow.in\nMfg Date: 02/2024\nExp Date: 01/2026\nBatch: AG-881",
+        "ocr_items": [
+          {"token_id": 0, "text": "AuraGlow Herbal Face Wash", "confidence": 0.97, "bbox": [40, 30, 300, 60], "image_index": 0},
+          {"token_id": 1, "text": "Cosmetic For external use only", "confidence": 0.95, "bbox": [40, 65, 260, 85], "image_index": 0},
+          {"token_id": 2, "text": "Generic Name: Face Wash", "confidence": 0.95, "bbox": [40, 95, 230, 115], "image_index": 0},
+          {"token_id": 3, "text": "Net Volume: 150 ml", "confidence": 0.98, "bbox": [40, 130, 200, 150], "image_index": 0},
+          {"token_id": 4, "text": "Maximum Retail Price: ₹ 199.00", "confidence": 0.96, "bbox": [40, 160, 280, 185], "image_index": 0},
+          {"token_id": 5, "text": "For Retail Sale Made in India", "confidence": 0.95, "bbox": [40, 195, 220, 215], "image_index": 0},
+          {"token_id": 6, "text": "Mfd by: Aura Wellness Cosmetics Pvt Ltd", "confidence": 0.96, "bbox": [40, 30, 340, 50], "image_index": 1},
+          {"token_id": 7, "text": "At: Survey 18, Haridwar Industrial Estate, Haridwar, Uttarakhand 249403", "confidence": 0.95, "bbox": [40, 60, 480, 80], "image_index": 1},
+          {"token_id": 8, "text": "Consumer Helpline: feedback@auraglow.in", "confidence": 0.93, "bbox": [40, 90, 320, 110], "image_index": 1},
+          {"token_id": 9, "text": "Mfg Date: 02/2024", "confidence": 0.97, "bbox": [40, 120, 180, 140], "image_index": 1},
+          {"token_id": 10, "text": "Exp Date: 01/2026", "confidence": 0.96, "bbox": [40, 150, 180, 170], "image_index": 1},
+          {"token_id": 11, "text": "Batch: AG-881", "confidence": 0.96, "bbox": [40, 180, 150, 200], "image_index": 1}
+        ]
+      }
+    },
+    {
+      "case_id": "PKG003",
+      "product_name": "Himalayan Pink Rock Salt",
+      "description": "Retail food package with missing net quantity metric unit",
+      "images": [
+        "packages/PKG003/front.jpg"
+      ],
+      "expected_context": {
+        "category": "FOOD",
+        "product_type": "SALT",
+        "package_type": "RETAIL",
+        "import_status": "DOMESTIC"
+      },
+      "expected_declarations": {
+        "PRODUCT_NAME": {
+          "value": "Himalayan Pink Rock Salt",
+          "required": true
+        },
+        "GENERIC_NAME": {
+          "value": "Edible Salt",
+          "required": true
+        },
+        "DECLARED_NET_QUANTITY": {
+          "value": "1000",
+          "required": true,
+          "normalized_value": "1000"
+        },
+        "MRP": {
+          "value": "₹120.00",
+          "required": true,
+          "normalized_value": "120.00"
+        },
+        "MANUFACTURER_NAME": {
+          "value": "Pure Mineral Salt Works",
+          "required": true
+        },
+        "MANUFACTURER_ADDRESS": {
+          "value": "Plot 5, Ambala Road, Chandigarh 160002",
+          "required": true
+        },
+        "FSSAI_LICENSE": {
+          "value": "10018022001122",
+          "required": true
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "value": "03/2024",
+          "required": true,
+          "normalized_value": "03/2024"
+        }
+      },
+      "expected_rules": {
+        "PC-ALL-001": "PASS",
+        "PC-ALL-002": "FAIL",
+        "PC-ALL-003": "PASS"
+      },
+      "expected_overall_result": "NON_COMPLIANT",
+      "notes": [
+        "Quantity declared as lone number 1000 without unit (g or kg). Violates Rule 13(6)."
+      ],
+      "tags": [
+        "food",
+        "retail",
+        "domestic",
+        "non_compliant",
+        "missing_unit",
+        "salt"
+      ],
+      "mock_ocr_result": {
+        "image_count": 1,
+        "raw_text": "Himalayan Pink Rock Salt\nGeneric Name: Edible Salt\nNet Weight: 1000\nMRP Rs. 120.00 (inclusive of all taxes)\nFor Retail Sale Made in India\nMfg by: Pure Mineral Salt Works\nPlot 5, Ambala Road, Chandigarh 160002\nFSSAI Lic. 10018022001122\nMfd: 03/2024",
+        "ocr_items": [
+          {"token_id": 0, "text": "Himalayan Pink Rock Salt", "confidence": 0.97, "bbox": [30, 20, 280, 50], "image_index": 0},
+          {"token_id": 1, "text": "Generic Name: Edible Salt", "confidence": 0.95, "bbox": [30, 55, 220, 75], "image_index": 0},
+          {"token_id": 2, "text": "Net Weight: 1000", "confidence": 0.98, "bbox": [30, 85, 170, 105], "image_index": 0},
+          {"token_id": 3, "text": "MRP Rs. 120.00 (inclusive of all taxes)", "confidence": 0.96, "bbox": [30, 115, 310, 135], "image_index": 0},
+          {"token_id": 4, "text": "For Retail Sale Made in India", "confidence": 0.96, "bbox": [30, 145, 240, 165], "image_index": 0},
+          {"token_id": 5, "text": "Mfg by: Pure Mineral Salt Works", "confidence": 0.95, "bbox": [30, 175, 260, 195], "image_index": 0},
+          {"token_id": 6, "text": "Plot 5, Ambala Road, Chandigarh 160002", "confidence": 0.95, "bbox": [30, 205, 340, 225], "image_index": 0},
+          {"token_id": 7, "text": "FSSAI Lic. 10018022001122", "confidence": 0.98, "bbox": [30, 235, 230, 255], "image_index": 0},
+          {"token_id": 8, "text": "Mfd: 03/2024", "confidence": 0.96, "bbox": [30, 265, 150, 285], "image_index": 0}
+        ]
+      }
+    },
+    {
+      "case_id": "PKG004",
+      "product_name": "Crystal Sugar Grade M Bulk Sack",
+      "description": "Wholesale packaging with institutional commercial marking",
+      "images": [
+        "packages/PKG004/sack.jpg"
+      ],
+      "expected_context": {
+        "category": "FOOD",
+        "product_type": "SUGAR",
+        "package_type": "WHOLESALE",
+        "import_status": "DOMESTIC"
+      },
+      "expected_declarations": {
+        "PRODUCT_NAME": {
+          "value": "Crystal Sugar Grade M",
+          "required": true
+        },
+        "GENERIC_NAME": {
+          "value": "Refined Sugar",
+          "required": true
+        },
+        "DECLARED_NET_QUANTITY": {
+          "value": "50 kg",
+          "required": true,
+          "normalized_value": "50 kg"
+        },
+        "MANUFACTURER_NAME": {
+          "value": "Deccan Agro Sugar Mills Ltd",
+          "required": true
+        },
+        "MANUFACTURER_ADDRESS": {
+          "value": "Factory Road, Kolhapur, Maharashtra 416001",
+          "required": true
+        },
+        "MONTH_YEAR_MANUFACTURE": {
+          "value": "05/2024",
+          "required": true,
+          "normalized_value": "05/2024"
+        }
+      },
+      "expected_rules": {
+        "PC-ALL-001": "PASS",
+        "PC-ALL-002": "PASS",
+        "PC-ALL-003": "NOT_APPLICABLE"
+      },
+      "expected_overall_result": "COMPLIANT",
+      "notes": [
+        "Wholesale bulk package: exempt from retail MRP (PC-ALL-003) under Rule 24"
+      ],
+      "tags": [
+        "wholesale",
+        "food",
+        "domestic",
+        "large_pack",
+        "compliant",
+        "sugar"
+      ],
+      "mock_ocr_result": {
+        "image_count": 1,
+        "raw_text": "Crystal Sugar Grade M\nGeneric Name: Refined Sugar\nNot for Retail Sale - Bulk Pack Only Commercial Wholesale Pack\nNet Quantity: 50 kg\nManufactured by: Deccan Agro Sugar Mills Ltd\nFactory Road, Kolhapur, Maharashtra 416001\nDate of Mfg: 05/2024\nFSSAI Lic. 10015021008899 Made in India",
+        "ocr_items": [
+          {"token_id": 0, "text": "Crystal Sugar Grade M", "confidence": 0.98, "bbox": [50, 50, 300, 80], "image_index": 0},
+          {"token_id": 1, "text": "Generic Name: Refined Sugar", "confidence": 0.96, "bbox": [50, 90, 260, 110], "image_index": 0},
+          {"token_id": 2, "text": "Not for Retail Sale - Bulk Pack Only Commercial Wholesale Pack", "confidence": 0.95, "bbox": [50, 120, 480, 145], "image_index": 0},
+          {"token_id": 3, "text": "Net Quantity: 50 kg", "confidence": 0.98, "bbox": [50, 155, 220, 180], "image_index": 0},
+          {"token_id": 4, "text": "Manufactured by: Deccan Agro Sugar Mills Ltd", "confidence": 0.96, "bbox": [50, 190, 380, 215], "image_index": 0},
+          {"token_id": 5, "text": "Factory Road, Kolhapur, Maharashtra 416001", "confidence": 0.95, "bbox": [50, 225, 420, 245], "image_index": 0},
+          {"token_id": 6, "text": "Date of Mfg: 05/2024", "confidence": 0.97, "bbox": [50, 255, 220, 275], "image_index": 0},
+          {"token_id": 7, "text": "FSSAI Lic. 10015021008899 Made in India", "confidence": 0.97, "bbox": [50, 285, 340, 305], "image_index": 0}
+        ]
+      }
+    }
+  ]
+}
