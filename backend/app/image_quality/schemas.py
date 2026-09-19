@@ -57,6 +57,10 @@ class ImageQualityMetric(BaseModel):
     width: int = Field(..., description="Original image width in pixels")
     height: int = Field(..., description="Original image height in pixels")
     total_pixels: int = Field(..., description="Total pixel count (width * height)")
+    aspect_ratio: float = Field(default=1.0, description="Aspect ratio (max_dim / min_dim)")
+    text_stroke_contrast: float = Field(default=0.0, description="Local contrast of detected text stroke edges")
+    text_stroke_count: int = Field(default=0, description="Count of detected text stroke transition pixels")
+    intensity_range: float = Field(default=0.0, description="Peak-to-peak intensity dynamic range")
 
 
 class ImageQualityResult(BaseModel):
@@ -66,6 +70,7 @@ class ImageQualityResult(BaseModel):
     quality_score: float = Field(default=1.0, ge=0.0, le=1.0, description="Composite heuristic score [0.0 - 1.0]")
     issues: List[ImageQualityIssue] = Field(default_factory=list)
     metrics: Optional[ImageQualityMetric] = None
+    rejection_reasons: List[str] = Field(default_factory=list, description="Explicit reasons if rejected")
     processing_time_ms: int = 0
 
 

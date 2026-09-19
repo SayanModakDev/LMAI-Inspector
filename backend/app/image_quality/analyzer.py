@@ -23,6 +23,7 @@ from .metrics import (
     calculate_exposure_stats,
     calculate_contrast,
     calculate_glare_ratio,
+    calculate_text_region_metrics,
     check_possible_cropping,
 )
 from .policy import QualityPolicyConfig, evaluate_image_quality
@@ -58,6 +59,10 @@ def analyze_image_quality(
         # 5. Cropping risk heuristic
         possible_crop = check_possible_cropping(gray_array)
 
+        # 6. Text-Region Readability & Packaging Geometry metrics
+        text_stroke_contrast, text_stroke_count, intensity_range = calculate_text_region_metrics(gray_array)
+        aspect_ratio = round(max(orig_w, orig_h) / max(1, min(orig_w, orig_h)), 2)
+
         metrics = ImageQualityMetric(
             blur_score=blur_score,
             brightness_mean=brightness_mean,
@@ -68,6 +73,10 @@ def analyze_image_quality(
             width=orig_w,
             height=orig_h,
             total_pixels=orig_w * orig_h,
+            aspect_ratio=aspect_ratio,
+            text_stroke_contrast=text_stroke_contrast,
+            text_stroke_count=text_stroke_count,
+            intensity_range=intensity_range,
         )
 
         res = evaluate_image_quality(
@@ -79,16 +88,18 @@ def analyze_image_quality(
         res.processing_time_ms = round((time.perf_counter() - started_at) * 1000)
 
         issue_codes = [iss.code.value for iss in res.issues]
+        primary_reason = (
+            "; ".join(res.rejection_reasons)
+            if res.rejection_reasons
+            else ("; ".join(iss.message for iss in res.issues) if res.issues else "OK")
+        )
         logger.info(
-            "Image %d quality=%s issues=%s quality_score=%.2f blur=%.1f dark_ratio=%.2f glare_ratio=%.2f time_ms=%d",
+            "Image %d: status=%s blur_score=%.1f issues=%s reason=%s",
             image_index,
             res.status.value,
-            issue_codes,
-            res.quality_score,
             blur_score,
-            dark_ratio,
-            glare_ratio,
-            res.processing_time_ms,
+            issue_codes,
+            primary_reason,
         )
         return res
 
@@ -106,6 +117,7 @@ def analyze_image_quality(
                     message=f"Image file cannot be decoded or analyzed: {str(exc)}",
                 )
             ],
+            rejection_reasons=[f"Image file cannot be decoded or analyzed: {str(exc)}"],
             metrics=ImageQualityMetric(
                 blur_score=0.0,
                 brightness_mean=0.0,
@@ -116,6 +128,10 @@ def analyze_image_quality(
                 width=0,
                 height=0,
                 total_pixels=0,
+                aspect_ratio=1.0,
+                text_stroke_contrast=0.0,
+                text_stroke_count=0,
+                intensity_range=0.0,
             ),
             processing_time_ms=elapsed_ms,
         )
