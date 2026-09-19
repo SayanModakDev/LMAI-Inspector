@@ -33,8 +33,8 @@ def normalize_status(status: Optional[str]) -> Optional[str]:
     """
     if not status:
         return None
-    cleaned = status.strip().upper().replace("-", "_")
-    if cleaned in ("NEEDS_REVIEW", "NOT_VERIFIABLE", "REVIEW"):
+    cleaned = status.strip().upper().replace("-", "_").replace(" ", "_")
+    if cleaned in ("NEEDS_REVIEW", "NOT_VERIFIABLE", "REVIEW", "NOT_DETECTED", "MANUAL_CHECK"):
         return InspectionStatus.NOT_VERIFIABLE
     if cleaned in ("NON_COMPLIANT", "NONCOMPLIANT"):
         return InspectionStatus.NON_COMPLIANT

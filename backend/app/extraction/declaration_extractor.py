@@ -919,6 +919,72 @@ def parse_date_with_precision(date_str: str) -> Tuple[bool, Optional[str], Optio
     return False, None, None
 
 
+# ---------------------------------------------------------------------------
+# General date-candidate validation and statutory eligibility
+# ---------------------------------------------------------------------------
+DATE_INVALID_PATTERNS = [
+    # Age restrictions or age context
+    re.compile(r'\b(?:years?|yrs?|months?)\s+(?:of\s+)?age\b', re.IGNORECASE),
+    re.compile(r'\b(?:for\s+)?children\b', re.IGNORECASE),
+    re.compile(r'\b(?:above|below|under|over)\s+\d+\s*(?:years?|yrs?|months?)\b', re.IGNORECASE),
+    re.compile(r'\b\d+\s*(?:years?|yrs?)\s+(?:old|above|below)\b', re.IGNORECASE),
+    # Dosage / frequency
+    re.compile(r'\b(?:\d+\s*(?:times?|x)\s*daily|daily|per\s*day|once|twice|dose|dosage|times?\s*a\s*day)\b', re.IGNORECASE),
+    # Weight / volume / packaging count units
+    re.compile(r'\b\d+(?:\.\d+)?\s*(?:g|gm|gms|kg|ml|l|ltr|oz|mg|pieces?|pcs?|units?|tablets?|capsules?)\b', re.IGNORECASE),
+    # Currency indicators
+    re.compile(r'(?:₹|rs\.?|inr|mrp|\/g|\/ml)', re.IGNORECASE),
+]
+
+VALID_LIFECYCLE_DURATION_RE = re.compile(
+    r'^\s*(?:(?:best|use|consume|valid)\s+(?:before|within|by|after)\s+)?\d+\s*(?:days?|weeks?|months?|years?)\s+(?:from|after)\s+(?:the\s+)?(?:date\s+of\s+)?(?:mfg|mfd|pkd|packing|manufacture|packaging|production|import|opening)\b',
+    re.IGNORECASE
+)
+
+DATE_PREFIX_RE = re.compile(
+    r'^\s*(?:(?:expiry|exp|manufactured|manufacture|mfg|mfd|packed|packing|pkg|pkd|best\s*before|use\s*before|use\s*by|consume\s*before)\s*[:.\-]?\s*)+',
+    re.IGNORECASE
+)
+
+DATE_FIELDS = {
+    'USE_BEFORE_DATE', 'EXPIRY_DATE', 'MANUFACTURE_DATE',
+    'MONTH_YEAR_MANUFACTURE', 'PACKING_DATE', 'BEST_BEFORE_USE_BY'
+}
+
+
+def is_valid_date_candidate(val: Any) -> bool:
+    """Validate whether a candidate represents an eligible statutory date or shelf-life declaration.
+
+    Rejects:
+      - Age restrictions (e.g. '12 years of age', 'for children above 12 years')
+      - Dosages / frequencies (e.g. '2 times daily')
+      - Net quantities (e.g. '75 g')
+      - Prices (e.g. '₹135')
+      - Arbitrary non-date text
+
+    Accepts:
+      - Valid calendar dates (e.g. '04/28', '04/2028', '05/26', '05-2026', 'MAY 2026', 'EXP 04/28', 'USE BEFORE 04/28')
+      - Statutory lifecycle durations (e.g. '24 months from mfg', 'best before 12 months from manufacture')
+    """
+    if not val or not isinstance(val, str):
+        return False
+    val_clean = val.strip()
+    if not val_clean:
+        return False
+    for pat in DATE_INVALID_PATTERNS:
+        if pat.search(val_clean):
+            return False
+    if VALID_LIFECYCLE_DURATION_RE.search(val_clean):
+        return True
+    core = DATE_PREFIX_RE.sub('', val_clean).strip()
+    if not core:
+        return False
+    valid, _, meta = parse_date_with_precision(core)
+    if valid and meta:
+        return True
+    return False
+
+
 def _is_disallowed_product_name_line(line: str) -> bool:
     """Reject corporate entities, brand-only tokens, ingredient lists, botanical Latin names,
     batch IDs, licenses, addresses, and decorative slogans from becoming PRODUCT_NAME.
@@ -1634,17 +1700,28 @@ def _values_conflict(field_name: str, cand1: Dict[str, Any], cand2: Dict[str, An
         return c1 != c2
 
     # 3. Dates comparison (month/year)
-    if field_name in (
-        'MONTH_YEAR_MANUFACTURE', 'MANUFACTURE_DATE', 'PACKING_DATE',
-        'BEST_BEFORE_USE_BY', 'USE_BEFORE_DATE', 'EXPIRY_DATE'
-    ):
+    if field_name in DATE_FIELDS:
+        # Strict candidate eligibility: only valid date candidates can participate in date conflicts
+        c1_valid = is_valid_date_candidate(s1)
+        c2_valid = is_valid_date_candidate(s2)
+        if not c1_valid or not c2_valid:
+            return False  # Non-date text cannot conflict with a valid date or another non-date
+
         norm1 = cand1.get('normalized_value') or cand1.get('normalized_date')
         norm2 = cand2.get('normalized_value') or cand2.get('normalized_date')
-        if norm1 and norm2:
+        if norm1 and norm2 and is_valid_date_candidate(norm1) and is_valid_date_candidate(norm2):
+            core_n1 = DATE_PREFIX_RE.sub('', norm1).strip()
+            core_n2 = DATE_PREFIX_RE.sub('', norm2).strip()
+            p1_v, p1_n, _ = parse_date_with_precision(core_n1)
+            p2_v, p2_n, _ = parse_date_with_precision(core_n2)
+            if p1_v and p2_v and p1_n and p2_n:
+                return p1_n != p2_n
             return norm1 != norm2
 
-        p1_valid, p1_norm, _ = parse_date_with_precision(s1)
-        p2_valid, p2_norm, _ = parse_date_with_precision(s2)
+        core1 = DATE_PREFIX_RE.sub('', s1).strip()
+        core2 = DATE_PREFIX_RE.sub('', s2).strip()
+        p1_valid, p1_norm, _ = parse_date_with_precision(core1)
+        p2_valid, p2_norm, _ = parse_date_with_precision(core2)
         if p1_valid and p2_valid and p1_norm and p2_norm:
             return p1_norm != p2_norm
 
@@ -2006,6 +2083,10 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
         digits_only = re.sub(r'\D', '', val)
         if len(digits_only) >= 10 and not re.search(r'(?:mrp|price|₹|rs)', context, re.I):
+            return True
+
+    elif field_name in DATE_FIELDS:
+        if not is_valid_date_candidate(val):
             return True
 
     return False
@@ -4158,25 +4239,26 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         for line in lines:
             line_lower = line.lower()
             if any(keyword in line_lower for keyword in BEST_BEFORE_KEYWORDS):
-                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)\s+(?:from|after)\s+[a-z\s]+)', line, re.IGNORECASE)
                 if dur_match:
                     dur_val = dur_match.group(1).strip()
-                    fields['BEST_BEFORE_USE_BY'] = {
-                        'value': dur_val,
-                        'raw_value': dur_val,
-                        'raw_date': dur_val,
-                        'normalized_value': dur_val,
-                        'normalized_date': dur_val,
-                        'source_label': 'BEST_BEFORE',
-                        'semantic_type': 'BEST_BEFORE_PERIOD',
-                        'evidence': {'raw_text': dur_val, 'label': 'BEST_BEFORE'},
-                        'confidence': 0.75,
-                        'source': 'OCR',
-                    }
-                    break
+                    if is_valid_date_candidate(dur_val):
+                        fields['BEST_BEFORE_USE_BY'] = {
+                            'value': dur_val,
+                            'raw_value': dur_val,
+                            'raw_date': dur_val,
+                            'normalized_value': dur_val,
+                            'normalized_date': dur_val,
+                            'source_label': 'BEST_BEFORE',
+                            'semantic_type': 'BEST_BEFORE_PERIOD',
+                            'evidence': {'raw_text': dur_val, 'label': 'BEST_BEFORE'},
+                            'confidence': 0.75,
+                            'source': 'OCR',
+                        }
+                        break
 
     use_by = _extract_date_near_keyword(normalized, USE_BY_KEYWORDS, lines=lines, ocr_items=effective_items)
-    if use_by:
+    if use_by and is_valid_date_candidate(use_by):
         fields['USE_BEFORE_DATE'] = {
             'value': use_by,
             'raw_value': use_by,
@@ -4193,25 +4275,26 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         for line in lines:
             line_lower = line.lower()
             if any(keyword in line_lower for keyword in USE_BY_KEYWORDS):
-                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)(?:\s*(?:from|of)\s+[a-z\s]+)?)', line, re.IGNORECASE)
+                dur_match = re.search(r'(\d+\s*(?:months?|days?|years?)\s+(?:from|after)\s+[a-z\s]+)', line, re.IGNORECASE)
                 if dur_match:
                     dur_val = dur_match.group(1).strip()
-                    fields['USE_BEFORE_DATE'] = {
-                        'value': dur_val,
-                        'raw_value': dur_val,
-                        'raw_date': dur_val,
-                        'normalized_value': dur_val,
-                        'normalized_date': dur_val,
-                        'source_label': 'USE_BY',
-                        'semantic_type': 'USE_BY_PERIOD',
-                        'evidence': {'raw_text': dur_val, 'label': 'USE_BY'},
-                        'confidence': 0.75,
-                        'source': 'OCR',
-                    }
-                    break
+                    if is_valid_date_candidate(dur_val):
+                        fields['USE_BEFORE_DATE'] = {
+                            'value': dur_val,
+                            'raw_value': dur_val,
+                            'raw_date': dur_val,
+                            'normalized_value': dur_val,
+                            'normalized_date': dur_val,
+                            'source_label': 'USE_BY',
+                            'semantic_type': 'USE_BY_PERIOD',
+                            'evidence': {'raw_text': dur_val, 'label': 'USE_BY'},
+                            'confidence': 0.75,
+                            'source': 'OCR',
+                        }
+                        break
 
     expiry_date = _extract_date_near_keyword(normalized, EXPIRY_KEYWORDS, lines=lines, ocr_items=effective_items)
-    if expiry_date:
+    if expiry_date and is_valid_date_candidate(expiry_date):
         fields['EXPIRY_DATE'] = {
             'value': expiry_date,
             'raw_value': expiry_date,

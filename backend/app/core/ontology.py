@@ -95,6 +95,47 @@ FIELD_TO_GROUP: Dict[str, DeclarationGroup] = {
     CanonicalDeclarationField.VEG_NONVEG_SYMBOL: DeclarationGroup.SAFETY_COMPLIANCE,
 }
 
+# Statutory Date Role Equivalence Mappings
+# Under Cosmetics Rules, 2020 Rule 34(1)(f) and LMPC / FSSAI statutory instruments
+CANONICAL_DATE_ROLE_EQUIVALENCE: Dict[str, Dict[CanonicalDeclarationField, List[CanonicalDeclarationField]]] = {
+    "COSMETIC": {
+        CanonicalDeclarationField.USE_BEFORE_DATE: [
+            CanonicalDeclarationField.USE_BEFORE_DATE,
+            CanonicalDeclarationField.EXPIRY_DATE,
+            CanonicalDeclarationField.BEST_BEFORE_USE_BY,
+        ],
+        CanonicalDeclarationField.EXPIRY_DATE: [
+            CanonicalDeclarationField.EXPIRY_DATE,
+            CanonicalDeclarationField.USE_BEFORE_DATE,
+            CanonicalDeclarationField.BEST_BEFORE_USE_BY,
+        ],
+    },
+    "FOOD": {
+        CanonicalDeclarationField.BEST_BEFORE_USE_BY: [
+            CanonicalDeclarationField.BEST_BEFORE_USE_BY,
+            CanonicalDeclarationField.USE_BEFORE_DATE,
+            CanonicalDeclarationField.EXPIRY_DATE,
+        ],
+    },
+    "ALL": {
+        CanonicalDeclarationField.MONTH_YEAR_MANUFACTURE: [
+            CanonicalDeclarationField.MONTH_YEAR_MANUFACTURE,
+            CanonicalDeclarationField.MANUFACTURE_DATE,
+            CanonicalDeclarationField.PACKING_DATE,
+        ],
+        CanonicalDeclarationField.MANUFACTURE_DATE: [
+            CanonicalDeclarationField.MANUFACTURE_DATE,
+            CanonicalDeclarationField.MONTH_YEAR_MANUFACTURE,
+            CanonicalDeclarationField.PACKING_DATE,
+        ],
+        CanonicalDeclarationField.PACKING_DATE: [
+            CanonicalDeclarationField.PACKING_DATE,
+            CanonicalDeclarationField.MONTH_YEAR_MANUFACTURE,
+            CanonicalDeclarationField.MANUFACTURE_DATE,
+        ],
+    },
+}
+
 
 class QuantityType(str, Enum):
     """Physical dimension / measurement type under Legal Metrology."""
