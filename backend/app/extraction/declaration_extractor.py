@@ -119,7 +119,7 @@ MARKETER_KEYWORDS = [
     'manufactured & marketed by', 'manufactured and marketed by', 'manufactured/marketed by',
     'marketed & distributed by', 'marketed and distributed by',
     'marketed by', 'marketed at', 'marketed for',
-    'mkt & dist by', 'mkt by', 'mktg by', 'mkt. by',
+    'mkt & dist by', 'mkt by', 'mktg by', 'mkt. by', 'mk by',
     'marketer', 'distributed by',
 ]
 PACKER_KEYWORDS = [
@@ -272,7 +272,7 @@ INLINE_SECTION_PATTERNS = {
         r'\b(?:manufactured\s*(?:&|and|/)?\s*(?:marketed|packed)?\s*(?:by|at|for)|mfg\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|mfd\s*(?:&|and|/)?\s*(?:mkt|pkd)?\s*by|manufacturer\b|made\s+by\b)',
     ],
     'marketer': [
-        r'\b(?:marketed\s*(?:&|and)?\s*(?:distributed)?\s*(?:by|at|for)|mkt\s*by|mktg\s*by|mkt\.\s*by|marketer\b|distributed\s+by\b)',
+        r'\b(?:marketed\s*(?:&|and)?\s*(?:distributed)?\s*(?:by|at|for)|m(?:k|kt|ktg)\.?\s*by|marketer\b|distributed\s+by\b)',
     ],
     'packer': [
         r'\b(?:packed\s*(?:&|and)?\s*(?:marketed)?\s*(?:by|at|for)|packed\s+(?:by|at)|pkd\s*by|pkg\s*by|packer\b|packaged\s+by\b)',
@@ -329,13 +329,14 @@ def group_ocr_items_into_lines(ocr_items: Optional[List[Dict[str, Any]]]) -> Lis
     if not ocr_items:
         return []
 
-    parsed_items = []
-    unboxed_items = []
+    parsed_by_image: Dict[int, List[Tuple[Tuple, str, Dict[str, Any]]]] = {}
+    unboxed_by_image: Dict[int, List[str]] = {}
 
     for item in ocr_items:
         text = str(item.get("text", "")).strip()
         if not text:
             continue
+        image_index = int(item.get("image_index") or 0)
         box = item.get("bbox")
         coords = None
         if box:
@@ -351,54 +352,52 @@ def group_ocr_items_into_lines(ocr_items: Optional[List[Dict[str, Any]]]) -> Lis
                 coords = (x1, y1, x2, y2, (x1 + x2) / 2.0, (y1 + y2) / 2.0, h)
 
         if coords:
-            parsed_items.append((coords, text, item))
+            parsed_by_image.setdefault(image_index, []).append((coords, text, item))
         else:
-            unboxed_items.append(text)
+            unboxed_by_image.setdefault(image_index, []).append(text)
 
-    if not parsed_items:
-        return unboxed_items
+    image_indexes = sorted(set(parsed_by_image) | set(unboxed_by_image))
+    result_lines: List[str] = []
+    for image_index in image_indexes:
+        parsed_items = parsed_by_image.get(image_index, [])
+        parsed_items.sort(key=lambda it: (it[0][1], it[0][0]))
 
-    # Sort top-to-bottom by y_min
-    parsed_items.sort(key=lambda it: (it[0][1], it[0][0]))
+        # Never cluster tokens from different package views merely because
+        # their y-coordinates happen to align.
+        line_clusters: List[List[Tuple[Tuple, str, Dict[str, Any]]]] = []
+        for it in parsed_items:
+            it_ymin, it_ymax = it[0][1], it[0][3]
+            it_cy = it[0][5]
+            it_h = max(it[0][6], 5.0)
 
-    # Cluster into lines based on vertical overlap
-    line_clusters: List[List[Tuple[Tuple, str, Dict[str, Any]]]] = []
-    for it in parsed_items:
-        it_ymin, it_ymax = it[0][1], it[0][3]
-        it_cy = it[0][5]
-        it_h = max(it[0][6], 5.0)
+            placed = False
+            for cluster in line_clusters:
+                clust_ymin = min(c[0][1] for c in cluster)
+                clust_ymax = max(c[0][3] for c in cluster)
+                clust_cy = sum(c[0][5] for c in cluster) / len(cluster)
+                clust_h = max(clust_ymax - clust_ymin, 5.0)
 
-        placed = False
+                overlap = min(it_ymax, clust_ymax) - max(it_ymin, clust_ymin)
+                overlap_ratio = overlap / min(it_h, clust_h) if min(it_h, clust_h) > 0 else 0
+                center_dist = abs(it_cy - clust_cy)
+
+                if overlap_ratio >= 0.4 or center_dist <= 0.5 * min(it_h, clust_h):
+                    cluster.append(it)
+                    placed = True
+                    break
+
+            if not placed:
+                line_clusters.append([it])
+
         for cluster in line_clusters:
-            clust_ymin = min(c[0][1] for c in cluster)
-            clust_ymax = max(c[0][3] for c in cluster)
-            clust_cy = sum(c[0][5] for c in cluster) / len(cluster)
-            clust_h = max(clust_ymax - clust_ymin, 5.0)
+            cluster.sort(key=lambda it: it[0][0])
+            line_str = " ".join(it[1] for it in cluster).strip()
+            if line_str:
+                result_lines.append(line_str)
 
-            overlap = min(it_ymax, clust_ymax) - max(it_ymin, clust_ymin)
-            overlap_ratio = overlap / min(it_h, clust_h) if min(it_h, clust_h) > 0 else 0
-            center_dist = abs(it_cy - clust_cy)
-
-            if overlap_ratio >= 0.4 or center_dist <= 0.5 * min(it_h, clust_h):
-                cluster.append(it)
-                placed = True
-                break
-
-        if not placed:
-            line_clusters.append([it])
-
-    # Within each line cluster, sort left-to-right (by x1) and join text
-    result_lines = []
-    for cluster in line_clusters:
-        cluster.sort(key=lambda it: it[0][0])  # x1
-        line_str = " ".join(it[1] for it in cluster).strip()
-        if line_str:
-            result_lines.append(line_str)
-
-    # Append any unboxed items
-    for ub in unboxed_items:
-        if ub and ub not in result_lines:
-            result_lines.append(ub)
+        for unboxed in unboxed_by_image.get(image_index, []):
+            if unboxed and unboxed not in result_lines:
+                result_lines.append(unboxed)
 
     return result_lines
 
@@ -417,11 +416,12 @@ def classify_line_section(line: str, current_section: Optional[str] = None) -> s
         return SECTION_DECLARED_QUANTITY
     if INGREDIENTS_LINE_RE.search(cleaned):
         return SECTION_INGREDIENTS
-    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in PACKER_KEYWORDS) and re.search(r'\b(?:packed|pkd|pkg|packer)\b', cleaned, re.I):
+    explicit_roles = _explicit_responsible_party_roles(cleaned)
+    if 'PACKER' in explicit_roles:
         return SECTION_PACKER
-    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MARKETER_KEYWORDS) and re.search(r'\b(?:marketed|mkt|mktg|marketer|distributed)\b', cleaned, re.I):
+    if 'MARKETER' in explicit_roles and 'MANUFACTURER' not in explicit_roles:
         return SECTION_MARKETER
-    if any(re.search(rf'(?:\b|(?<=^)){re.escape(kw)}\b', cleaned, re.I) for kw in MANUFACTURER_KEYWORDS) or COMPANY_SUFFIX_RE.search(cleaned):
+    if 'MANUFACTURER' in explicit_roles or COMPANY_SUFFIX_RE.search(cleaned):
         return SECTION_MANUFACTURER
     if CONSUMER_CARE_STOP_RE.search(cleaned):
         return SECTION_CONSUMER_CARE
@@ -2471,22 +2471,59 @@ def _attach_value_provenance(field: Dict[str, Any], ocr_items: Optional[List[Dic
     """Attach the best same-image OCR tokens supporting a possibly multi-line value."""
     if not field.get('value') or not ocr_items:
         return
-    value_words = set(re.findall(r'[a-z0-9]+', str(field['value']).lower()))
-    if not value_words:
+    value_words = {
+        word for word in re.findall(r'[a-z0-9]+', str(field['value']).lower())
+        if len(word) >= 2
+    }
+    compact_value = re.sub(r'[^a-z0-9]+', '', str(field['value']).lower())
+    if not value_words and len(compact_value) < 2:
         return
 
     by_image: Dict[int, List[Tuple[float, Dict[str, Any]]]] = {}
+    expected_role = str(field.get('role') or '').upper()
+    is_responsible_party_name = bool(
+        expected_role in {'MANUFACTURER', 'MARKETER', 'PACKER'}
+        and 'address_structure' not in field
+    )
     for item in ocr_items:
         item_text = str(item.get('text') or '').strip()
-        item_words = set(re.findall(r'[a-z0-9]+', item_text.lower()))
+        item_words = {
+            word for word in re.findall(r'[a-z0-9]+', item_text.lower())
+            if len(word) >= 2
+        }
         if not item_words:
             continue
-        overlap = len(item_words & value_words) / len(item_words)
-        if overlap >= 0.5 or item_text.lower() in str(field['value']).lower():
+        overlap = len(item_words & value_words) / len(item_words) if item_words else 0.0
+        value_coverage = len(item_words & value_words) / len(value_words) if value_words else 0.0
+        item_roles = _explicit_responsible_party_roles(item_text)
+        compact_item = re.sub(r'[^a-z0-9]+', '', item_text.lower())
+        if (
+            (overlap >= 0.5 and (not is_responsible_party_name or value_coverage >= 0.5))
+            or item_text.lower() in str(field['value']).lower()
+            or (len(compact_value) >= 2 and compact_value in compact_item)
+            or (
+                is_responsible_party_name
+                and expected_role in item_roles
+                and value_coverage >= 0.30
+            )
+        ):
             image_index = int(item.get('image_index') or 0)
-            by_image.setdefault(image_index, []).append((overlap, item))
+            role_bonus = 1.0 if expected_role in item_roles else 0.0
+            by_image.setdefault(image_index, []).append((overlap + value_coverage + role_bonus, item))
     if not by_image:
         return
+
+    if is_responsible_party_name:
+        role_labelled = {
+            image_index: [
+                pair for pair in pairs
+                if expected_role in _explicit_responsible_party_roles(str(pair[1].get('text') or ''))
+            ]
+            for image_index, pairs in by_image.items()
+        }
+        role_labelled = {image_index: pairs for image_index, pairs in role_labelled.items() if pairs}
+        if role_labelled:
+            by_image = role_labelled
 
     image_index, scored_items = max(
         by_image.items(),
@@ -2517,6 +2554,15 @@ def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
     return (company_name, remaining_address_on_same_line).
     """
     line_clean = line.strip()
+    # Recover a missing OCR separator between a legal suffix and a familiar
+    # address lead-in (for example ``LimitedP.O``).  The inserted comma is only
+    # structural; the original token remains available in source_evidence.
+    line_clean = re.sub(
+        r'(?i)(private\s+limited|limited|pvt\.?\s*ltd\.?|ltd\.?)'
+        r'(?=(?:p\.?\s*o\.?|plot\b|survey\b|village\b|floor\b|road\b|street\b|sector\b))',
+        r'\1, ',
+        line_clean,
+    )
     if not line_clean or _is_section_boundary(line_clean):
         return None
     m = COMPANY_SUFFIX_RE.search(line_clean)
@@ -2535,6 +2581,36 @@ def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
     after_entity = _cut_before_next_section(after_entity, 'manufacturer')
     after_entity = _clean_address_text(after_entity)
     return entity, after_entity
+
+
+def _explicit_responsible_party_roles(line: str) -> set[str]:
+    """Return only roles explicitly labelled on a responsible-party line.
+
+    ``mk by`` is included as a narrow OCR-damage variant of ``mkt by``.  It is
+    deliberately treated as marketer evidence, not silently reclassified as a
+    manufacturer merely because the remaining text resembles a company name.
+    """
+    text = str(line or "")
+    roles: set[str] = set()
+    if re.search(
+        r'\b(?:manufactur(?:ed|er)\b|mfg\.?\s*by|mfd\.?\s*by|made\s+by\b)',
+        text,
+        re.IGNORECASE,
+    ):
+        roles.add('MANUFACTURER')
+    if re.search(
+        r'\b(?:marketed\b|marketer\b|distributed\s+by\b|m(?:k|kt|ktg)\.?\s*by)',
+        text,
+        re.IGNORECASE,
+    ):
+        roles.add('MARKETER')
+    if re.search(
+        r'\b(?:packed\s+by\b|packaged\s+by\b|packer\b|pkd\.?\s*by\b|pkg\.?\s*by\b)',
+        text,
+        re.IGNORECASE,
+    ):
+        roles.add('PACKER')
+    return roles
 
 
 def _collect_continuation_lines(lines: List[str], start_index: int, current_section: str, max_lines: int = 6) -> List[str]:
@@ -2602,15 +2678,22 @@ def _extract_manufacturer_and_address(
         if _is_instructional_label_line(line):
             continue
         matched_kw = None
-        for kw in MANUFACTURER_KEYWORDS:
-            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
-            m_kw = re.search(kw_pattern, line_lower)
-            if m_kw:
-                matched_kw = kw
-                start_pos = m_kw.end()
-                label_prefix = line[:start_pos].strip(' :;,-')
-                raw_after = line[start_pos:].strip(' :;,-')
-                break
+        damaged_mfg = re.search(r'(?:\b|(?<=^))m(?:fg|fd)\.?\s*by', line_lower)
+        if damaged_mfg:
+            matched_kw = damaged_mfg.group(0)
+            start_pos = damaged_mfg.end()
+            label_prefix = line[:start_pos].strip(' :;,-')
+            raw_after = line[start_pos:].strip(' :;,-')
+        else:
+            for kw in MANUFACTURER_KEYWORDS:
+                kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+                m_kw = re.search(kw_pattern, line_lower)
+                if m_kw:
+                    matched_kw = kw
+                    start_pos = m_kw.end()
+                    label_prefix = line[:start_pos].strip(' :;,-')
+                    raw_after = line[start_pos:].strip(' :;,-')
+                    break
 
         if matched_kw:
             cleaned_after = _cut_before_next_section(raw_after, 'manufacturer')
@@ -2659,6 +2742,12 @@ def _extract_manufacturer_and_address(
 
     # Step 2: Standalone company entity without "Manufactured by:" prefix
     for idx, line in enumerate(lines):
+        explicit_roles = _explicit_responsible_party_roles(line)
+        if explicit_roles and 'MANUFACTURER' not in explicit_roles:
+            # A marketer/packer-labelled company is not an unlabelled fallback
+            # manufacturer. Packer is handled by its dedicated extractor and
+            # may later satisfy manufacturer-or-packer rules with role intact.
+            continue
         comp_res = _extract_company_entity_from_line(line)
         if comp_res:
             comp_name, comp_addr = comp_res
@@ -2684,15 +2773,25 @@ def _extract_marketer_and_address(
     for idx, line in enumerate(lines):
         line_lower = line.lower()
         matched_kw = None
-        for kw in MARKETER_KEYWORDS:
-            kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
-            m_kw = re.search(kw_pattern, line_lower)
-            if m_kw:
-                matched_kw = kw
-                start_pos = m_kw.end()
-                label_prefix = line[:start_pos].strip(' :;,-')
-                raw_after = line[start_pos:].strip(' :;,-')
-                break
+        # Narrow damaged-label recovery: PaddleOCR can collapse "Mkt by Tata"
+        # to "Mk byata".  Preserve the damaged remainder as OCR evidence while
+        # retaining its marketer role; do not reinterpret it as manufacturer.
+        damaged_mkt = re.search(r'(?:\b|(?<=^))m(?:k|kt|ktg)\.?\s*by', line_lower)
+        if damaged_mkt:
+            matched_kw = damaged_mkt.group(0)
+            start_pos = damaged_mkt.end()
+            label_prefix = line[:start_pos].strip(' :;,-')
+            raw_after = line[start_pos:].strip(' :;,-')
+        else:
+            for kw in MARKETER_KEYWORDS:
+                kw_pattern = rf'(?:\b|(?<=^)){re.escape(kw)}\b'
+                m_kw = re.search(kw_pattern, line_lower)
+                if m_kw:
+                    matched_kw = kw
+                    start_pos = m_kw.end()
+                    label_prefix = line[:start_pos].strip(' :;,-')
+                    raw_after = line[start_pos:].strip(' :;,-')
+                    break
 
         if matched_kw:
             cleaned_after = _cut_before_next_section(raw_after, 'marketer')
@@ -4107,13 +4206,8 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
 
     if mkt_name:
         fields['MARKETER_NAME'] = {'value': mkt_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MARKETER'}
-        if 'MANUFACTURER_NAME' not in fields:
-            fields['MANUFACTURER_NAME'] = {'value': mkt_name, 'confidence': 0.8, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
     if mkt_addr:
         fields['MARKETER_ADDRESS'] = _build_address_field(mkt_addr, 'MARKETER', 0.8)
-        if 'MANUFACTURER_ADDRESS' not in fields:
-            fields['MANUFACTURER_ADDRESS'] = _build_address_field(mkt_addr, 'MARKETER', 0.75)
-            fields['MANUFACTURER_ADDRESS']['entity_type'] = 'MARKETER'
 
     if packer_name:
         fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'PACKER'}
@@ -4142,16 +4236,25 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
         # If multiple distinct entities exist and their address association is shared, identical, or unlinked
         addrs = [e.get('address') for e in entities if e.get('address')]
         if len(entities) >= 2 and len(set(addrs)) == 1 and addrs[0]:
-            if 'MANUFACTURER_ADDRESS' in fields:
-                fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
-                fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
-                fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
-                    {'entity': e['name'], 'role': e['role'], 'address': addrs[0]} for e in entities
-                ]
-                fields['MANUFACTURER_ADDRESS']['reason'] = (
-                    f"Ambiguous address association between multiple declared entities: "
-                    f"{', '.join(e['name'] for e in entities)}"
+            if 'MANUFACTURER_ADDRESS' not in fields:
+                # Multiple explicit entity labels followed by one address block
+                # do not establish ownership. Preserve the OCR value for review,
+                # but mark it unassociated so manufacturer rules cannot pass.
+                fields['MANUFACTURER_ADDRESS'] = _build_address_field(
+                    addrs[0], 'UNASSOCIATED', 0.65
                 )
+            fields['MANUFACTURER_ADDRESS']['status'] = 'AMBIGUOUS'
+            fields['MANUFACTURER_ADDRESS']['is_ambiguous'] = True
+            fields['MANUFACTURER_ADDRESS']['evidence_state'] = (
+                EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+            )
+            fields['MANUFACTURER_ADDRESS']['competing_candidates'] = [
+                {'entity': e['name'], 'role': e['role'], 'address': addrs[0]} for e in entities
+            ]
+            fields['MANUFACTURER_ADDRESS']['reason'] = (
+                f"Ambiguous address association between multiple declared entities: "
+                f"{', '.join(e['name'] for e in entities)}"
+            )
 
     # Check for multiple standalone corporate entities without explicit manufacturer/marketer prefixes
     standalone_comps = []
@@ -4418,7 +4521,12 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if cc_field:
         fields['CONSUMER_CARE'] = cc_field
 
-    for provenance_field in ('MANUFACTURER_ADDRESS', 'MARKETER_ADDRESS', 'PACKER_ADDRESS', 'CONSUMER_CARE'):
+    for provenance_field in (
+        'MANUFACTURER_NAME', 'MANUFACTURER_ADDRESS',
+        'MARKETER_NAME', 'MARKETER_ADDRESS',
+        'PACKER_NAME', 'PACKER_ADDRESS',
+        'CONSUMER_CARE',
+    ):
         if provenance_field in fields:
             _attach_value_provenance(fields[provenance_field], effective_items)
 

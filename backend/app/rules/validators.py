@@ -951,12 +951,26 @@ def validate_manufacturer_present(
     rule: Dict[str, Any],
     all_fields: Dict[str, Any],
 ) -> ValidationResult:
-    """Validate presence and name of manufacturer, packer, or marketer."""
+    """Validate a role-grounded manufacturer or packer name declaration."""
     pre = _check_preconditions(evidence, rule)
     if pre:
         return pre
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
+
+    role = str(evidence.get("role") or evidence.get("entity_type") or "MANUFACTURER").upper()  # type: ignore[union-attr]
+    if rule.get("parameter") == "MANUFACTURER_NAME" and role not in ("MANUFACTURER", "PACKER"):
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                "A company name was detected, but it is not grounded as the manufacturer or "
+                "packer required by this declaration."
+            ),
+            normalized_value=raw_val,
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+        )
 
     # Strip prefix keywords to inspect actual entity name
     cleaned = re.sub(
@@ -1286,6 +1300,7 @@ def validate_consumer_care_present(
         return pre
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
+
     channels_detected: List[str] = []
     normalized_channels: List[str] = []
     raw_context = str(evidence.get("raw_text") or evidence.get("raw_value") or raw_val)  # type: ignore[union-attr]

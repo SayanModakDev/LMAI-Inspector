@@ -22,6 +22,130 @@ def _bbox_iou(first: List[int], second: List[int]) -> float:
     return intersection / union if union else 0.0
 
 
+def _rect_sum(integral: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> float:
+    """Return a binary-mask rectangle sum from an OpenCV integral image."""
+    return float(
+        integral[y2, x2]
+        - integral[y1, x2]
+        - integral[y2, x1]
+        + integral[y1, x1]
+    )
+
+
+def _find_fragmented_colour_frame(
+    structural_mask: np.ndarray,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+) -> Tuple[bool, float, List[int], Dict[str, Any]]:
+    """Find a broken same-colour square around a strong inner-shape contour.
+
+    Package glare and perspective can fragment a thin statutory square into four
+    separate HSV components.  The normal contour hierarchy cannot recover that
+    frame.  This bounded fallback requires colour support on *all four* sides,
+    clearance around the inner shape, and a mostly uncoloured annulus.  The last
+    constraint prevents filled recycling badges and decorative colour blocks
+    from masquerading as a hollow statutory frame.
+    """
+    mask_h, mask_w = structural_mask.shape[:2]
+    integral = cv2.integral((structural_mask > 0).astype(np.uint8))
+    center_x = x + width / 2.0
+    center_y = y + height / 2.0
+    clearance = max(2, int(min(width, height) * 0.15))
+    best: Tuple[float, float, float, float, List[int]] | None = None
+
+    for width_scale in np.arange(1.7, 3.31, 0.2):
+        frame_w = max(width + 2 * clearance, int(round(width * width_scale)))
+        for height_scale in np.arange(1.7, 3.31, 0.2):
+            frame_h = max(height + 2 * clearance, int(round(height * height_scale)))
+            if not (0.72 <= frame_w / max(1, frame_h) <= 1.38):
+                continue
+
+            for offset_x in (-0.30, -0.15, 0.0, 0.15, 0.30):
+                for offset_y in (-0.30, -0.15, 0.0, 0.15, 0.30):
+                    frame_x1 = int(round(center_x + offset_x * width - frame_w / 2.0))
+                    frame_y1 = int(round(center_y + offset_y * height - frame_h / 2.0))
+                    frame_x2 = frame_x1 + frame_w
+                    frame_y2 = frame_y1 + frame_h
+
+                    # The candidate circle/triangle must sit wholly inside the
+                    # frame with visible spacing on every side.
+                    if (
+                        frame_x1 > x - clearance
+                        or frame_x2 < x + width + clearance
+                        or frame_y1 > y - clearance
+                        or frame_y2 < y + height + clearance
+                        or frame_x1 < 0
+                        or frame_y1 < 0
+                        or frame_x2 > mask_w
+                        or frame_y2 > mask_h
+                    ):
+                        continue
+
+                    thickness = max(2, int(round(min(frame_w, frame_h) * 0.10)))
+                    inset = thickness
+                    side_boxes = (
+                        (frame_x1 + inset, frame_y1, frame_x2 - inset, frame_y1 + thickness),
+                        (frame_x1 + inset, frame_y2 - thickness, frame_x2 - inset, frame_y2),
+                        (frame_x1, frame_y1 + inset, frame_x1 + thickness, frame_y2 - inset),
+                        (frame_x2 - thickness, frame_y1 + inset, frame_x2, frame_y2 - inset),
+                    )
+                    side_support: List[float] = []
+                    for sx1, sy1, sx2, sy2 in side_boxes:
+                        side_area = max(1, (sx2 - sx1) * (sy2 - sy1))
+                        side_support.append(_rect_sum(integral, sx1, sy1, sx2, sy2) / side_area)
+
+                    annulus_x1 = frame_x1 + thickness
+                    annulus_y1 = frame_y1 + thickness
+                    annulus_x2 = frame_x2 - thickness
+                    annulus_y2 = frame_y2 - thickness
+                    annulus_area = max(1, (annulus_x2 - annulus_x1) * (annulus_y2 - annulus_y1))
+                    annulus_sum = _rect_sum(
+                        integral, annulus_x1, annulus_y1, annulus_x2, annulus_y2
+                    )
+                    inner_x1 = max(annulus_x1, x - 1)
+                    inner_y1 = max(annulus_y1, y - 1)
+                    inner_x2 = min(annulus_x2, x + width + 1)
+                    inner_y2 = min(annulus_y2, y + height + 1)
+                    if inner_x2 > inner_x1 and inner_y2 > inner_y1:
+                        annulus_sum -= _rect_sum(
+                            integral, inner_x1, inner_y1, inner_x2, inner_y2
+                        )
+                    annulus_density = annulus_sum / annulus_area
+
+                    average_support = float(np.mean(side_support))
+                    minimum_support = float(min(side_support))
+                    score = average_support - 0.60 * annulus_density
+                    candidate = (
+                        score,
+                        average_support,
+                        minimum_support,
+                        annulus_density,
+                        [frame_x1, frame_y1, frame_x2, frame_y2],
+                    )
+                    if best is None or candidate[0] > best[0]:
+                        best = candidate
+
+    if best is None:
+        return False, 0.0, [x, y, x + width, y + height], {}
+
+    score, average_support, minimum_support, annulus_density, bbox = best
+    accepted = bool(
+        average_support >= 0.55
+        and minimum_support >= 0.30
+        and annulus_density <= 0.16
+        and score >= 0.45
+    )
+    metrics = {
+        "average_side_support": round(average_support, 3),
+        "minimum_side_support": round(minimum_support, 3),
+        "interior_annulus_density": round(annulus_density, 3),
+        "frame_score": round(score, 3),
+    }
+    return accepted, max(0.0, min(1.0, score)), bbox, metrics
+
+
 def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
     """Detect candidate prescribed food-symbol geometry (FSSAI Regulations).
 
@@ -92,6 +216,13 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
         "VEGETARIAN": green_mask,
         "NON_VEGETARIAN": brown_mask,
     }
+    # Structural masks intentionally retain HSV-consistent frame pixels that
+    # glare can make fail strict RGB-channel dominance.  They are never used to
+    # generate an inner-shape candidate; only to verify a local four-sided frame.
+    structural_masks = {
+        "VEGETARIAN": green_hsv,
+        "NON_VEGETARIAN": brown_hsv,
+    }
 
     candidates: List[Dict[str, Any]] = []
 
@@ -156,6 +287,8 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
             has_enclosing_square = False
             square_score = 0.0
             outer_bbox = [x1, y1, x2, y2]
+            frame_detection = "none"
+            frame_metrics: Dict[str, Any] = {}
 
             # Look for outer square contour in the color mask
             crop_h, crop_w = crop_mask.shape[:2]
@@ -195,7 +328,27 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
                             has_enclosing_square = True
                             square_score = 1.0
                             outer_bbox = [x1 + cx_box, y1 + cy_box, x1 + cx_box + cw, y1 + cy_box + ch]
+                            frame_detection = "connected_same_colour_contour"
                             break
+
+            # Thin frames broken by glare/perspective have no single enclosing
+            # contour.  Verify four local HSV sides and a hollow interior rather
+            # than weakening the global geometry requirement.
+            if not has_enclosing_square:
+                (
+                    has_fragmented_frame,
+                    fragmented_score,
+                    fragmented_bbox,
+                    fragmented_metrics,
+                ) = _find_fragmented_colour_frame(
+                    structural_masks[symbol_type], x, y, width, height
+                )
+                frame_metrics = fragmented_metrics
+                if has_fragmented_frame:
+                    has_enclosing_square = True
+                    square_score = fragmented_score
+                    outer_bbox = fragmented_bbox
+                    frame_detection = "fragmented_same_colour_frame"
 
             # If contour search did not find clean outer square, check edge boundary
             has_edge_boundary = False
@@ -235,7 +388,10 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
             # to cross the classification threshold by itself.
             accepted = bool(has_enclosing_square and contrast_score >= 0.35)
             if accepted:
-                decision_reason = "Accepted: filled prescribed inner shape inside a concentric same-colour square."
+                decision_reason = (
+                    "Accepted: filled prescribed inner shape inside a concentric same-colour square "
+                    f"({frame_detection})."
+                )
             elif not has_enclosing_square:
                 decision_reason = "Rejected: no concentric same-colour enclosing square; decorative coloured shape only."
             else:
@@ -245,9 +401,14 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
                 "symbol_type": symbol_type,
                 "confidence": confidence,
                 "bbox": outer_bbox,
+                "inner_bbox": [x, y, x + width, y + height],
                 "area": area,
                 "circularity": circularity,
                 "has_enclosing_square": has_enclosing_square,
+                "frame_detection": frame_detection,
+                "frame_metrics": frame_metrics,
+                "contrast_score": contrast_score,
+                "edge_ratio": edge_ratio,
                 "shape_score": shape_score,
                 "scale": scale,
                 "accepted": accepted,
@@ -291,6 +452,7 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
     for candidate in candidates:
         audit = dict(candidate)
         audit["bbox"] = _scale_bbox_to_original(candidate["bbox"], scale)
+        audit["inner_bbox"] = _scale_bbox_to_original(candidate["inner_bbox"], scale)
         audit.pop("scale", None)
         audit["confidence"] = round(float(audit["confidence"]), 3)
         candidate_audit.append(audit)
@@ -437,13 +599,23 @@ def aggregate_food_symbol_evidence(panel_results: List[Tuple[Dict[str, Any], int
             "detection_method": "fssai_prescribed_symbol_detector",
         }
 
+    best_rejected = max(audit, key=lambda item: float(item.get("confidence") or 0)) if audit else None
+    rejection_reason = (
+        f"No supported prescribed food symbol detected on package images. "
+        f"Best visual candidate on image {best_rejected.get('image_index')} was rejected: "
+        f"{best_rejected.get('decision_reason')}"
+        if best_rejected
+        else "No prescribed food-symbol candidate was generated from the package images."
+    )
     return {
         "detected": False,
         "value": None,
         "symbol_type": "UNKNOWN",
-        "confidence": 0.0,
+        "confidence": round(float((best_rejected or {}).get("confidence") or 0), 3),
+        "bbox": (best_rejected or {}).get("bbox"),
+        "source_image_index": (best_rejected or {}).get("image_index"),
         "status": "NOT_VERIFIABLE",
-        "reason": "No supported prescribed food symbol detected on package images.",
+        "reason": rejection_reason,
         "candidates": audit,
         "detection_method": "fssai_prescribed_symbol_detector",
     }
