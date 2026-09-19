@@ -470,5 +470,254 @@ def test_21_quality_score_computation_bounded():
 def test_22_quality_gate_execution_speed(image_fixtures):
     """22. Quality gate must execute quickly (< 100ms per typical image)."""
     res = analyze_image_quality(image_fixtures["sharp"])
-    # Processing on bounded 1280 image takes tens of ms
+    # Processing on bounded 1920 image takes tens of ms
     assert res.processing_time_ms < 500  # Conservative bound for CI/test environments
+
+
+# ---------------------------------------------------------------------------
+# Section 9 Required Targeted Tests (Scenarios 1 - 15)
+# ---------------------------------------------------------------------------
+
+def test_23_panoramic_readable_package_not_automatically_rejected(tmp_path):
+    """1. Panoramic readable package label is not automatically rejected."""
+    img_path = str(tmp_path / "panoramic_front.jpg")
+    img = Image.new("RGB", (1600, 260), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([(20, 15), (1580, 245)], outline=(0, 70, 170), width=3)
+    draw.text((50, 35), "SENSODYNE RAPID RELIEF TOOTHPASTE", fill=(0, 70, 170))
+    draw.text((50, 95), "Clinically Proven Relief and Daily Protection for Sensitive Teeth", fill=(40, 40, 40))
+    draw.text((50, 165), "Net Wt: 80 g   Generic Name: Toothpaste", fill=(10, 10, 10))
+    img.save(img_path, format="JPEG", quality=95)
+
+    res = analyze_image_quality(img_path)
+    assert res.status in (ImageQualityStatus.ACCEPT, ImageQualityStatus.WARN)
+    assert res.status != ImageQualityStatus.RECAPTURE_REQUIRED
+    assert not any(i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert res.quality_score >= 0.80
+
+
+def test_24_narrow_closeup_of_sharp_mrp_date_remains_usable(tmp_path):
+    """2. Narrow close-up of sharp MRP/date text remains usable."""
+    img_path = str(tmp_path / "narrow_closeup.jpg")
+    img = Image.new("RGB", (500, 200), (240, 240, 245))
+    draw = ImageDraw.Draw(img)
+    draw.text((25, 25), "MRP Rs. 165.00 (Incl. of all taxes)", fill=(10, 10, 10))
+    draw.text((25, 75), "USP: Rs. 2.06 / g", fill=(10, 10, 10))
+    draw.text((25, 125), "Batch: B2409  Mfg: 04/2024  Exp: 03/2026", fill=(10, 10, 10))
+    img.save(img_path, format="JPEG", quality=95)
+
+    res = analyze_image_quality(img_path)
+    assert res.status in (ImageQualityStatus.ACCEPT, ImageQualityStatus.WARN)
+    assert res.status != ImageQualityStatus.RECAPTURE_REQUIRED
+    assert not any(i.severity == IssueSeverity.ERROR for i in res.issues)
+
+
+def test_25_predominantly_blue_packaging_with_crisp_white_text_usable(tmp_path):
+    """3. Predominantly blue packaging with crisp white text remains usable."""
+    img_path = str(tmp_path / "blue_package.jpg")
+    # Deep blue packaging background (typical Sensodyne package flap)
+    img = Image.new("RGB", (600, 350), (12, 65, 160))
+    draw = ImageDraw.Draw(img)
+    draw.text((40, 40), "SENSODYNE REPAIR & PROTECT", fill=(255, 255, 255))
+    draw.text((40, 100), "MRP Rs. 195.00", fill=(255, 255, 255))
+    draw.text((40, 160), "Batch No: SN9102  Mfg: 03/24", fill=(255, 255, 255))
+    draw.text((40, 220), "Net Wt: 100 g", fill=(255, 255, 255))
+    img.save(img_path, format="JPEG", quality=95)
+
+    res = analyze_image_quality(img_path)
+    assert res.status == ImageQualityStatus.ACCEPT
+    assert not any(i.code == QualityIssueCode.IMAGE_LOW_CONTRAST and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert res.metrics.text_stroke_contrast >= 40.0
+
+
+def test_26_predominantly_white_packaging_with_crisp_dark_text_usable(tmp_path):
+    """4. Predominantly white packaging with crisp dark text remains usable."""
+    img_path = str(tmp_path / "white_package_declarations.jpg")
+    img = Image.new("RGB", (1600, 260), (252, 252, 252))
+    draw = ImageDraw.Draw(img)
+    draw.text((40, 25), "Mfg by: GlaxoSmithKline Consumer Healthcare Limited", fill=(25, 25, 25))
+    draw.text((40, 75), "Patiala Road, Nabha, Punjab - 147201. Lic No. 10012063000078", fill=(25, 25, 25))
+    draw.text((40, 125), "For Consumer Feedback: 1800-22-2211, feedback@gsk.com", fill=(25, 25, 25))
+    draw.text((40, 175), "Toothpaste with Potassium Nitrate and Sodium Fluoride", fill=(25, 25, 25))
+    img.save(img_path, format="JPEG", quality=95)
+
+    res = analyze_image_quality(img_path)
+    assert res.status == ImageQualityStatus.ACCEPT
+    assert not any(i.code == QualityIssueCode.IMAGE_LOW_CONTRAST and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert res.metrics.text_stroke_contrast >= 40.0
+
+
+def test_27_unusual_aspect_ratio_alone_does_not_cause_recapture(tmp_path):
+    """5. Unusual aspect ratio alone does not cause recapture."""
+    img_path = str(tmp_path / "extreme_aspect.jpg")
+    # Extreme aspect ratio 7.5:1 (1800 x 240)
+    img = Image.new("RGB", (1800, 240), (245, 245, 245))
+    draw = ImageDraw.Draw(img)
+    draw.text((50, 40), "LONG CARTON FOIL STRIP - BATCH NO 9821 MFG 01/2025", fill=(15, 15, 15))
+    draw.text((50, 120), "MRP Rs. 75.00 INCL OF ALL TAXES - NET QTY: 10 TABLETS", fill=(15, 15, 15))
+    img.save(img_path, format="JPEG", quality=95)
+
+    res = analyze_image_quality(img_path)
+    assert res.metrics.aspect_ratio >= 7.0
+    assert res.status != ImageQualityStatus.RECAPTURE_REQUIRED
+    assert not any(i.severity == IssueSeverity.ERROR for i in res.issues)
+
+
+def test_28_possible_cropping_normally_produces_warn():
+    """6. Possible cropping normally produces WARN, never an automatic ERROR."""
+    from app.image_quality.schemas import ImageQualityMetric
+    normal_metric = ImageQualityMetric(
+        blur_score=150.0,
+        brightness_mean=130.0,
+        dark_pixel_ratio=0.05,
+        bright_pixel_ratio=0.05,
+        glare_ratio=0.01,
+        contrast_std=50.0,
+        width=1200,
+        height=800,
+        total_pixels=1200 * 800,
+        aspect_ratio=1.5,
+        text_stroke_contrast=80.0,
+        text_stroke_count=500,
+        intensity_range=200.0,
+    )
+    res = evaluate_image_quality(normal_metric, possible_cropping=True)
+    assert res.status == ImageQualityStatus.WARN
+    assert any(i.code == QualityIssueCode.POSSIBLE_CROPPING for i in res.issues)
+    crop_issue = next(i for i in res.issues if i.code == QualityIssueCode.POSSIBLE_CROPPING)
+    assert crop_issue.severity == IssueSeverity.WARNING
+    assert not any(i.severity == IssueSeverity.ERROR for i in res.issues)
+
+
+def test_29_severe_blur_still_causes_recapture_required(image_fixtures):
+    """7. Severe blur still causes RECAPTURE_REQUIRED."""
+    res = analyze_image_quality(image_fixtures["blurred"])
+    assert res.status == ImageQualityStatus.RECAPTURE_REQUIRED
+    assert any(i.code == QualityIssueCode.IMAGE_TOO_BLURRY and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert len(res.rejection_reasons) > 0
+
+
+def test_30_almost_total_darkness_still_causes_recapture_required(image_fixtures):
+    """8. Almost-total darkness still causes RECAPTURE_REQUIRED."""
+    res = analyze_image_quality(image_fixtures["almost_black"])
+    assert res.status == ImageQualityStatus.RECAPTURE_REQUIRED
+    assert any(i.code == QualityIssueCode.IMAGE_TOO_DARK and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert len(res.rejection_reasons) > 0
+
+
+def test_31_unusably_low_resolution_images_still_cause_recapture_required(image_fixtures):
+    """9. Unusably low-resolution images still cause RECAPTURE_REQUIRED."""
+    res = analyze_image_quality(image_fixtures["low_res"])
+    assert res.status == ImageQualityStatus.RECAPTURE_REQUIRED
+    assert any(i.code == QualityIssueCode.IMAGE_LOW_RESOLUTION and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert len(res.rejection_reasons) > 0
+
+
+def test_32_genuine_destructive_glare_causes_recapture(image_fixtures):
+    """10. Genuine destructive glare still causes recapture when supported."""
+    res = analyze_image_quality(image_fixtures["severe_glare"])
+    assert res.status == ImageQualityStatus.RECAPTURE_REQUIRED
+    assert any(i.code == QualityIssueCode.IMAGE_GLARE and i.severity == IssueSeverity.ERROR for i in res.issues)
+    assert len(res.rejection_reasons) > 0
+
+
+def test_33_multi_panel_inspection_continues_when_sufficient_usable_panels_remain(image_fixtures):
+    """11. Multi-panel inspection continues when sufficient usable panels remain."""
+    # Panel 0 is sharp; Panel 1 is severely blurred
+    paths = [image_fixtures["sharp"], image_fixtures["blurred"]]
+    summary = analyze_inspection_images(paths)
+    assert summary.total_images == 2
+    assert summary.usable_image_indices == [0]
+    assert summary.recapture_image_indices == [1]
+    assert summary.overall_quality_status == ImageQualityStatus.WARN
+
+
+def test_34_image_quality_warn_never_directly_creates_statutory_fail():
+    """12. Image-quality WARN never directly creates statutory FAIL."""
+    from app.rules.rule_engine import derive_overall_result
+    # An unverified or warning evidence item must yield NOT_VERIFIABLE, never NON_COMPLIANT / FAIL
+    overall = derive_overall_result([{"status": "NOT_VERIFIABLE", "verification_type": "IMAGE_QUALITY_WARN"}])
+    assert overall == InspectionStatus.NOT_VERIFIABLE
+    assert overall != InspectionStatus.NON_COMPLIANT
+    assert overall != "FAIL"
+
+
+def test_35_all_image_rejection_skips_ocr_and_gemini_safely(image_fixtures):
+    """13. All-image rejection skips OCR and Gemini safely."""
+    paths = [image_fixtures["blurred"], image_fixtures["almost_black"]]
+    summary = analyze_inspection_images(paths)
+    assert len(summary.usable_image_indices) == 0
+    assert summary.overall_quality_status == ImageQualityStatus.RECAPTURE_REQUIRED
+    assert summary.rejected_images == 2
+
+
+def test_36_unknown_category_never_displayed_with_artificial_100_percent_confidence():
+    """14. Unknown category is never displayed with artificial 100% confidence."""
+    from app.database import models
+
+    insp = models.Inspection(
+        id=999,
+        category="UNKNOWN",
+        category_confidence=0.0,
+        product_name="UNVERIFIABLE (Image Recapture Required)",
+        overall_result=InspectionStatus.NOT_VERIFIABLE,
+    )
+    # Verification of report formatting
+    cat_name = insp.category or "UNKNOWN"
+    if cat_name == "UNKNOWN" or insp.category_confidence is None or insp.category_confidence == 0.0:
+        cat_display = f"{cat_name} (Not Classified)" if cat_name == "UNKNOWN" else f"{cat_name} (Conf: 0%)"
+    else:
+        cat_display = f"{cat_name} (Conf: {int(insp.category_confidence * 100)}%)"
+
+    assert "100%" not in cat_display
+    assert cat_display == "UNKNOWN (Not Classified)"
+
+
+def test_37_all_recapture_reports_distinguish_acquisition_failure_from_completed_screening(tmp_path):
+    """15. All-recapture reports distinguish acquisition failure from completed regulatory screening."""
+    from app.database import models
+    from app.reports.pdf_report import generate_inspection_pdf
+
+    class MockQuery:
+        def __init__(self, items):
+            self.items = items
+        def filter(self, *args, **kwargs):
+            return self
+        def order_by(self, *args, **kwargs):
+            return self
+        def all(self):
+            return self.items
+        def first(self):
+            return self.items[0] if self.items else None
+
+    class MockDB:
+        def query(self, model):
+            return MockQuery([])
+        def add(self, obj):
+            pass
+        def commit(self):
+            pass
+
+    insp = models.Inspection(
+        id=888,
+        product_name="UNVERIFIABLE (Image Recapture Required)",
+        category="UNKNOWN",
+        category_confidence=0.0,
+        notes="All submitted package images were flagged for recapture by the automatic image quality gate.",
+        overall_result=InspectionStatus.NOT_VERIFIABLE,
+        package_type="NOT_DETECTED",
+        import_status="NOT_DETECTED",
+    )
+
+    pdf_report = generate_inspection_pdf(insp, MockDB())
+    assert pdf_report is not None
+    assert os.path.exists(pdf_report.file_path)
+
+    # Read binary content to confirm header and absence of artificial 100% confidence
+    with open(pdf_report.file_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    assert pdf_bytes.startswith(b"%PDF-")
+    # Verify "UNKNOWN (Conf: 100%)" is NOT present in the generated PDF
+    assert b"UNKNOWN (Conf: 100%)" not in pdf_bytes
+

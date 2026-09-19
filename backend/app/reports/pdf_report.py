@@ -386,7 +386,26 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         canonical_result = normalize_status(derived_overall) or InspectionStatus.NOT_VERIFIABLE
     else:
         canonical_result = normalize_status(inspection.overall_result) or InspectionStatus.NOT_VERIFIABLE
-    if canonical_result == InspectionStatus.COMPLIANT:
+    # Detect whether this inspection resulted from an all-recapture image acquisition failure
+    is_recapture = (
+        canonical_result == "IMAGE_RECAPTURE_REQUIRED"
+        or (inspection.notes and "recapture" in inspection.notes.lower())
+        or (inspection.product_name and "Image Recapture Required" in str(inspection.product_name))
+        or (
+            getattr(inspection, "ocr_result", None)
+            and getattr(inspection.ocr_result, "ocr_data", None)
+            and isinstance(inspection.ocr_result.ocr_data, dict)
+            and inspection.ocr_result.ocr_data.get("llm_metadata", {}).get("reason") == "ALL_IMAGES_RECAPTURE_REQUIRED"
+        )
+    )
+
+    if is_recapture:
+        overall_label = "IMAGE_RECAPTURE_REQUIRED"
+        overall_bg = colors.HexColor('#FEF3C7')
+        overall_border = colors.HexColor('#D97706')
+        overall_color = '#92400E'
+        overall_desc = "Image acquisition quality gate flagged submitted images for recapture. OCR and regulatory rule evaluation were skipped; this is an acquisition defect, not a completed statutory compliance screening."
+    elif canonical_result == InspectionStatus.COMPLIANT:
         overall_label = "COMPLIANT"
         overall_bg = colors.HexColor('#E8F5E9')
         overall_border = colors.HexColor('#2E7D32')
@@ -417,6 +436,13 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         date_str = dt.astimezone(ist_tz).strftime("%d-%b-%Y %I:%M:%S %p IST")
     else:
         date_str = datetime.now(timezone.utc).astimezone(ist_tz).strftime("%d-%b-%Y %I:%M:%S %p IST")
+
+    # Format category accurately: never display artificial 100% confidence for UNKNOWN / unclassified
+    cat_name = inspection.category or "UNKNOWN"
+    if cat_name == "UNKNOWN" or inspection.category_confidence is None or inspection.category_confidence == 0.0:
+        cat_display = f"{cat_name} (Not Classified)" if cat_name == "UNKNOWN" else f"{cat_name} (Conf: 0%)"
+    else:
+        cat_display = f"{cat_name} (Conf: {int(inspection.category_confidence * 100)}%)"
 
     # =========================================================================
     # PAGE 1: LMAI INSPECTOR — INSPECTION OVERVIEW & SUMMARY
@@ -483,7 +509,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         ],
         [
             _paragraph("Category", body_bold),
-            _paragraph(f"{inspection.category or 'UNKNOWN'} (Conf: {int((inspection.category_confidence or 1.0) * 100)}%)", body_style),
+            _paragraph(cat_display, body_style),
             _paragraph("Product Type", body_bold),
             _paragraph(inspection.product_type or "UNKNOWN", body_style),
         ],
@@ -576,6 +602,11 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         findings_rows.append([
             _safe_html_p(f"<b><font color='#1B5E20'>Verified Declarations ({len(findings['verified'])}):</font></b>", small_bold),
             _safe_html_p(", ".join(findings['verified']), small_style),
+        ])
+    if is_recapture:
+        findings_rows.insert(0, [
+            _safe_html_p("<b><font color='#92400E'>Quality Gate Notice:</font></b>", small_bold),
+            _safe_html_p("All submitted package images failed pre-OCR quality screening and require recapture. Statutory compliance rule evaluation was not performed; this is an image acquisition result.", small_style),
         ])
     if not findings_rows:
         findings_rows.append([_paragraph("No specific finding categories available.", small_style), _paragraph("—", small_style)])
