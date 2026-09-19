@@ -5,6 +5,7 @@ and hybrid merging with rule-based candidate extractions.
 
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,6 +54,150 @@ CANONICAL DECLARATIONS TO IDENTIFY AND RESOLVE:
 21. INGREDIENTS_LIST: Complete list of ingredients.
 22. NUTRITIONAL_INFO: Nutritional facts/information table per 100g or per serve.
 """
+
+
+ROLE_SPECIFIC_FIELDS = {
+    "MANUFACTURER_NAME": {"MANUFACTURER", "PACKER"},
+    "MANUFACTURER_ADDRESS": {"MANUFACTURER", "PACKER"},
+    "PACKER_NAME": {"PACKER"},
+    "PACKER_ADDRESS": {"PACKER"},
+    "MARKETER_NAME": {"MARKETER"},
+    "MARKETER_ADDRESS": {"MARKETER"},
+}
+
+
+def _responsible_party_roles(text: str) -> set[str]:
+    """Classify explicit responsible-party labels, including narrow OCR damage."""
+    roles: set[str] = set()
+    value = str(text or "")
+    if re.search(
+        r'\b(?:manufactur(?:ed|er)\b|mfg\.?\s*by|mfd\.?\s*by|made\s+by\b)',
+        value,
+        re.IGNORECASE,
+    ):
+        roles.add("MANUFACTURER")
+    if re.search(
+        r'\b(?:marketed\b|marketer\b|distributed\s+by\b|m(?:k|kt|ktg)\.?\s*by)',
+        value,
+        re.IGNORECASE,
+    ):
+        roles.add("MARKETER")
+    if re.search(
+        r'\b(?:packed\s+by\b|packaged\s+by\b|packer\b|pkd\.?\s*by\b|pkg\.?\s*by\b)',
+        value,
+        re.IGNORECASE,
+    ):
+        roles.add("PACKER")
+    return roles
+
+
+def _resolve_grounded_entity_role(
+    source_evidence: List[SourceEvidence],
+    ocr_items: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve an entity role from cited tokens and the nearest spatial label.
+
+    Directly cited labels take precedence.  When an address token does not cite
+    its label, only a nearby label above/on the same OCR block and on the same
+    image may associate the role.  This prevents text presence elsewhere on the
+    package from satisfying a role-specific declaration.
+    """
+    by_key = {
+        (int(item.get("image_index") or 0), int(item.get("token_id"))): item
+        for item in ocr_items
+        if item.get("token_id") is not None
+    }
+    direct_roles: set[str] = set()
+    direct_texts: List[str] = []
+    referenced: List[Dict[str, Any]] = []
+    image_indexes: set[int] = set()
+    for evidence in source_evidence:
+        image_index = int(evidence.image_index)
+        image_indexes.add(image_index)
+        direct_texts.append(evidence.raw_text)
+        direct_roles.update(_responsible_party_roles(evidence.raw_text))
+        for token_id in evidence.token_ids:
+            token = by_key.get((image_index, int(token_id)))
+            if token:
+                referenced.append(token)
+                token_text = str(token.get("text") or "")
+                direct_texts.append(token_text)
+                direct_roles.update(_responsible_party_roles(token_text))
+
+    if direct_roles:
+        return {
+            "roles": sorted(direct_roles),
+            "association": "CITED_ROLE_LABEL",
+            "source_image_indexes": sorted(image_indexes),
+            "combined_label": any(
+                re.search(r'manufactur\w*\s*(?:&|and|/)\s*market\w*\s+by', text, re.IGNORECASE)
+                for text in direct_texts
+            ),
+        }
+
+    # Build one evidence union per image. SourceEvidence bboxes are already
+    # grounding-validated; referenced token boxes are used as a fallback.
+    evidence_boxes: Dict[int, List[List[float]]] = {}
+    for evidence in source_evidence:
+        if evidence.bbox and len(evidence.bbox) == 4:
+            evidence_boxes.setdefault(int(evidence.image_index), []).append(list(evidence.bbox))
+    for token in referenced:
+        bbox = token.get("bbox") or []
+        if len(bbox) == 4:
+            evidence_boxes.setdefault(int(token.get("image_index") or 0), []).append(list(bbox))
+
+    anchors: List[Tuple[float, set[str], Dict[str, Any]]] = []
+    for image_index, boxes in evidence_boxes.items():
+        if not boxes:
+            continue
+        union = [
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        ]
+        evidence_height = max(1.0, union[3] - union[1])
+        evidence_width = max(1.0, union[2] - union[0])
+        for item in ocr_items:
+            if int(item.get("image_index") or 0) != image_index:
+                continue
+            roles = _responsible_party_roles(str(item.get("text") or ""))
+            label_box = item.get("bbox") or []
+            if not roles or len(label_box) != 4:
+                continue
+            label_height = max(1.0, label_box[3] - label_box[1])
+            vertical_gap = union[1] - label_box[3]
+            if vertical_gap < -label_height or vertical_gap > max(140.0, evidence_height * 3.0):
+                continue
+            overlap = max(0.0, min(union[2], label_box[2]) - max(union[0], label_box[0]))
+            horizontal_gap = max(0.0, max(union[0], label_box[0]) - min(union[2], label_box[2]))
+            if overlap <= 0 and horizontal_gap > max(80.0, evidence_width * 0.35):
+                continue
+            score = max(0.0, vertical_gap) + horizontal_gap * 0.25
+            anchors.append((score, roles, item))
+
+    if anchors:
+        anchors.sort(key=lambda row: row[0])
+        best_score, best_roles, best_item = anchors[0]
+        # Equally close contradictory labels mean the block association is not
+        # deterministic; retain uncertainty instead of choosing one.
+        tied_roles: set[str] = set(best_roles)
+        for score, roles, _ in anchors[1:]:
+            if score <= best_score + 5.0:
+                tied_roles.update(roles)
+        return {
+            "roles": sorted(tied_roles),
+            "association": "NEAREST_SPATIAL_ROLE_LABEL",
+            "source_image_indexes": [int(best_item.get("image_index") or 0)],
+            "label_text": str(best_item.get("text") or ""),
+            "label_bbox": best_item.get("bbox"),
+        }
+
+    return {
+        "roles": [],
+        "association": "UNASSOCIATED",
+        "source_image_indexes": sorted(image_indexes),
+    }
 
 
 def _format_ocr_tokens_for_prompt(ocr_items: List[Dict[str, Any]], max_tokens: int = 400) -> str:
@@ -142,6 +287,10 @@ INSTRUCTIONS FOR EVIDENCE RESOLUTION:
    - import_status: DOMESTIC, IMPORTED, or NOT_DETECTED
    - confidence and reasoning.
 3. Every referenced token ID MUST exist in the tokens table above. Do NOT hallucinate token IDs.
+4. For MANUFACTURER, PACKER, and MARKETER fields, cite the responsible-party label token
+   and its associated value/address block from the same image. Never use marketer-only
+   evidence for a manufacturer field. If the role label is absent, damaged beyond a
+   deterministic association, or belongs to another entity block, return NOT_FOUND.
 """
     return prompt
 
@@ -233,6 +382,51 @@ def resolve_evidence_with_gemini(
         if decl.status == "RESOLVED" and decl.value:
             source_context = "\n".join(ev.raw_text for ev in decl.source_evidence if ev.raw_text)
 
+            resolved_role: Optional[str] = None
+            if field_name in ROLE_SPECIFIC_FIELDS:
+                expected_roles = ROLE_SPECIFIC_FIELDS[field_name]
+                role_audit = _resolve_grounded_entity_role(decl.source_evidence, ocr_items)
+                cited_roles = set(role_audit.get("roles") or [])
+                det_role = str(
+                    (det_candidate or {}).get("role")
+                    or (det_candidate or {}).get("entity_type")
+                    or ""
+                ).upper()
+                has_ambiguous_role_block = bool(
+                    len(cited_roles) > 1 and not role_audit.get("combined_label")
+                )
+
+                if cited_roles & expected_roles and not has_ambiguous_role_block:
+                    resolved_role = sorted(cited_roles & expected_roles)[0]
+                elif not cited_roles and det_role in expected_roles:
+                    # A deterministic same-field candidate may already have a
+                    # role-labelled block; do not discard that stronger
+                    # association merely because Gemini cited only the value.
+                    resolved_role = det_role
+                    role_audit["association"] = "DETERMINISTIC_ROLE_ASSOCIATION"
+                else:
+                    rejection = {
+                        "field": field_name,
+                        "value": decl.value,
+                        "expected_roles": sorted(expected_roles),
+                        "role_audit": role_audit,
+                        "reason": (
+                            "Cited evidence spans competing responsible-party roles."
+                            if has_ambiguous_role_block
+                            else "Cited evidence is not associated with the required entity role."
+                        ),
+                    }
+                    llm_metadata.setdefault("role_resolution_rejections", []).append(rejection)
+                    # Retain an independently role-grounded deterministic value,
+                    # but never let the semantic candidate overwrite it.
+                    if det_candidate and det_role in expected_roles:
+                        retained = dict(det_candidate)
+                        retained["review_notes"] = rejection["reason"]
+                        merged_fields[field_name] = retained
+                    else:
+                        merged_fields.pop(field_name, None)
+                    continue
+
             # Semantic association cannot turn a marketer/customer-care address
             # into a manufacturer address merely because the text is grounded.
             address_role_conflict = False
@@ -314,6 +508,10 @@ def resolve_evidence_with_gemini(
                     else []
                 ),
             }
+
+            if resolved_role:
+                merged_field["role"] = resolved_role
+                merged_field["role_evidence"] = role_audit
 
             if normalized_contacts:
                 merged_field["contacts"] = normalized_contacts

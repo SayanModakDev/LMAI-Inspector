@@ -641,6 +641,27 @@ async def perform_scan(
                         'conflict_reason': merged_visual.get('reason'),
                         'candidates': merged_visual.get('candidates', []),
                     }
+                elif merged_visual.get('status') == 'NOT_VERIFIABLE':
+                    # Preserve the visual detector audit even when no candidate
+                    # satisfies statutory geometry.  This keeps the food-symbol
+                    # rule explanation tied to image evidence instead of falling
+                    # through to the generic "missing from OCR" message.
+                    extracted_fields['VEG_NONVEG_SYMBOL'] = {
+                        'value': 'NOT_DETECTED',
+                        'symbol_type': 'UNKNOWN',
+                        'confidence': merged_visual.get('confidence', 0),
+                        'source': 'VISUAL_DETECTION',
+                        'source_image_index': merged_visual.get('source_image_index'),
+                        'bbox': merged_visual.get('bbox'),
+                        'detection_method': merged_visual.get('detection_method'),
+                        'status': 'REVIEW',
+                        'reason': merged_visual.get('reason') or (
+                            'No supported prescribed food symbol was detected in the package images.'
+                        ),
+                        'is_candidate': False,
+                        'has_conflict': False,
+                        'candidates': merged_visual.get('candidates', []),
+                    }
         else:
             # Non-food products (COSMETIC, HOUSEHOLD, ELECTRONICS, etc.) or unconfident category:
             # Do NOT run food-symbol detection and do NOT retain VEG_NONVEG_SYMBOL evidence.

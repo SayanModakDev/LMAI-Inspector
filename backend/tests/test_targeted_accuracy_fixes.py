@@ -1,7 +1,10 @@
 """Regression coverage for Tata Salt accuracy fixes (offline; no Gemini calls)."""
 
+from pathlib import Path
+
 import cv2
 import numpy as np
+import pytest
 from unittest.mock import MagicMock
 
 from app.core.ontology import extract_contextual_emails, normalize_contextual_email
@@ -10,6 +13,7 @@ from app.rules.validators import (
     dispatch_validator,
     validate_address_present,
     validate_consumer_care_present,
+    validate_manufacturer_present,
 )
 from app.llm.evidence_resolver import resolve_evidence_with_gemini
 from app.llm.schemas import LLMExtractionResult, ResolvedDeclaration, SourceEvidence
@@ -105,6 +109,51 @@ def test_insufficient_symbol_evidence_does_not_fabricate_detection():
     assert merged["detected"] is False
 
 
+def test_symbol_non_detection_rule_reason_describes_visual_evidence():
+    reason = "No supported prescribed food symbol detected on package images."
+    result = dispatch_validator(
+        "VEG_NONVEG_PRESENT",
+        {
+            "value": "NOT_DETECTED",
+            "symbol_type": "UNKNOWN",
+            "source": "VISUAL_DETECTION",
+            "status": "REVIEW",
+            "reason": reason,
+            "confidence": 0.0,
+        },
+        {"parameter": "VEG_NONVEG_SYMBOL", "required": True},
+        {},
+    )
+    assert result.status == "NOT_VERIFIABLE"
+    assert result.reason == reason
+    assert "OCR" not in result.reason
+
+
+def test_real_tata_salt_four_image_visual_regression():
+    uploads = Path(__file__).resolve().parents[1] / "uploads"
+    image_names = [
+        "scan_20260910_190520_513508b9372c.jpg",
+        "scan_20260910_190520_52c81405cfd7.jpg",
+        "scan_20260910_190520_2f23e3d63d6e.jpg",
+        "scan_20260910_190520_54443dd38913.jpg",
+    ]
+    paths = [uploads / name for name in image_names]
+    if not all(path.exists() for path in paths):
+        pytest.skip("Original four Tata Salt regression images are not available locally")
+
+    panel_results = [(detect_food_symbol(str(path)), index) for index, path in enumerate(paths)]
+    merged = aggregate_food_symbol_evidence(panel_results)
+
+    assert merged["status"] == "CANDIDATE"
+    assert merged["symbol_type"] == "VEGETARIAN"
+    assert merged["source_image_index"] == 0
+    assert merged["has_conflict"] is False
+    accepted = [item for item in merged["supporting_candidates"] if item["accepted"]]
+    assert len(accepted) == 1
+    assert accepted[0]["frame_detection"] == "fragmented_same_colour_frame"
+    assert accepted[0]["frame_metrics"]["interior_annulus_density"] <= 0.16
+
+
 def test_isolated_state_is_partial_and_not_a_false_pass():
     evidence = {"value": "Gujarat", "confidence": 0.9, "role": "MANUFACTURER"}
     result = validate_address_present(evidence, _address_rule(), {})
@@ -139,10 +188,121 @@ def test_manufacturer_and_marketer_addresses_are_not_merged():
         "Marketed by: Global Retail Ventures Ltd\n"
         "Tower 2, Market Road, Mumbai, Maharashtra 400001"
     )
-    assert marketer_only["MANUFACTURER_ADDRESS"]["role"] == "MARKETER"
-    assert validate_address_present(
-        marketer_only["MANUFACTURER_ADDRESS"], _address_rule(), marketer_only
+    assert "MANUFACTURER_NAME" not in marketer_only
+    assert "MANUFACTURER_ADDRESS" not in marketer_only
+    assert marketer_only["MARKETER_NAME"]["role"] == "MARKETER"
+    assert validate_manufacturer_present(
+        marketer_only["MARKETER_NAME"],
+        {"parameter": "MANUFACTURER_NAME", "required": True},
+        marketer_only,
     ).status == "NOT_VERIFIABLE"
+
+
+def test_damaged_mk_by_label_remains_marketer_evidence_only():
+    items = [
+        {
+            "token_id": 1,
+            "text": "Mk byata nr Products Limited",
+            "bbox": [100, 100, 360, 120],
+            "confidence": 0.74,
+            "image_index": 1,
+        },
+        {
+            "token_id": 2,
+            "text": "Tata Centre, 1st Floor, 43 Jawaharlal Nehru Road",
+            "bbox": [100, 124, 470, 146],
+            "confidence": 0.90,
+            "image_index": 1,
+        },
+        {
+            "token_id": 3,
+            "text": "Kolkata 700071",
+            "bbox": [100, 150, 230, 170],
+            "confidence": 0.96,
+            "image_index": 1,
+        },
+    ]
+    fields = extract_declarations("\n".join(item["text"] for item in items), ocr_items=items)
+
+    assert "MANUFACTURER_NAME" not in fields
+    assert "MANUFACTURER_ADDRESS" not in fields
+    assert fields["MARKETER_NAME"]["role"] == "MARKETER"
+    assert fields["MARKETER_NAME"]["source_image_index"] == 1
+    assert fields["MARKETER_NAME"]["bbox"] == [100, 100, 360, 120]
+    assert fields["MARKETER_NAME"]["source_evidence"][0]["raw_text"] == "Mk byata nr Products Limited"
+    assert "Kolkata" in fields["MARKETER_ADDRESS"]["value"]
+
+
+def test_gemini_grounding_cannot_promote_damaged_marketer_to_manufacturer():
+    raw = "Mk byata nr Products Limited\nTata Centre, 1st Floor, Kolkata 700071"
+    items = [
+        {
+            "token_id": 1,
+            "text": "Mk byata nr Products Limited",
+            "bbox": [100, 100, 350, 120],
+            "confidence": 0.74,
+            "image_index": 1,
+        },
+        {
+            "token_id": 2,
+            "text": "Tata Centre, 1st Floor, Kolkata 700071",
+            "bbox": [100, 125, 400, 150],
+            "confidence": 0.90,
+            "image_index": 1,
+        },
+    ]
+    deterministic = extract_declarations(raw, ocr_items=items)
+    llm_result = LLMExtractionResult(resolved_declarations=[ResolvedDeclaration(
+        field="MANUFACTURER_NAME",
+        value="Mk byata nr Products Limited",
+        status="RESOLVED",
+        confidence=0.95,
+        source_evidence=[SourceEvidence(
+            image_index=1,
+            token_ids=[1],
+            raw_text="Mk byata nr Products Limited",
+            bbox=[100, 100, 350, 120],
+            ocr_confidence=0.74,
+        )],
+    )])
+    client = MagicMock()
+    client.is_enabled.return_value = True
+    client.generate_structured_extraction.return_value = (
+        llm_result,
+        {"llm_status": "SUCCESS", "model_used": "mock"},
+    )
+
+    merged, metadata, _ = resolve_evidence_with_gemini(
+        ocr_items=items,
+        raw_text=raw,
+        num_images=2,
+        deterministic_fields=deterministic,
+        client=client,
+    )
+
+    assert "MANUFACTURER_NAME" not in merged
+    assert merged["MARKETER_NAME"]["role"] == "MARKETER"
+    assert metadata["role_resolution_rejections"][0]["role_audit"]["roles"] == ["MARKETER"]
+
+
+def test_tata_role_blocks_keep_original_image_and_distinct_bounding_boxes():
+    items = [
+        {"token_id": 10, "text": "Mkt by: Tata Consumer Products Limited", "bbox": [100, 100, 400, 120], "confidence": 0.94, "image_index": 1},
+        {"token_id": 11, "text": "1st Floor, 43, Jawaharlal Nehru Road", "bbox": [100, 124, 380, 145], "confidence": 0.90, "image_index": 1},
+        {"token_id": 12, "text": "Kolkata - 700 071", "bbox": [100, 148, 250, 168], "confidence": 0.95, "image_index": 1},
+        {"token_id": 13, "text": "Mfg by: Tata Chemicals Limited", "bbox": [100, 180, 350, 200], "confidence": 0.92, "image_index": 1},
+        {"token_id": 14, "text": "Mithapur - 361345, District-Devbhumi Dwarka", "bbox": [100, 204, 430, 226], "confidence": 0.94, "image_index": 1},
+        {"token_id": 15, "text": "Gujarat", "bbox": [100, 230, 180, 250], "confidence": 0.96, "image_index": 1},
+    ]
+    fields = extract_declarations("\n".join(item["text"] for item in items), ocr_items=items)
+
+    assert fields["MANUFACTURER_NAME"]["value"] == "Tata Chemicals Limited"
+    assert fields["MARKETER_NAME"]["value"] == "Tata Consumer Products Limited"
+    assert fields["MANUFACTURER_ADDRESS"]["source_image_index"] == 1
+    assert fields["MARKETER_ADDRESS"]["source_image_index"] == 1
+    assert fields["MANUFACTURER_ADDRESS"]["bbox"][1] > fields["MARKETER_ADDRESS"]["bbox"][3]
+    assert "Kolkata" not in fields["MANUFACTURER_ADDRESS"]["value"]
+    assert "Mithapur" not in fields["MARKETER_ADDRESS"]["value"]
 
 
 def test_incomplete_ocr_address_is_preserved_as_partial_not_invented():
