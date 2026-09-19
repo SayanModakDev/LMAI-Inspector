@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.classification.category_classifier import classify_category, CATEGORY_VOCABULARY
 from app.classification.package_context import detect_package_context
 from app.core.config import get_settings
+from app.core.constants import InspectionStatus
 from app.database import models, schemas
 from app.database.connection import get_db
 from app.extraction.declaration_extractor import extract_declarations, merge_product_evidence, merge_extracted_fields
@@ -137,8 +138,200 @@ async def perform_scan(
         total_processing_time = 0
         timings: Dict[str, Any] = {"upload_ms": upload_ms, "images": []}
 
+        # -------------------------------------------------------------------
+        # Pre-OCR Automatic Image Quality Gate
+        # -------------------------------------------------------------------
+        quality_started = time.perf_counter()
+        quality_summary = None
+        usable_image_indices = list(range(len(original_paths)))
+        recapture_image_indices = []
+
+        if getattr(settings, "IMAGE_QUALITY_GATE_ENABLED", True):
+            from app.image_quality.analyzer import analyze_inspection_images
+            from app.image_quality.policy import QualityPolicyConfig
+
+            cfg = QualityPolicyConfig.from_settings(settings)
+            quality_summary = analyze_inspection_images(original_paths, config=cfg)
+            usable_image_indices = quality_summary.usable_image_indices
+            recapture_image_indices = quality_summary.recapture_image_indices
+
+        quality_ms = round((time.perf_counter() - quality_started) * 1000)
+        timings["image_quality_ms"] = quality_ms
+
+        # If ALL images require recapture, do not run OCR or Gemini.
+        # Return a controlled NOT_VERIFIABLE inspection response.
+        if getattr(settings, "IMAGE_QUALITY_GATE_ENABLED", True) and len(usable_image_indices) == 0 and len(original_paths) > 0:
+            logger.warning("All submitted inspection images require recapture. Skipping OCR and Gemini.")
+            for image_index, original_path in enumerate(original_paths):
+                q_res = quality_summary.quality_results[image_index] if (quality_summary and image_index < len(quality_summary.quality_results)) else None
+                image_results.append({
+                    'image_index': image_index,
+                    'image_path': safe_filenames[image_index],
+                    'processed_image_path': os.path.basename(original_path),
+                    'processed_full_path': original_path,
+                    'ocr_status': 'RECAPTURE_REQUIRED',
+                    'ocr_text': '',
+                    'ocr_items': [],
+                    'ocr_diagnostics': {
+                        'status': 'RECAPTURE_REQUIRED',
+                        'quality_issues': [i.model_dump() for i in q_res.issues] if q_res else [],
+                    },
+                    'quality': q_res.model_dump() if q_res else None,
+                    'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},
+                    'visual_evidence': None,
+                })
+
+            quality_review_notes = []
+            if quality_summary:
+                for qr in quality_summary.quality_results:
+                    for iss in qr.issues:
+                        quality_review_notes.append(f"Panel {qr.image_index + 1}: {iss.message}")
+            if not quality_review_notes:
+                quality_review_notes.append("All submitted package images were unreadable and require recapture.")
+
+            from app.rules.status_safety import derive_dynamic_regulatory_snapshot
+            current_date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            snapshot_meta = derive_dynamic_regulatory_snapshot(applicable_rules=[], inspection_date=current_date_str)
+
+            overall_result = InspectionStatus.NOT_VERIFIABLE
+            db_inspection = models.Inspection(
+                image_path=safe_filenames[0] if safe_filenames else None,
+                processed_image_path=safe_filenames[0] if safe_filenames else None,
+                category="UNKNOWN",
+                category_confidence=0.0,
+                package_type="NOT_DETECTED",
+                import_status="NOT_DETECTED",
+                product_name="UNVERIFIABLE (Image Recapture Required)",
+                brand=None,
+                product_type="UNKNOWN",
+                overall_result=overall_result,
+                priority="HIGH",
+                notes="All submitted package images were flagged for recapture by the automatic image quality gate.",
+                regulatory_snapshot=snapshot_meta.get('snapshot_id'),
+            )
+            db.add(db_inspection)
+            db.flush()
+
+            image_index_to_id = {}
+            for index, safe_name in enumerate(safe_filenames):
+                db_image = models.InspectionImage(
+                    inspection_id=db_inspection.id,
+                    image_index=index,
+                    file_name=safe_name,
+                    processed_file_name=safe_name,
+                    source="UPLOAD",
+                )
+                db.add(db_image)
+                db.flush()
+                image_index_to_id[index] = db_image.id
+
+            db_product = models.Product(
+                inspection_id=db_inspection.id,
+                product_name="UNVERIFIABLE (Image Recapture Required)",
+            )
+            db.add(db_product)
+
+            ocr_payload = {
+                "ocr_items": [],
+                "barcode_result": None,
+                "images": image_results,
+                "registry_match": None,
+                "package_context": {"package_type": "NOT_DETECTED", "import_status": "NOT_DETECTED"},
+                "llm_metadata": {"llm_status": "SKIPPED", "reason": "ALL_IMAGES_RECAPTURE_REQUIRED"},
+                "analysis_source": "Automatic Image Quality Gate (Recapture Required - OCR Skipped)",
+                "quality_summary": quality_summary.model_dump() if quality_summary else None,
+            }
+            db_ocr = models.OCRResult(
+                inspection_id=db_inspection.id,
+                raw_text="",
+                ocr_data=ocr_payload,
+                processing_time_ms=0,
+            )
+            db.add(db_ocr)
+
+            timings['total_ms'] = round((time.perf_counter() - request_started) * 1000)
+            ocr_payload['timings'] = timings
+            db_ocr.ocr_data = ocr_payload
+            db.commit()
+
+            created_dt = db_inspection.created_at
+            if created_dt and created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
+
+            return schemas.ScanResponse(
+                inspection_id=db_inspection.id,
+                category="UNKNOWN",
+                category_confidence=0.0,
+                package_type="NOT_DETECTED",
+                import_status="NOT_DETECTED",
+                product_name=db_product.product_name,
+                brand=None,
+                product_type="UNKNOWN",
+                extracted_fields={},
+                rule_results=[],
+                summary={"passed": 0, "failed": 0, "review": 0, "not_applicable": 0},
+                overall_result=overall_result,
+                priority="HIGH",
+                evidence=[],
+                review_notes=quality_review_notes,
+                ocr_text="",
+                ocr_data=[],
+                image_url=format_public_url(f"/uploads/{safe_filenames[0]}"),
+                images=[
+                    {
+                        "id": image_id,
+                        "image_index": index,
+                        "image_path": format_public_url(f"/uploads/{safe_filenames[index]}"),
+                        "ocr_status": "RECAPTURE_REQUIRED",
+                        "ocr_diagnostics": image_results[index].get("ocr_diagnostics"),
+                        "quality": image_results[index].get("quality"),
+                    }
+                    for index, image_id in sorted(image_index_to_id.items())
+                ],
+                barcode_result=None,
+                registry_match=None,
+                created_at=created_dt,
+                inspection_date=created_dt,
+                regulatory_snapshot=snapshot_meta.get('snapshot_id'),
+                regulatory_snapshot_label=snapshot_meta.get('effective_label'),
+                analysis_source="Automatic Image Quality Gate (Recapture Required - OCR Skipped)",
+                llm_metadata={"llm_status": "SKIPPED", "reason": "ALL_IMAGES_RECAPTURE_REQUIRED"},
+                image_quality=quality_summary.model_dump() if quality_summary else None,
+            )
+
         for image_index, original_path in enumerate(original_paths):
             image_started = time.perf_counter()
+            q_res = quality_summary.quality_results[image_index] if (quality_summary and image_index < len(quality_summary.quality_results)) else None
+            is_usable = image_index in usable_image_indices
+
+            if not is_usable:
+                logger.info("Skipping OCR for unusable image %d due to quality gate RECAPTURE_REQUIRED", image_index)
+                image_results.append({
+                    'image_index': image_index,
+                    'image_path': safe_filenames[image_index],
+                    'processed_image_path': os.path.basename(original_path),
+                    'processed_full_path': original_path,
+                    'ocr_status': 'RECAPTURE_REQUIRED',
+                    'ocr_text': '',
+                    'ocr_items': [],
+                    'ocr_diagnostics': {
+                        'status': 'RECAPTURE_REQUIRED',
+                        'quality_issues': [i.model_dump() for i in q_res.issues] if q_res else [],
+                    },
+                    'quality': q_res.model_dump() if q_res else None,
+                    'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},
+                    'visual_evidence': None,
+                })
+                per_image_fields.append({})
+                timings["images"].append({
+                    "image_index": image_index,
+                    "quality_status": "RECAPTURE_REQUIRED",
+                    "preprocess_ms": 0,
+                    "ocr_ms": 0,
+                    "barcode_decode_ms": 0,
+                })
+                continue
+
             try:
                 processed_path, prep_info = preprocess_image(
                     input_path=original_path,
@@ -187,10 +380,17 @@ async def perform_scan(
                         'engine': ocr_result_data.get('engine', 'PaddleOCR'),
                         'engine_error': ocr_result_data.get('engine_error'),
                     },
+                    'quality': q_res.model_dump() if q_res else None,
                     'barcode_result': image_barcode,
                     'visual_evidence': None,
                 })
-                timings["images"].append({"image_index": image_index, "preprocess_ms": preprocess_ms, "ocr_ms": ocr_ms, "barcode_decode_ms": barcode_ms})
+                timings["images"].append({
+                    "image_index": image_index,
+                    "preprocess_ms": preprocess_ms,
+                    "ocr_ms": ocr_ms,
+                    "barcode_decode_ms": barcode_ms,
+                    "quality_ms": q_res.processing_time_ms if q_res else 0,
+                })
                 logger.info("scan timing image=%s preprocess_ms=%s ocr_ms=%s barcode_decode_ms=%s", image_index, preprocess_ms, ocr_ms, barcode_ms)
             except Exception as img_exc:
                 logger.error("Error processing scan image %s (%s): %s", image_index, original_path, img_exc)
@@ -206,6 +406,7 @@ async def perform_scan(
                         'status': 'OCR_ENGINE_ERROR',
                         'engine_error': str(img_exc),
                     },
+                    'quality': q_res.model_dump() if q_res else None,
                     'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},
                     'visual_evidence': None,
                 })
@@ -538,6 +739,7 @@ async def perform_scan(
             "package_context": package_context,
             "llm_metadata": gemini_metadata,
             "analysis_source": analysis_source,
+            "quality_summary": quality_summary.model_dump() if quality_summary else None,
         }
         db_ocr = models.OCRResult(
             inspection_id=db_inspection.id,
@@ -620,6 +822,19 @@ async def perform_scan(
         force_garbage_collection()
         log_memory_checkpoint("RSS before response", f"inspection_id={db_inspection.id}")
 
+        quality_review_notes = []
+        if quality_summary and getattr(quality_summary, "overall_quality_status", None) != "ACCEPT":
+            for qr in quality_summary.quality_results:
+                qr_status_str = getattr(qr.status, "value", str(qr.status))
+                if qr_status_str == "RECAPTURE_REQUIRED":
+                    for iss in qr.issues:
+                        quality_review_notes.append(f"Quality Warning: Panel {qr.image_index + 1} excluded ({iss.message})")
+                elif qr_status_str == "WARN":
+                    for iss in qr.issues:
+                        quality_review_notes.append(f"Quality Notice: Panel {qr.image_index + 1} ({iss.message})")
+
+        all_review_notes = quality_review_notes + build_inspection_findings(rule_results).get('needs_review', [])
+
         return schemas.ScanResponse(
             inspection_id=db_inspection.id,
             category=category,
@@ -635,7 +850,7 @@ async def perform_scan(
             overall_result=overall_result,
             priority=priority,
             evidence=[],
-            review_notes=build_inspection_findings(rule_results).get('needs_review', []),
+            review_notes=all_review_notes,
             ocr_text=raw_text,
             ocr_data=ocr_payload.get('ocr_items', []),
             image_url=format_public_url(f"/uploads/{safe_filenames[0]}"),
@@ -646,6 +861,7 @@ async def perform_scan(
                     "image_path": format_public_url(f"/uploads/{safe_filenames[index]}"),
                     "ocr_status": image_results[index].get("ocr_status"),
                     "ocr_diagnostics": image_results[index].get("ocr_diagnostics"),
+                    "quality": image_results[index].get("quality"),
                 }
                 for index, image_id in sorted(image_index_to_id.items())
             ],
@@ -657,6 +873,7 @@ async def perform_scan(
             regulatory_snapshot_label=snapshot_meta.get('effective_label'),
             analysis_source=analysis_source,
             llm_metadata=gemini_metadata,
+            image_quality=quality_summary.model_dump() if quality_summary else None,
         )
 
     except MemoryError:

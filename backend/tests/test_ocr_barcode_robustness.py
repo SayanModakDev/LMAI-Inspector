@@ -159,12 +159,19 @@ def test_scan_pipeline_multi_image_partial_ocr_success(tmp_path, monkeypatch):
     from app.main import app
 
     # Create two synthetic images
-    img1 = Image.new("RGB", (200, 200), color=(255, 255, 255))
+    img1 = Image.new("RGB", (400, 400), color=(240, 240, 240))
+    draw1 = ImageDraw.Draw(img1)
+    draw1.rectangle([(20, 20), (380, 380)], outline=(100, 100, 100), width=2)
     buf1 = io.BytesIO()
     img1.save(buf1, format="JPEG")
     buf1.seek(0)
 
-    img2 = Image.new("RGB", (600, 200), color=(255, 255, 255))
+    img2 = Image.new("RGB", (600, 400), color=(245, 245, 245))
+    draw2 = ImageDraw.Draw(img2)
+    draw2.rectangle([(20, 20), (580, 380)], outline=(50, 50, 50), width=2)
+    draw2.text((40, 50), "Brand: TestCo", fill=(0, 0, 0))
+    draw2.text((40, 100), "MRP Rs. 100.00", fill=(0, 0, 0))
+    draw2.text((40, 150), "Net Weight: 500 g", fill=(0, 0, 0))
     buf2 = io.BytesIO()
     img2.save(buf2, format="JPEG")
     buf2.seek(0)
