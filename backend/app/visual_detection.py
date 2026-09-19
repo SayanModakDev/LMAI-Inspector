@@ -6,6 +6,22 @@ import numpy as np
 from app.utils.memory import force_garbage_collection
 
 
+def _scale_bbox_to_original(bbox: List[int], scale: float) -> List[int]:
+    return [int(round(coord / scale)) for coord in bbox] if scale != 1.0 else [int(v) for v in bbox]
+
+
+def _bbox_iou(first: List[int], second: List[int]) -> float:
+    x1 = max(first[0], second[0])
+    y1 = max(first[1], second[1])
+    x2 = min(first[2], second[2])
+    y2 = min(first[3], second[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+    second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+    union = first_area + second_area - intersection
+    return intersection / union if union else 0.0
+
+
 def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
     """Detect candidate prescribed food-symbol geometry (FSSAI Regulations).
 
@@ -214,6 +230,17 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
 
             confidence = min(0.95, max(0.10, confidence))
 
+            # A generic edge-rich crop is useful diagnostic evidence, but it is
+            # not the prescribed same-colour enclosing square.  Never allow it
+            # to cross the classification threshold by itself.
+            accepted = bool(has_enclosing_square and contrast_score >= 0.35)
+            if accepted:
+                decision_reason = "Accepted: filled prescribed inner shape inside a concentric same-colour square."
+            elif not has_enclosing_square:
+                decision_reason = "Rejected: no concentric same-colour enclosing square; decorative coloured shape only."
+            else:
+                decision_reason = "Rejected: prescribed geometry lacks sufficient foreground/background contrast."
+
             candidates.append({
                 "symbol_type": symbol_type,
                 "confidence": confidence,
@@ -223,6 +250,8 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
                 "has_enclosing_square": has_enclosing_square,
                 "shape_score": shape_score,
                 "scale": scale,
+                "accepted": accepted,
+                "decision_reason": decision_reason,
             })
 
     if not candidates:
@@ -237,60 +266,70 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
             "reason": "No prescribed food symbol detected on package images",
         }
 
-    # Check for genuine ambiguity between competing green and brown candidates
-    best_veg = next((c for c in candidates if c["symbol_type"] == "VEGETARIAN"), None)
-    best_nonveg = next((c for c in candidates if c["symbol_type"] == "NON_VEGETARIAN"), None)
-
-    # If one candidate has an enclosing square and the other does not, select the verified square
-    if best_veg and best_nonveg:
-        if best_veg["has_enclosing_square"] and not best_nonveg["has_enclosing_square"]:
-            candidates = [c for c in candidates if c["symbol_type"] == "VEGETARIAN"]
-        elif best_nonveg["has_enclosing_square"] and not best_veg["has_enclosing_square"]:
-            candidates = [c for c in candidates if c["symbol_type"] == "NON_VEGETARIAN"]
-
-    # Sort candidates by structural fidelity score
+    # Sort candidates by structural fidelity score and reject duplicate contours
+    # around the same physical mark without losing the audit record.
     candidates.sort(key=lambda c: c["confidence"], reverse=True)
-    best = candidates[0]
+    supported: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not candidate["accepted"]:
+            continue
+        duplicate = next(
+            (
+                existing for existing in supported
+                if existing["symbol_type"] == candidate["symbol_type"]
+                and _bbox_iou(existing["bbox"], candidate["bbox"]) >= 0.70
+            ),
+            None,
+        )
+        if duplicate:
+            candidate["accepted"] = False
+            candidate["decision_reason"] = "Rejected: duplicate contour for the same physical symbol."
+        else:
+            supported.append(candidate)
 
-    # Check for genuine ambiguity between competing green and brown candidates
-    best_veg = next((c for c in candidates if c["symbol_type"] == "VEGETARIAN"), None)
-    best_nonveg = next((c for c in candidates if c["symbol_type"] == "NON_VEGETARIAN"), None)
+    candidate_audit = []
+    for candidate in candidates:
+        audit = dict(candidate)
+        audit["bbox"] = _scale_bbox_to_original(candidate["bbox"], scale)
+        audit.pop("scale", None)
+        audit["confidence"] = round(float(audit["confidence"]), 3)
+        candidate_audit.append(audit)
 
     del image, hsv, green_mask, brown_mask
     force_garbage_collection()
 
-    # Ambiguity check: if both green and brown candidates have enclosing squares and close scores
-    if best_veg and best_nonveg:
-        if (best_veg["has_enclosing_square"] and best_nonveg["has_enclosing_square"] and
-                abs(best_veg["confidence"] - best_nonveg["confidence"]) < 0.12):
-            orig_bbox = [int(coord / scale) for coord in best["bbox"]] if scale != 1.0 else best["bbox"]
-            return {
-                "detected": False,
-                "symbol_type": "UNKNOWN",
-                "confidence": round(best["confidence"], 3),
-                "bbox": orig_bbox,
-                "detection_method": "fssai_prescribed_symbol_detector",
-                "status": "REVIEW",
-                "is_candidate": True,
-                "is_ambiguous": True,
-                "reason": "Ambiguous competing vegetarian and non-vegetarian symbol candidates detected.",
-            }
-
-    # Threshold for confident candidate classification
-    # If confidence is below 0.50, do NOT classify as NON_VEGETARIAN or VEGETARIAN
-    if best["confidence"] < 0.50:
-        orig_bbox = [int(coord / scale) for coord in best["bbox"]] if scale != 1.0 else best["bbox"]
+    supported_types = {candidate["symbol_type"] for candidate in supported}
+    if len(supported_types) > 1:
+        best = max(supported, key=lambda item: item["confidence"])
         return {
             "detected": False,
             "symbol_type": "UNKNOWN",
-            "confidence": 0.0,
-            "bbox": orig_bbox,
+            "confidence": round(best["confidence"], 3),
+            "bbox": _scale_bbox_to_original(best["bbox"], scale),
+            "detection_method": "fssai_prescribed_symbol_detector",
+            "status": "REVIEW",
+            "is_candidate": True,
+            "is_ambiguous": True,
+            "has_conflict": True,
+            "reason": "Genuinely supported vegetarian and non-vegetarian symbols detected in the same image.",
+            "candidates": candidate_audit,
+        }
+
+    if not supported:
+        best = candidates[0]
+        return {
+            "detected": False,
+            "symbol_type": "UNKNOWN",
+            "confidence": round(best["confidence"], 3),
+            "bbox": _scale_bbox_to_original(best["bbox"], scale),
             "detection_method": "fssai_prescribed_symbol_detector",
             "status": "NOT_VERIFIABLE",
             "reason": "Visual evidence does not satisfy prescribed statutory food symbol geometry.",
+            "candidates": candidate_audit,
         }
 
-    orig_bbox = [int(coord / scale) for coord in best["bbox"]] if scale != 1.0 else best["bbox"]
+    best = max(supported, key=lambda item: item["confidence"])
+    orig_bbox = _scale_bbox_to_original(best["bbox"], scale)
 
     return {
         "detected": True,
@@ -307,6 +346,106 @@ def detect_food_symbol(image_input: Any) -> Dict[str, Any]:
             "shape": "circle" if best["symbol_type"] == "VEGETARIAN" else "triangle",
         },
         "size_verification": "NOT_VERIFIABLE",
+        "candidates": candidate_audit,
+    }
+
+
+def aggregate_food_symbol_evidence(panel_results: List[Tuple[Dict[str, Any], int]]) -> Dict[str, Any]:
+    """Merge traceable per-panel symbol results without promoting weak candidates.
+
+    Equivalent supported marks across panels corroborate one classification.  A
+    conflict is emitted only when both classes retain prescribed geometry.
+    """
+    supported: List[Dict[str, Any]] = []
+    audit: List[Dict[str, Any]] = []
+    ambiguous_results: List[Tuple[Dict[str, Any], int]] = []
+
+    for result, image_index in panel_results:
+        panel_candidates = result.get("candidates") or []
+        for raw_candidate in panel_candidates:
+            candidate = dict(raw_candidate)
+            candidate["image_index"] = image_index
+            audit.append(candidate)
+            if candidate.get("accepted") and candidate.get("symbol_type") in ("VEGETARIAN", "NON_VEGETARIAN"):
+                supported.append(candidate)
+
+        # Backward-compatible support for detector results without an audit list.
+        if not panel_candidates and result.get("status") == "CANDIDATE" and result.get("detected"):
+            candidate = {
+                "image_index": image_index,
+                "bbox": result.get("bbox"),
+                "symbol_type": result.get("symbol_type"),
+                "confidence": float(result.get("confidence") or 0),
+                "accepted": True,
+                "decision_reason": "Accepted by prescribed-symbol detector.",
+            }
+            supported.append(candidate)
+            audit.append(candidate)
+        if result.get("status") == "REVIEW" or result.get("is_ambiguous"):
+            ambiguous_results.append((result, image_index))
+
+    distinct_types = {candidate["symbol_type"] for candidate in supported}
+    if len(distinct_types) > 1:
+        best = max(supported, key=lambda item: float(item.get("confidence") or 0))
+        return {
+            "detected": False,
+            "value": "CONFLICTING_SYMBOLS",
+            "symbol_type": "UNKNOWN",
+            "confidence": round(float(best.get("confidence") or 0), 3),
+            "bbox": best.get("bbox"),
+            "source_image_index": best.get("image_index"),
+            "status": "CONFLICTING_EVIDENCE",
+            "has_conflict": True,
+            "is_candidate": True,
+            "reason": "Supported vegetarian and non-vegetarian statutory symbols remain across package views.",
+            "candidates": audit,
+            "competing_candidates": supported,
+            "detection_method": "fssai_prescribed_symbol_detector",
+        }
+
+    if supported:
+        best = max(supported, key=lambda item: float(item.get("confidence") or 0))
+        return {
+            "detected": True,
+            "value": best["symbol_type"],
+            "symbol_type": best["symbol_type"],
+            "confidence": round(float(best.get("confidence") or 0), 3),
+            "bbox": best.get("bbox"),
+            "source_image_index": best.get("image_index"),
+            "status": "CANDIDATE",
+            "is_candidate": True,
+            "has_conflict": False,
+            "supporting_candidates": supported,
+            "candidates": audit,
+            "detection_method": "fssai_prescribed_symbol_detector",
+        }
+
+    if ambiguous_results:
+        result, image_index = max(ambiguous_results, key=lambda item: float(item[0].get("confidence") or 0))
+        return {
+            "detected": False,
+            "value": "AMBIGUOUS",
+            "symbol_type": "UNKNOWN",
+            "confidence": float(result.get("confidence") or 0),
+            "bbox": result.get("bbox"),
+            "source_image_index": image_index,
+            "status": "REVIEW",
+            "is_candidate": True,
+            "is_ambiguous": True,
+            "reason": result.get("reason") or "Visual evidence remains ambiguous.",
+            "candidates": audit,
+            "detection_method": "fssai_prescribed_symbol_detector",
+        }
+
+    return {
+        "detected": False,
+        "value": None,
+        "symbol_type": "UNKNOWN",
+        "confidence": 0.0,
+        "status": "NOT_VERIFIABLE",
+        "reason": "No supported prescribed food symbol detected on package images.",
+        "candidates": audit,
+        "detection_method": "fssai_prescribed_symbol_detector",
     }
 
 
