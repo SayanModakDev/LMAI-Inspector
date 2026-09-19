@@ -20,6 +20,8 @@ from app.core.ontology import (
     build_date_candidate,
     build_consumer_care_candidate,
     build_product_name_candidate,
+    assess_address_structure,
+    extract_contextual_emails,
 )
 from app.extraction.cleaner import clean_ocr_evidence, is_artifact_token
 from app.extraction.evidence_model import (
@@ -1426,11 +1428,14 @@ def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[D
     contacts: List[Dict[str, str]] = []
     seen_contacts = set()
 
-    def _add_contact(c_type: str, c_val: str):
+    def _add_contact(c_type: str, c_val: str, raw_val: Optional[str] = None):
         key = (c_type, c_val.lower().strip())
         if key not in seen_contacts:
             seen_contacts.add(key)
-            contacts.append({"contact_type": c_type, "contact_value": c_val.strip()})
+            contact = {"contact_type": c_type, "contact_value": c_val.strip()}
+            if raw_val and raw_val.strip() != c_val.strip():
+                contact["raw_contact_value"] = raw_val.strip()
+            contacts.append(contact)
 
     # 1. Search for toll-free numbers across lines and text
     tf_pattern = re.compile(r'\b(1800[\s\-]?\d{3}[\s\-]?\d{3,4})\b')
@@ -1438,9 +1443,8 @@ def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[D
         _add_contact(ContactType.TOLL_FREE.value, m.group(1).replace(' ', '-'))
 
     # 2. Search for email addresses
-    email_pattern = re.compile(r'\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b')
-    for m in email_pattern.finditer(text):
-        _add_contact(ContactType.EMAIL.value, m.group(1))
+    for email in extract_contextual_emails(text):
+        _add_contact(ContactType.EMAIL.value, email["value"], email["raw_value"])
 
     # 3. Search for websites (avoiding generic word matching)
     web_pattern = re.compile(r'\b(https?://[^\s,;]+|www\.[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:/[^\s,;]*)?)\b', re.I)
@@ -1481,7 +1485,9 @@ def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[D
         if cc_match:
             val_clean = cc_match.strip(' :;,-')
             if '@' in val_clean:
-                _add_contact(ContactType.EMAIL.value, val_clean)
+                normalized_emails = extract_contextual_emails(val_clean)
+                for email in normalized_emails:
+                    _add_contact(ContactType.EMAIL.value, email["value"], email["raw_value"])
             elif re.search(r'\d{6,}', val_clean):
                 _add_contact(ContactType.PHONE.value, val_clean)
             else:
@@ -1522,9 +1528,12 @@ def _extract_consumer_care_structured(lines: List[str], text: str) -> Optional[D
     if not val_summary:
         val_summary = ', '.join(val_strs) if val_strs else primary["contact_value"]
 
+    raw_contact_text = matched_label_line or ", ".join(
+        str(c.get("raw_contact_value") or c["contact_value"]) for c in contacts[:2]
+    ) or val_summary
     return build_consumer_care_candidate(
         value=val_summary,
-        raw_text=matched_label_line or val_summary,
+        raw_text=raw_contact_text,
         contacts=contacts,
         primary_contact_type=primary["contact_type"],
         primary_contact_value=primary["contact_value"],
@@ -2434,6 +2443,73 @@ def _clean_address_text(raw_addr: str) -> str:
 
     result = ', '.join(cleaned_parts).strip(' :;,-')
     return result
+
+
+def _build_address_field(value: str, role: str, confidence: float = 0.8) -> Dict[str, Any]:
+    """Build address evidence while retaining incomplete OCR as explicitly partial."""
+    structure = assess_address_structure(value)
+    field: Dict[str, Any] = {
+        'value': value[:500],
+        'raw_text': value,
+        'confidence': confidence,
+        'source': 'OCR',
+        'role': role,
+        'address_completeness': structure['completeness'],
+        'address_structure': structure,
+    }
+    if not structure['sufficient']:
+        field['status'] = 'PARTIAL'
+        field['reason'] = (
+            "Only partial address evidence was extracted; the available OCR does not establish "
+            "a sufficiently structured postal address."
+        )
+        field['evidence_state'] = EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value
+    return field
+
+
+def _attach_value_provenance(field: Dict[str, Any], ocr_items: Optional[List[Dict[str, Any]]]) -> None:
+    """Attach the best same-image OCR tokens supporting a possibly multi-line value."""
+    if not field.get('value') or not ocr_items:
+        return
+    value_words = set(re.findall(r'[a-z0-9]+', str(field['value']).lower()))
+    if not value_words:
+        return
+
+    by_image: Dict[int, List[Tuple[float, Dict[str, Any]]]] = {}
+    for item in ocr_items:
+        item_text = str(item.get('text') or '').strip()
+        item_words = set(re.findall(r'[a-z0-9]+', item_text.lower()))
+        if not item_words:
+            continue
+        overlap = len(item_words & value_words) / len(item_words)
+        if overlap >= 0.5 or item_text.lower() in str(field['value']).lower():
+            image_index = int(item.get('image_index') or 0)
+            by_image.setdefault(image_index, []).append((overlap, item))
+    if not by_image:
+        return
+
+    image_index, scored_items = max(
+        by_image.items(),
+        key=lambda pair: (sum(score for score, _ in pair[1]), len(pair[1])),
+    )
+    selected = [item for _, item in scored_items]
+    boxes = [item.get('bbox') for item in selected if len(item.get('bbox') or []) == 4]
+    field.setdefault('source_image_index', image_index)
+    if boxes:
+        field.setdefault('bbox', [
+            min(box[0] for box in boxes), min(box[1] for box in boxes),
+            max(box[2] for box in boxes), max(box[3] for box in boxes),
+        ])
+    field['source_evidence'] = [
+        {
+            'image_index': image_index,
+            'token_id': item.get('token_id'),
+            'raw_text': str(item.get('text') or ''),
+            'bbox': item.get('bbox'),
+            'ocr_confidence': float(item.get('confidence') or 0.0),
+        }
+        for item in selected
+    ]
 
 
 def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
@@ -4027,25 +4103,27 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     if mfg_name:
         fields['MANUFACTURER_NAME'] = {'value': mfg_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MANUFACTURER'}
     if mfg_addr:
-        fields['MANUFACTURER_ADDRESS'] = {'value': mfg_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MANUFACTURER'}
+        fields['MANUFACTURER_ADDRESS'] = _build_address_field(mfg_addr, 'MANUFACTURER', 0.8)
 
     if mkt_name:
         fields['MARKETER_NAME'] = {'value': mkt_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'MARKETER'}
         if 'MANUFACTURER_NAME' not in fields:
             fields['MANUFACTURER_NAME'] = {'value': mkt_name, 'confidence': 0.8, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
     if mkt_addr:
-        fields['MARKETER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'MARKETER'}
+        fields['MARKETER_ADDRESS'] = _build_address_field(mkt_addr, 'MARKETER', 0.8)
         if 'MANUFACTURER_ADDRESS' not in fields:
-            fields['MANUFACTURER_ADDRESS'] = {'value': mkt_addr[:500], 'confidence': 0.75, 'source': 'OCR', 'entity_type': 'MARKETER', 'role': 'MARKETER'}
+            fields['MANUFACTURER_ADDRESS'] = _build_address_field(mkt_addr, 'MARKETER', 0.75)
+            fields['MANUFACTURER_ADDRESS']['entity_type'] = 'MARKETER'
 
     if packer_name:
         fields['PACKER_NAME'] = {'value': packer_name, 'confidence': 0.85, 'source': 'OCR', 'role': 'PACKER'}
         if 'MANUFACTURER_NAME' not in fields:
             fields['MANUFACTURER_NAME'] = {'value': packer_name, 'confidence': 0.78, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
     if packer_addr:
-        fields['PACKER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.8, 'source': 'OCR', 'role': 'PACKER'}
+        fields['PACKER_ADDRESS'] = _build_address_field(packer_addr, 'PACKER', 0.8)
         if 'MANUFACTURER_ADDRESS' not in fields:
-            fields['MANUFACTURER_ADDRESS'] = {'value': packer_addr[:500], 'confidence': 0.68, 'source': 'OCR', 'entity_type': 'PACKER', 'role': 'PACKER'}
+            fields['MANUFACTURER_ADDRESS'] = _build_address_field(packer_addr, 'PACKER', 0.68)
+            fields['MANUFACTURER_ADDRESS']['entity_type'] = 'PACKER'
 
     # Collect distinct responsible entities with structured roles without merging
     entities = []
@@ -4339,6 +4417,10 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     cc_field = _extract_consumer_care_structured(lines, normalized)
     if cc_field:
         fields['CONSUMER_CARE'] = cc_field
+
+    for provenance_field in ('MANUFACTURER_ADDRESS', 'MARKETER_ADDRESS', 'PACKER_ADDRESS', 'CONSUMER_CARE'):
+        if provenance_field in fields:
+            _attach_value_provenance(fields[provenance_field], effective_items)
 
     batch_field = _extract_batch_number(lines, normalized, effective_items)
     if batch_field:

@@ -6,7 +6,144 @@ and legal unit mappings under the Legal Metrology (Packaged Commodities) Rules, 
 """
 
 from enum import Enum
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+
+STRICT_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z]{2,63}$"
+)
+EMAIL_CANDIDATE_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9.-]+\.[A-Za-z]{2,63})(?![A-Za-z0-9.-])"
+)
+
+
+def normalize_contextual_email(candidate: str, source_text: str = "") -> Optional[str]:
+    """Return a strict email value, separating an OCR-joined ``EMAIL`` label safely.
+
+    The prefix is removed only when its typography/separator and surrounding line
+    make it behave like a label.  A normal lowercase local-part such as
+    ``emailcare@example.com`` is therefore left untouched.
+    """
+    raw_candidate = str(candidate or "").strip().strip("<>()[]{}.,;:")
+    if not STRICT_EMAIL_RE.fullmatch(raw_candidate):
+        return None
+
+    local, domain = raw_candidate.rsplit("@", 1)
+    if len(local) <= 5 or local[:5].lower() != "email":
+        return raw_candidate
+
+    label_prefix = local[:5]
+    remainder = local[5:]
+    has_label_separator = remainder.startswith(("-", ":"))
+    normalized_local = remainder.lstrip("-:")
+    if not normalized_local:
+        return raw_candidate
+
+    context = str(source_text or candidate)
+    pos = context.lower().find(raw_candidate.lower())
+    line_start = context.rfind("\n", 0, pos) + 1 if pos >= 0 else 0
+    line_prefix = context[line_start:pos] if pos >= 0 else ""
+    at_label_position = not line_prefix.strip(" \t:;,-")
+    consumer_context = bool(re.search(
+        r"\b(?:consumer|customer)\s*(?:care|support)|\b(?:e-?mail|contact|feedback|write\s+to|reach\s+us)\b",
+        line_prefix,
+        re.IGNORECASE,
+    ))
+    label_typography = label_prefix.isupper() or has_label_separator
+
+    if label_typography and (at_label_position or consumer_context):
+        normalized = f"{normalized_local}@{domain}"
+        if STRICT_EMAIL_RE.fullmatch(normalized):
+            return normalized
+    return raw_candidate
+
+
+def extract_contextual_emails(text: str) -> List[Dict[str, str]]:
+    """Extract strict emails while retaining the exact OCR candidate as provenance."""
+    results: List[Dict[str, str]] = []
+    seen = set()
+    source = str(text or "")
+    for match in EMAIL_CANDIDATE_RE.finditer(source):
+        raw_email = match.group(1)
+        normalized = normalize_contextual_email(raw_email, source)
+        if not normalized or normalized.lower() in seen:
+            continue
+        seen.add(normalized.lower())
+        results.append({"value": normalized, "raw_value": raw_email})
+    return results
+
+
+_INDIAN_STATE_NAMES = {
+    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+    "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand", "karnataka",
+    "kerala", "madhya pradesh", "maharashtra", "manipur", "meghalaya", "mizoram",
+    "nagaland", "odisha", "punjab", "rajasthan", "sikkim", "tamil nadu",
+    "telangana", "tripura", "uttar pradesh", "uttarakhand", "west bengal",
+    "andaman and nicobar islands", "chandigarh", "dadra and nagar haveli and daman and diu",
+    "delhi", "jammu and kashmir", "ladakh", "lakshadweep", "puducherry",
+}
+
+
+def assess_address_structure(value: str) -> Dict[str, Any]:
+    """Conservatively assess postal-address structure without requiring one fixed format."""
+    raw = str(value or "").strip()
+    normalized = re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
+    word_tokens = re.findall(r"[a-z]+", normalized)
+    compact = " ".join(word_tokens)
+    state_only = compact in _INDIAN_STATE_NAMES
+
+    premise = bool(re.search(
+        r"\b(?:plot|survey|house|building|block|flat|floor|door|shop|unit|factory|premises|"
+        r"road|rd|street|st|lane|marg|nagar|colony|sector|phase|industrial|estate|area|"
+        r"village|post|p\s*o|taluka|tehsil|ward|district|distt|highway|campus)\b",
+        normalized,
+        re.IGNORECASE,
+    ))
+    if not premise:
+        numeric_parts = re.findall(r"\b\d+(?:[/-][a-z0-9]+)?\b", normalized)
+        premise = any(not re.fullmatch(r"\d{5,6}", part) for part in numeric_parts)
+    postal_code = bool(
+        re.search(r"\b\d{5,6}\b", raw)
+        or re.search(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", raw, re.IGNORECASE)
+    )
+    administrative = any(re.search(rf"\b{re.escape(state)}\b", normalized) for state in _INDIAN_STATE_NAMES)
+    administrative = administrative or bool(re.search(r"\b(?:state|district|distt|india)\b", normalized))
+
+    ignored = {
+        "plot", "survey", "house", "building", "block", "flat", "floor", "factory",
+        "road", "street", "lane", "sector", "phase", "industrial", "estate", "area",
+        "village", "post", "district", "distt", "state", "india", "registered", "office",
+    }
+    state_words = {part for state in _INDIAN_STATE_NAMES for part in state.split()}
+    locality_words = [
+        token for token in word_tokens
+        if len(token) >= 3 and token not in ignored and token not in state_words
+    ]
+    locality = bool(locality_words)
+    component_count = sum((premise, locality, administrative, postal_code))
+    sufficient = bool(
+        raw
+        and not state_only
+        and (
+            component_count >= 3
+            or (premise and locality and len(word_tokens) >= 4)
+            or (locality and administrative and postal_code)
+        )
+    )
+    return {
+        "completeness": "SUFFICIENT" if sufficient else "PARTIAL",
+        "sufficient": sufficient,
+        "state_only": state_only,
+        "has_premise_or_street": premise,
+        "has_locality": locality,
+        "has_administrative_area": administrative,
+        "has_postal_code": postal_code,
+        "component_count": component_count,
+    }
 
 
 class CanonicalDeclarationField(str, Enum):
@@ -558,4 +695,3 @@ def extract_quantity_value_unit(text: Optional[str]) -> Tuple[Optional[float], O
             pass
 
     return None, None, None
-
