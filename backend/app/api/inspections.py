@@ -8,7 +8,12 @@ from typing import List, Optional, Any
 from app.database.connection import get_db
 from app.database import models, schemas
 from app.reports.pdf_report import generate_inspection_pdf
-from app.rules.rule_engine import evaluate_rules, build_inspection_findings, calculate_rule_summary, derive_overall_result
+from app.rules.rule_engine import (
+    build_inspection_findings,
+    calculate_rule_summary,
+    derive_overall_result,
+    derive_screening_result,
+)
 from app.rules.applicability import get_applicable_rules
 
 from app.core.constants import InspectionStatus, normalize_status
@@ -181,6 +186,7 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
     rule_results = deduped_results
     rule_summary = calculate_rule_summary(rule_results)
     derived_overall = derive_overall_result(rule_results)
+    screening_result = derive_screening_result(rule_results)
     ocr_payload_data = ocr_result.get("ocr_data") if ocr_result else {}
     cached_images_data = ocr_payload_data.get("images", []) if isinstance(ocr_payload_data, dict) else []
 
@@ -303,6 +309,7 @@ def get_inspection_detail(inspection_id: int, db: Session = Depends(get_db)):
         "import_status": inspection.import_status,
         "quantity_type": inspection.quantity_type,
         "overall_result": str(normalize_status(derived_overall) or normalize_status(str(inspection.overall_result) if inspection.overall_result is not None else None) or inspection.overall_result or ""),
+        "screening_result": str(screening_result),
         "priority": inspection.priority,
         "image_path": format_public_url(f"/uploads/{inspection.image_path}") if inspection.image_path else None,
         "inspector_name": inspection.inspector_name,
@@ -331,8 +338,14 @@ def generate_report(inspection_id: int, db: Session = Depends(get_db)):
     inspection: Any = db.query(models.Inspection).filter(models.Inspection.id == inspection_id).first()
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found")
-        
+
     try:
+        if inspection.rule_results:
+            canonical_result = str(derive_overall_result(list(inspection.rule_results)))
+            if inspection.overall_result != canonical_result:
+                inspection.overall_result = canonical_result
+                db.commit()
+                db.refresh(inspection)
         report = generate_inspection_pdf(inspection, db)
         return schemas.MessageResponse(
             message="Report generated successfully",

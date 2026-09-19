@@ -2,15 +2,16 @@
 Test suite for inspection overall result aggregation and physical verification separation.
 Verifies the priority logic:
 1. Deterministic FAIL -> NON_COMPLIANT
-2. Unresolved critical conflict or missing mandatory declaration -> NOT_VERIFIABLE (REQUIRES REVIEW)
-3. All image-verifiable requirements pass and remaining unresolved items are physical verification
-   or non-blocking visual candidates -> COMPLIANT
+2. Any unresolved applicable rule -> NOT_VERIFIABLE
+3. All evaluated applicable rules PASS -> COMPLIANT
+4. NOT_APPLICABLE rows are excluded
 """
 
 import pytest
-from app.core.constants import InspectionStatus
+from app.core.constants import InspectionStatus, RuleStatus, normalize_rule_status
 from app.rules.rule_engine import (
     derive_overall_result,
+    derive_screening_result,
     calculate_rule_summary,
     _is_physical_verification_rule,
     _is_uncontradicted_visual_candidate,
@@ -43,10 +44,10 @@ def _build_rule_result(
 class TestOverallResultAggregation:
     """Test suite covering the 12-case regression matrix for overall screening result aggregation."""
 
-    def test_case_1_all_image_pass_physical_not_verifiable_yields_compliant(self):
+    def test_case_1_twelve_pass_physical_not_verifiable_yields_not_verifiable(self):
         """Case 1: All image-verifiable declarations PASS, physical checks remain NOT_VERIFIABLE.
 
-        Must yield COMPLIANT overall screening result.
+        The image screening passes, but the complete inspection remains unresolved.
         """
         rules = [
             _build_rule_result("PC-ALL-001", "PRODUCT_NAME", "PASS"),
@@ -57,6 +58,10 @@ class TestOverallResultAggregation:
             _build_rule_result("PC-ALL-006", "CONSUMER_CARE", "PASS"),
             _build_rule_result("PC-ALL-007", "MONTH_YEAR_MANUFACTURE", "PASS"),
             _build_rule_result("PC-ALL-008", "COUNTRY_OF_ORIGIN", "PASS"),
+            _build_rule_result("PC-ALL-009", "IMPORTER_NAME_ADDRESS", "PASS"),
+            _build_rule_result("PC-ALL-010", "CONSUMER_CARE", "PASS"),
+            _build_rule_result("PC-ALL-011", "GENERIC_NAME", "PASS"),
+            _build_rule_result("PC-COSM-001", "BATCH_NUMBER", "PASS"),
             # Physical verification checks:
             _build_rule_result(
                 "PC-ALL-012",
@@ -75,14 +80,15 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.COMPLIANT
+        assert overall == InspectionStatus.NOT_VERIFIABLE
+        assert derive_screening_result(rules) == InspectionStatus.COMPLIANT
 
         # Verify summary counters still preserve exact count of review items
         summary = calculate_rule_summary(rules)
-        assert summary["passed_count"] == 8
+        assert summary["passed_count"] == 12
         assert summary["review_count"] == 2
         assert summary["failed_count"] == 0
-        assert summary["total_rules"] == 10
+        assert summary["total_rules"] == 14
 
     def test_case_2_deterministic_fail_yields_non_compliant(self):
         """Case 2: Deterministic FAIL on mandatory declaration (e.g. Missing legal unit)."""
@@ -128,10 +134,10 @@ class TestOverallResultAggregation:
         overall = derive_overall_result(rules)
         assert overall == InspectionStatus.NOT_VERIFIABLE
 
-    def test_case_5_edible_food_with_visual_candidate_veg_yields_compliant(self):
+    def test_case_5_edible_food_with_unresolved_checks_yields_not_verifiable(self):
         """Case 5: Edible food package with visual candidate VEG (no conflict) and physical checks.
 
-        Overall screening result must be COMPLIANT.
+        Image screening may pass, but the complete inspection remains unresolved.
         """
         rules = [
             _build_rule_result("PC-ALL-001", "PRODUCT_NAME", "PASS"),
@@ -160,7 +166,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.COMPLIANT
+        assert overall == InspectionStatus.NOT_VERIFIABLE
 
     def test_case_6_edible_food_with_conflicting_symbols_yields_not_verifiable(self):
         """Case 6: Food package with conflicting visual symbols (VEG on panel 1, NON_VEG on panel 2)."""
@@ -202,7 +208,7 @@ class TestOverallResultAggregation:
         overall = derive_overall_result(rules)
         assert overall == InspectionStatus.NOT_VERIFIABLE
 
-    def test_case_8_non_food_package_veg_not_applicable_yields_compliant(self):
+    def test_case_8_non_food_package_physical_checks_remain_not_verifiable(self):
         """Case 8: Non-food commodity (e.g. Soap / Detergent) where VEG_NONVEG_SYMBOL is NOT_APPLICABLE."""
         rules = [
             _build_rule_result("PC-ALL-001", "PRODUCT_NAME", "PASS"),
@@ -215,9 +221,9 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.COMPLIANT
+        assert overall == InspectionStatus.NOT_VERIFIABLE
 
-    def test_case_9_physical_weight_supplied_and_passes_yields_compliant(self):
+    def test_case_9_one_physical_check_unresolved_yields_not_verifiable(self):
         """Case 9: Inspector supplies physical weight measurement and it satisfies declared quantity."""
         rules = [
             _build_rule_result("PC-ALL-001", "PRODUCT_NAME", "PASS"),
@@ -227,7 +233,7 @@ class TestOverallResultAggregation:
         ]
 
         overall = derive_overall_result(rules)
-        assert overall == InspectionStatus.COMPLIANT
+        assert overall == InspectionStatus.NOT_VERIFIABLE
 
     def test_case_10_physical_weight_supplied_and_fails_yields_non_compliant(self):
         """Case 10: Inspector supplies physical weight measurement and it FAILS (underweight package)."""
@@ -289,3 +295,42 @@ class TestOverallResultAggregation:
             + summary["not_applicable_count"]
             == summary["total_rules"]
         )
+
+    def test_all_applicable_rules_pass_yields_compliant(self):
+        rules = [
+            _build_rule_result("R1", "P1", "PASS"),
+            _build_rule_result("R2", "P2", "PASS"),
+        ]
+        assert derive_overall_result(rules) == InspectionStatus.COMPLIANT
+
+    def test_fail_and_not_verifiable_yields_non_compliant(self):
+        rules = [
+            _build_rule_result("R1", "P1", "FAIL"),
+            _build_rule_result("R2", "P2", "NOT_VERIFIABLE"),
+        ]
+        assert derive_overall_result(rules) == InspectionStatus.NON_COMPLIANT
+
+    def test_pass_and_not_applicable_yields_compliant(self):
+        rules = [
+            _build_rule_result("R1", "P1", "PASS"),
+            _build_rule_result("R2", "P2", "NOT_APPLICABLE", required=False),
+        ]
+        assert derive_overall_result(rules) == InspectionStatus.COMPLIANT
+
+    def test_no_evaluated_applicable_rules_yields_not_verifiable(self):
+        assert derive_overall_result([]) == InspectionStatus.NOT_VERIFIABLE
+        assert derive_overall_result([
+            _build_rule_result("R1", "P1", "NOT_APPLICABLE", required=False),
+        ]) == InspectionStatus.NOT_VERIFIABLE
+
+    def test_not_detected_evidence_status_cannot_count_as_pass(self):
+        rules = [_build_rule_result("R1", "P1", "NOT_DETECTED")]
+        assert normalize_rule_status("NOT_DETECTED") == RuleStatus.NOT_VERIFIABLE
+        assert derive_overall_result(rules) == InspectionStatus.NOT_VERIFIABLE
+        assert calculate_rule_summary(rules)["review_count"] == 1
+
+    def test_unknown_rule_status_is_conservatively_not_verifiable(self):
+        assert normalize_rule_status("legacy_pending_state") == RuleStatus.NOT_VERIFIABLE
+        assert derive_overall_result([
+            _build_rule_result("R1", "P1", "legacy_pending_state"),
+        ]) == InspectionStatus.NOT_VERIFIABLE

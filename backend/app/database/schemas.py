@@ -24,6 +24,7 @@ class ScanResponse(BaseModel):
     rule_results: List[dict] = []
     summary: Optional[Dict[str, int]] = None
     overall_result: Optional[str] = None
+    screening_result: Optional[str] = None
     priority: str = "MEDIUM"
     evidence: List[dict] = []
     review_notes: List[str] = []
@@ -53,6 +54,7 @@ class InspectionDetail(BaseModel):
     import_status: str = "NOT_DETECTED"
     quantity_type: Optional[str] = None
     overall_result: Optional[str] = None
+    screening_result: Optional[str] = None
     priority: str = "MEDIUM"
     image_path: Optional[str] = None
     inspector_name: Optional[str] = None
