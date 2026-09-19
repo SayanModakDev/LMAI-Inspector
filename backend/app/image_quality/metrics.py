@@ -12,11 +12,14 @@ from typing import Tuple, Dict, Any
 
 def load_and_orient_analysis_image(
     image_path_or_bytes: Any,
-    max_analysis_dim: int = 1280,
+    max_analysis_dim: int = 1920,
 ) -> Tuple[Image.Image, np.ndarray, np.ndarray, int, int]:
     """
     Safely load an image, correct EXIF rotation, extract original dimensions,
     and create a bounded-dimension NumPy array for fast, memory-safe CV metric calculation.
+
+    Uses high-fidelity Lanczos resampling up to 1920px to prevent downsampling blur
+    on panoramic package labels and fine statutory text print.
 
     Returns:
         (oriented_pil, rgb_array, gray_array, orig_width, orig_height)
@@ -42,7 +45,7 @@ def load_and_orient_analysis_image(
         scale = max_analysis_dim / max_dim
         new_w = max(1, int(orig_width * scale))
         new_h = max(1, int(orig_height * scale))
-        analysis_img = analysis_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        analysis_img = analysis_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     if analysis_img.mode not in ("RGB", "L"):
         analysis_img = analysis_img.convert("RGB")
@@ -161,10 +164,52 @@ def calculate_glare_ratio(
     return ratio
 
 
+def calculate_text_region_metrics(
+    gray: np.ndarray,
+    min_gradient_threshold: int = 20,
+) -> Tuple[float, int, float]:
+    """
+    Calculate image-detail and local contrast metrics over likely text / foreground regions.
+    Prevents large uniform package backgrounds (e.g. solid white carton, solid blue label)
+    from dominating the contrast decision when printed text is sharp and readable.
+
+    Returns:
+        (text_stroke_contrast, text_stroke_count, intensity_range)
+    """
+    if gray is None or gray.size == 0:
+        return 0.0, 0, 0.0
+
+    # Dynamic intensity range (peak-to-peak) robust against sensor hot pixels
+    p_high = float(np.percentile(gray, 99.8))
+    p_low = float(np.percentile(gray, 0.2))
+    intensity_range = round(max(0.0, p_high - p_low), 2)
+
+    # Detect edge transitions typical of printed characters using morphological gradient (3x3)
+    kernel_grad = np.ones((3, 3), np.uint8)
+    gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel_grad)
+
+    stroke_mask = gradient >= min_gradient_threshold
+    stroke_count = int(np.count_nonzero(stroke_mask))
+
+    if stroke_count < 25:
+        # Negligible stroke edge content
+        return 0.0, stroke_count, intensity_range
+
+    # Measure local peak-to-peak contrast across text strokes in a 5x5 neighbourhood
+    kernel_local = np.ones((5, 5), np.uint8)
+    dilated = cv2.dilate(gray, kernel_local)
+    eroded = cv2.erode(gray, kernel_local)
+    local_contrast = dilated.astype(np.float32) - eroded.astype(np.float32)
+
+    # Average local step height on stroke pixels
+    stroke_contrast = float(np.mean(local_contrast[stroke_mask]))
+    return round(stroke_contrast, 2), stroke_count, intensity_range
+
+
 def check_possible_cropping(
     gray: np.ndarray,
     border_fraction: float = 0.02,
-    edge_density_threshold: float = 0.25,
+    edge_density_threshold: float = 0.35,
 ) -> bool:
     """
     Conservative cropping detection.

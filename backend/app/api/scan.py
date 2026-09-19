@@ -175,6 +175,7 @@ async def perform_scan(
                     'ocr_diagnostics': {
                         'status': 'RECAPTURE_REQUIRED',
                         'quality_issues': [i.model_dump() for i in q_res.issues] if q_res else [],
+                        'rejection_reasons': q_res.rejection_reasons if q_res else [],
                     },
                     'quality': q_res.model_dump() if q_res else None,
                     'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},
@@ -317,6 +318,7 @@ async def perform_scan(
                     'ocr_diagnostics': {
                         'status': 'RECAPTURE_REQUIRED',
                         'quality_issues': [i.model_dump() for i in q_res.issues] if q_res else [],
+                        'rejection_reasons': q_res.rejection_reasons if q_res else [],
                     },
                     'quality': q_res.model_dump() if q_res else None,
                     'barcode_result': {'type': 'NOT_DETECTED', 'value': None, 'confidence': 0.0},

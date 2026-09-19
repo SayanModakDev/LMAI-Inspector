@@ -22,9 +22,10 @@ class QualityPolicyConfig:
         self,
         blur_warn_threshold: float = 75.0,
         blur_reject_threshold: float = 35.0,
-        min_width: int = 320,
-        min_height: int = 320,
-        min_pixels: int = 150000,
+        min_width: int = 120,
+        min_height: int = 80,
+        min_pixels: int = 40000,
+        min_dimension_reject: int = 75,
         dark_warn_ratio: float = 0.60,
         dark_reject_ratio: float = 0.85,
         dark_mean_threshold: float = 45.0,
@@ -40,6 +41,7 @@ class QualityPolicyConfig:
         self.min_width = min_width
         self.min_height = min_height
         self.min_pixels = min_pixels
+        self.min_dimension_reject = min_dimension_reject
         self.dark_warn_ratio = dark_warn_ratio
         self.dark_reject_ratio = dark_reject_ratio
         self.dark_mean_threshold = dark_mean_threshold
@@ -55,9 +57,10 @@ class QualityPolicyConfig:
         return cls(
             blur_warn_threshold=float(getattr(settings, "IMAGE_QUALITY_BLUR_WARN_THRESHOLD", 75.0)),
             blur_reject_threshold=float(getattr(settings, "IMAGE_QUALITY_BLUR_REJECT_THRESHOLD", 35.0)),
-            min_width=int(getattr(settings, "IMAGE_QUALITY_MIN_WIDTH", 320)),
-            min_height=int(getattr(settings, "IMAGE_QUALITY_MIN_HEIGHT", 320)),
-            min_pixels=int(getattr(settings, "IMAGE_QUALITY_MIN_PIXELS", 150000)),
+            min_width=int(getattr(settings, "IMAGE_QUALITY_MIN_WIDTH", 120)),
+            min_height=int(getattr(settings, "IMAGE_QUALITY_MIN_HEIGHT", 80)),
+            min_pixels=int(getattr(settings, "IMAGE_QUALITY_MIN_PIXELS", 40000)),
+            min_dimension_reject=int(getattr(settings, "IMAGE_QUALITY_MIN_DIMENSION_REJECT", 75)),
             dark_warn_ratio=float(getattr(settings, "IMAGE_QUALITY_DARK_WARN_RATIO", 0.60)),
             dark_reject_ratio=float(getattr(settings, "IMAGE_QUALITY_DARK_REJECT_RATIO", 0.85)),
             dark_mean_threshold=float(getattr(settings, "IMAGE_QUALITY_DARK_MEAN_THRESHOLD", 45.0)),
@@ -106,11 +109,9 @@ def evaluate_image_quality(
         )
 
     # 2. Image Resolution check
-    if (
-        metrics.width < cfg.min_width
-        or metrics.height < cfg.min_height
-        or metrics.total_pixels < cfg.min_pixels
-    ):
+    # Hard rejection only for genuinely unreadable tiny crops (< 40,000 pixels or shortest dim < 75px)
+    shortest_dim = min(metrics.width, metrics.height)
+    if metrics.total_pixels < cfg.min_pixels or shortest_dim < cfg.min_dimension_reject:
         issues.append(
             ImageQualityIssue(
                 code=QualityIssueCode.IMAGE_LOW_RESOLUTION,
@@ -120,16 +121,18 @@ def evaluate_image_quality(
                 threshold=float(cfg.min_pixels),
             )
         )
-    elif metrics.width < int(cfg.min_width * 1.5) or metrics.height < int(cfg.min_height * 1.5):
-        issues.append(
-            ImageQualityIssue(
-                code=QualityIssueCode.IMAGE_LOW_RESOLUTION,
-                severity=IssueSeverity.WARNING,
-                message=f"Image resolution {metrics.width}x{metrics.height} is relatively low; fine print declarations may have reduced accuracy.",
-                measured_value=float(metrics.total_pixels),
-                threshold=float(cfg.min_pixels * 2),
+    elif shortest_dim < 180 or metrics.total_pixels < 100000:
+        # For compact crops or close-ups, only warn if text stroke contrast is not strong
+        if metrics.text_stroke_contrast < 30.0:
+            issues.append(
+                ImageQualityIssue(
+                    code=QualityIssueCode.IMAGE_LOW_RESOLUTION,
+                    severity=IssueSeverity.WARNING,
+                    message=f"Image resolution {metrics.width}x{metrics.height} is relatively compact; fine print declarations may have reduced accuracy.",
+                    measured_value=float(metrics.total_pixels),
+                    threshold=float(cfg.min_pixels * 2),
+                )
             )
-        )
 
     # 3. Underexposure check
     # Avoid false rejections on dark-themed packages: require BOTH high dark ratio AND low mean
@@ -206,20 +209,42 @@ def evaluate_image_quality(
             )
         )
 
-    # 6. Contrast check
+    # 6. Contrast & Text-Region Readability check
+    # Check whether readable text stroke transitions exist despite a uniform packaging background
+    # (e.g. solid white carton or solid blue label where text occupies a small percentage of area)
+    has_readable_text = (
+        metrics.text_stroke_contrast >= 25.0
+        and metrics.text_stroke_count >= 50
+        and metrics.intensity_range >= 50.0
+    )
+
     if metrics.contrast_std <= cfg.low_contrast_reject:
-        issues.append(
-            ImageQualityIssue(
-                code=QualityIssueCode.IMAGE_LOW_CONTRAST,
-                severity=IssueSeverity.ERROR,
-                message=f"Image contrast standard deviation ({metrics.contrast_std}) is critically low. Text boundaries cannot be distinguished.",
-                measured_value=metrics.contrast_std,
-                threshold=cfg.low_contrast_reject,
+        if has_readable_text:
+            # Packaging has a solid or uniform background, but printed text strokes have strong local edge contrast.
+            # Do NOT emit a fatal error. If stroke contrast is borderline (< 35), warn only.
+            if metrics.text_stroke_contrast < 35.0:
+                issues.append(
+                    ImageQualityIssue(
+                        code=QualityIssueCode.IMAGE_LOW_CONTRAST,
+                        severity=IssueSeverity.WARNING,
+                        message=f"Image background is uniform (global std {metrics.contrast_std}), but local text stroke contrast is moderate ({metrics.text_stroke_contrast}).",
+                        measured_value=metrics.contrast_std,
+                        threshold=cfg.low_contrast_reject,
+                    )
+                )
+        else:
+            # Genuinely washed-out, low-contrast, unreadable image
+            issues.append(
+                ImageQualityIssue(
+                    code=QualityIssueCode.IMAGE_LOW_CONTRAST,
+                    severity=IssueSeverity.ERROR,
+                    message=f"Image contrast standard deviation ({metrics.contrast_std}) is critically low and no readable text strokes were detected. Declarations cannot be distinguished.",
+                    measured_value=metrics.contrast_std,
+                    threshold=cfg.low_contrast_reject,
+                )
             )
-        )
     elif metrics.contrast_std <= cfg.low_contrast_warn:
-        # If blur_score is high, high-frequency text edges are clearly distinguishable despite low area fraction
-        if metrics.blur_score < 120.0:
+        if not has_readable_text and metrics.blur_score < 120.0:
             issues.append(
                 ImageQualityIssue(
                     code=QualityIssueCode.IMAGE_LOW_CONTRAST,
@@ -266,6 +291,7 @@ def evaluate_image_quality(
         score -= max(0.0, (120.0 - metrics.blur_score) / 400.0)
 
     score = round(max(0.0, min(1.0, score)), 2)
+    rejection_reasons = [iss.message for iss in issues if iss.severity == IssueSeverity.ERROR]
 
     return ImageQualityResult(
         image_index=image_index,
@@ -273,4 +299,5 @@ def evaluate_image_quality(
         quality_score=score,
         issues=issues,
         metrics=metrics,
+        rejection_reasons=rejection_reasons,
     )
