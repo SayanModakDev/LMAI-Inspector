@@ -30,6 +30,7 @@ class BenchmarkMetricsCalculator:
             "performance_metrics": self.compute_performance_metrics(),
             "error_taxonomy": self.compute_error_taxonomy(),
             "tag_breakdown": self.compute_tag_breakdown(),
+            "image_quality_metrics": self.compute_image_quality_metrics(),
         }
 
     # -----------------------------------------------------------------------
@@ -444,3 +445,79 @@ class BenchmarkMetricsCalculator:
                 "clean_inspection_rate": sub_calc.compute_review_metrics().get("clean_inspections_rate"),
             }
         return breakdown
+
+    # -----------------------------------------------------------------------
+    # 11. Image Quality Gate Metrics
+    # -----------------------------------------------------------------------
+    def compute_image_quality_metrics(self) -> Dict[str, Any]:
+        """Compute automatic image quality gate metrics."""
+        evaluated_cases = [c for c in self.cases if c.quality_status is not None]
+        total_eval = len(evaluated_cases)
+
+        if not total_eval:
+            return {
+                "gate_enabled": False,
+                "total_cases_evaluated": 0,
+                "quality_accept_rate": 0.0,
+                "quality_warn_rate": 0.0,
+                "quality_recapture_rate": 0.0,
+                "status_counts": {},
+                "tag_quality_breakdown": {},
+                "false_recapture_count": 0,
+                "false_recaptures": [],
+                "missed_bad_image_count": 0,
+                "missed_bad_images": [],
+            }
+
+        counts = Counter(c.quality_status for c in evaluated_cases)
+        accept_count = counts.get("ACCEPT", 0)
+        warn_count = counts.get("WARN", 0)
+        recapture_count = counts.get("RECAPTURE_REQUIRED", 0)
+
+        # Per-tag quality metrics
+        target_tags = ["blurry", "low_light", "glare", "small_text", "cropped"]
+        tag_quality: Dict[str, Dict[str, Any]] = {}
+        for tag in target_tags:
+            tag_cases = [c for c in evaluated_cases if tag in c.tags]
+            t_total = len(tag_cases)
+            if t_total > 0:
+                t_counts = Counter(c.quality_status for c in tag_cases)
+                tag_quality[tag] = {
+                    "total_cases": t_total,
+                    "accept": t_counts.get("ACCEPT", 0),
+                    "warn": t_counts.get("WARN", 0),
+                    "recapture_required": t_counts.get("RECAPTURE_REQUIRED", 0),
+                    "accept_rate": round(t_counts.get("ACCEPT", 0) / t_total, 4),
+                    "warn_rate": round(t_counts.get("WARN", 0) / t_total, 4),
+                    "recapture_rate": round(t_counts.get("RECAPTURE_REQUIRED", 0) / t_total, 4),
+                }
+
+        # FALSE_RECAPTURE: A benchmark case whose declarations are correctly recoverable (expected COMPLIANT)
+        # but was rejected by the gate (quality_status == RECAPTURE_REQUIRED).
+        false_recaptures = [
+            c.case_id for c in evaluated_cases
+            if c.expected_overall_result == "COMPLIANT" and c.quality_status == "RECAPTURE_REQUIRED"
+        ]
+
+        # MISSED_BAD_IMAGE: A deliberately unusable benchmark case (tagged with severe defects)
+        # accepted without warning (quality_status == ACCEPT).
+        bad_tags = {"unusable", "severely_blurred", "severe_glare", "blackout", "unreadable", "bad_image"}
+        missed_bad = [
+            c.case_id for c in evaluated_cases
+            if any(t in bad_tags for t in c.tags) and c.quality_status == "ACCEPT"
+        ]
+
+        return {
+            "gate_enabled": True,
+            "total_cases_evaluated": total_eval,
+            "quality_accept_rate": round(accept_count / total_eval, 4),
+            "quality_warn_rate": round(warn_count / total_eval, 4),
+            "quality_recapture_rate": round(recapture_count / total_eval, 4),
+            "status_counts": dict(counts),
+            "tag_quality_breakdown": tag_quality,
+            "false_recapture_count": len(false_recaptures),
+            "false_recaptures": false_recaptures,
+            "missed_bad_image_count": len(missed_bad),
+            "missed_bad_images": missed_bad,
+        }
+
