@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -265,6 +265,154 @@ def derive_overall_result(rule_results: List[Any]) -> str:
     return InspectionStatus.COMPLIANT
 
 
+def _is_usable_field_candidate(field_data: Optional[Dict[str, Any]], is_date: bool = False) -> bool:
+    """Check if field evidence contains a usable, non-empty, non-conflicting candidate."""
+    if not field_data or not isinstance(field_data, dict):
+        return False
+    val = field_data.get('value')
+    if val is None or not str(val).strip():
+        return False
+    if field_data.get('has_conflict') is True or field_data.get('status') == 'CONFLICTING_EVIDENCE':
+        return False
+    if field_data.get('clearly_invalid') is True:
+        return False
+    if is_date:
+        from app.extraction.declaration_extractor import is_valid_date_candidate
+        if not is_valid_date_candidate(str(val)):
+            norm = field_data.get('normalized_value')
+            if not norm or not is_valid_date_candidate(str(norm)):
+                return False
+    return True
+
+
+def _are_dates_equivalent(val1: str, val2: str) -> bool:
+    """Determine whether two date expressions represent equivalent calendar dates."""
+    if not val1 or not val2:
+        return False
+    s1 = str(val1).strip()
+    s2 = str(val2).strip()
+    if s1.lower() == s2.lower():
+        return True
+    from app.extraction.declaration_extractor import DATE_PREFIX_RE, parse_date_with_precision
+    c1 = DATE_PREFIX_RE.sub('', s1).strip()
+    c2 = DATE_PREFIX_RE.sub('', s2).strip()
+    if c1.lower() == c2.lower():
+        return True
+    ok1, norm1, m1 = parse_date_with_precision(c1)
+    ok2, norm2, m2 = parse_date_with_precision(c2)
+    if ok1 and ok2:
+        if norm1 == norm2:
+            return True
+        if m1 and m2:
+            p1 = m1.get('parsed_components', {})
+            p2 = m2.get('parsed_components', {})
+            if p1.get('year') == p2.get('year') and p1.get('month') == p2.get('month'):
+                if p1.get('day') is None or p2.get('day') is None or p1.get('day') == p2.get('day'):
+                    return True
+    return False
+
+
+def resolve_canonical_field_evidence(
+    parameter: str,
+    rule: Dict[str, Any],
+    extracted_fields: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Resolve field evidence taking statutory equivalence and date-role mapping into account.
+
+    Maintains complete provenance:
+    - original_semantic_field
+    - canonical_regulatory_field
+    - source_evidence, bboxes, token IDs, panel metadata
+    Consolidates agreeing expressions without conflict.
+    Flags genuine disagreement as a statutory conflict.
+    """
+    field_data = extracted_fields.get(parameter)
+    rule_ref = rule.get('rule_reference', 'statutory requirements')
+
+    # Define statutory equivalence groups
+    # Cosmetics Rule 34(1)(f): permits either expiry date or use-before date
+    # Food: permits best before or use by
+    date_equivalents: Dict[str, List[str]] = {
+        'USE_BEFORE_DATE': ['EXPIRY_DATE', 'BEST_BEFORE_USE_BY'],
+        'EXPIRY_DATE': ['USE_BEFORE_DATE', 'BEST_BEFORE_USE_BY'],
+        'BEST_BEFORE_USE_BY': ['USE_BEFORE_DATE', 'EXPIRY_DATE'],
+        'MONTH_YEAR_MANUFACTURE': ['MANUFACTURE_DATE', 'PACKING_DATE'],
+        'MANUFACTURE_DATE': ['MONTH_YEAR_MANUFACTURE', 'PACKING_DATE'],
+        'PACKING_DATE': ['MONTH_YEAR_MANUFACTURE', 'MANUFACTURE_DATE'],
+    }
+
+    if parameter in date_equivalents:
+        is_primary_usable = _is_usable_field_candidate(field_data, is_date=True)
+        equiv_keys = date_equivalents[parameter]
+
+        # Find usable equivalents
+        usable_equivs: List[Tuple[str, Dict[str, Any]]] = []
+        for eq_key in equiv_keys:
+            eq_data = extracted_fields.get(eq_key)
+            if _is_usable_field_candidate(eq_data, is_date=True):
+                usable_equivs.append((eq_key, eq_data))
+
+        if not is_primary_usable:
+            if usable_equivs:
+                # Map first usable statutory equivalent to satisfy the requirement
+                source_field, source_data = usable_equivs[0]
+                mapped_data = dict(source_data)
+                mapped_data['original_semantic_field'] = source_field
+                mapped_data['canonical_regulatory_field'] = parameter
+                mapped_data['mapped_from'] = source_field
+                mapped_data['role_mapping_note'] = (
+                    f"Statutory date mapping: '{source_field}' satisfied '{parameter}' "
+                    f"under {rule_ref}."
+                )
+                return mapped_data
+            else:
+                return field_data
+
+        else:
+            # Primary is usable. Check if equivalent declarations also exist.
+            if usable_equivs:
+                source_field, source_data = usable_equivs[0]
+                val1 = str(field_data.get('normalized_value') or field_data.get('value', ''))
+                val2 = str(source_data.get('normalized_value') or source_data.get('value', ''))
+                if _are_dates_equivalent(val1, val2):
+                    # They agree: consolidate without false conflict
+                    consolidated = dict(field_data)
+                    consolidated['consolidated_with'] = source_field
+                    consolidated['consolidation_note'] = (
+                        f"Statutory date declarations '{parameter}' and '{source_field}' agree ({val1})."
+                    )
+                    return consolidated
+                else:
+                    # Genuinely distinct dates: flag conflict
+                    return {
+                        'value': f"{val1} vs {val2}",
+                        'status': 'CONFLICTING_EVIDENCE',
+                        'has_conflict': True,
+                        'conflict_reason': (
+                            f"Conflicting statutory dates detected: {parameter} ({val1}) "
+                            f"vs {source_field} ({val2})"
+                        ),
+                        'values': [val1, val2],
+                        'candidates': [field_data, source_data],
+                        'original_semantic_field': f"{parameter} & {source_field}",
+                        'canonical_regulatory_field': parameter,
+                    }
+            return field_data
+
+    # Quantity equivalents
+    if parameter in ('DECLARED_NET_QUANTITY', 'NET_QUANTITY'):
+        if not _is_usable_field_candidate(field_data):
+            alt_key = 'NET_QUANTITY' if parameter == 'DECLARED_NET_QUANTITY' else 'DECLARED_NET_QUANTITY'
+            alt_data = extracted_fields.get(alt_key)
+            if _is_usable_field_candidate(alt_data):
+                mapped_data = dict(alt_data)
+                mapped_data['original_semantic_field'] = alt_key
+                mapped_data['canonical_regulatory_field'] = parameter
+                return mapped_data
+
+    return field_data
+
+
 def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
     """Evaluate applicable rules via deterministic validators and never treat missing OCR as an automatic legal FAIL."""
     from app.rules.validators import dispatch_validator
@@ -292,24 +440,8 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
         severity = rule.get('severity', 'HIGH')
         verification_type = rule.get('verification_type', 'IMAGE_VERIFIABLE')
 
-        # Resolve aliases if the primary parameter is not present in extracted fields
-        field_data = extracted_fields.get(parameter)
-        if not field_data and parameter == 'MONTH_YEAR_MANUFACTURE':
-            field_data = extracted_fields.get('MANUFACTURE_DATE') or extracted_fields.get('PACKING_DATE')
-        elif not field_data and parameter == 'MANUFACTURE_DATE':
-            field_data = extracted_fields.get('MONTH_YEAR_MANUFACTURE') or extracted_fields.get('PACKING_DATE')
-        elif not field_data and parameter == 'PACKING_DATE':
-            field_data = extracted_fields.get('MONTH_YEAR_MANUFACTURE') or extracted_fields.get('MANUFACTURE_DATE')
-        elif not field_data and parameter == 'BEST_BEFORE_USE_BY':
-            field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('EXPIRY_DATE')
-        elif not field_data and parameter == 'USE_BEFORE_DATE':
-            field_data = extracted_fields.get('EXPIRY_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
-        elif not field_data and parameter == 'EXPIRY_DATE':
-            field_data = extracted_fields.get('USE_BEFORE_DATE') or extracted_fields.get('BEST_BEFORE_USE_BY')
-        elif not field_data and parameter == 'DECLARED_NET_QUANTITY':
-            field_data = extracted_fields.get('NET_QUANTITY')
-        elif not field_data and parameter == 'NET_QUANTITY':
-            field_data = extracted_fields.get('DECLARED_NET_QUANTITY')
+        # Resolve field evidence with statutory date/role equivalence
+        field_data = resolve_canonical_field_evidence(parameter, rule, extracted_fields)
 
         # Dispatch to deterministic validator
         validation_method = rule.get('validation_method')
@@ -371,11 +503,25 @@ def evaluate_rules(applicable_rules: List[Dict[str, Any]], extracted_fields: Dic
             'required': required,
         }
 
+        if isinstance(field_data, dict):
+            if field_data.get('original_semantic_field'):
+                res_item['original_semantic_field'] = field_data['original_semantic_field']
+            if field_data.get('canonical_regulatory_field'):
+                res_item['canonical_regulatory_field'] = field_data['canonical_regulatory_field']
+            if field_data.get('role_mapping_note'):
+                res_item['role_mapping_note'] = field_data['role_mapping_note']
+            if field_data.get('mapped_from'):
+                res_item['mapped_from'] = field_data['mapped_from']
+
         if isinstance(evidence_data, dict):
             if val_result.evidence_state is not None:
                 evidence_data.setdefault('evidence_state', val_result.evidence_state)
             if verification_type:
                 evidence_data.setdefault('verification_type', verification_type)
+            if isinstance(field_data, dict):
+                for k in ('original_semantic_field', 'canonical_regulatory_field', 'role_mapping_note', 'mapped_from', 'source_evidence'):
+                    if k in field_data and k not in evidence_data:
+                        evidence_data[k] = field_data[k]
 
         # Expose structured quantity/unit attributes directly on result if available
         if val_result.raw_value is not None:

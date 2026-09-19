@@ -1053,6 +1053,17 @@ def _parse_and_validate_date(date_str: str) -> Tuple[bool, Optional[str], Option
     """
     token = date_str.strip().lower()
 
+    # Reject non-date candidates (e.g. age restrictions, dosages, net quantities, prices)
+    from app.extraction.declaration_extractor import is_valid_date_candidate, DATE_PREFIX_RE
+    if not is_valid_date_candidate(date_str):
+        if re.fullmatch(r'\d+\.\d+', token):
+            return False, None, f"Numeric decimal value is not a valid date: '{date_str}'"
+        return False, None, f"Value is not a valid date declaration: '{date_str}'"
+
+    # Strip prefixes like "EXP", "MFD", "PKD", "USE BEFORE"
+    core = DATE_PREFIX_RE.sub("", date_str).strip()
+    token = core.lower()
+
     # Reject numeric noise like "0.73" or barcodes
     if re.fullmatch(r'\d+\.\d+', token):
         return False, None, f"Numeric decimal value is not a valid date: '{date_str}'"
@@ -1142,9 +1153,9 @@ def validate_best_before_present(
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
 
-    # Check for duration statements like "24 months from mfg" or "best within 6 months"
-    duration_match = re.search(r'\b\d+\s*(?:months?|days?|years?)\s*(?:from|of)?\b', raw_val, re.IGNORECASE)
-    if duration_match:
+    # Check for duration statements like "24 months from mfg" or "best before 12 months from manufacture"
+    from app.extraction.declaration_extractor import VALID_LIFECYCLE_DURATION_RE, is_valid_date_candidate
+    if VALID_LIFECYCLE_DURATION_RE.search(raw_val) and is_valid_date_candidate(raw_val):
         return ValidationResult(
             status="PASS",
             binary=1,
@@ -1187,8 +1198,8 @@ def validate_expiry_date_present(
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
 
     # Check for duration statement
-    duration_match = re.search(r'\b\d+\s*(?:months?|days?|years?)\b', raw_val, re.IGNORECASE)
-    if duration_match and re.search(r'from\s*(?:mfg|mfd|pkg|pack)', raw_val, re.IGNORECASE):
+    from app.extraction.declaration_extractor import VALID_LIFECYCLE_DURATION_RE, is_valid_date_candidate
+    if VALID_LIFECYCLE_DURATION_RE.search(raw_val) and is_valid_date_candidate(raw_val):
         return ValidationResult(
             status="PASS",
             binary=1,
