@@ -173,16 +173,15 @@ const ResultHero = ({
         (String(f.field_value || '').startsWith('CONFLICT:') ||
           f.source === 'MULTI_IMAGE_CONFLICT' ||
           f.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
+          f.has_conflict === true ||
           f.candidate_classification === 'TRUE_CONFLICT' ||
-          f.status === 'AMBIGUOUS' ||
-          f.is_ambiguous ||
-          (Array.isArray(f.candidates) && f.candidates.length > 1))
+          f.status === 'CONFLICTING_EVIDENCE')
     ) ||
     ruleResults.some(
       (r) =>
         r.parameter === 'PRODUCT_NAME' &&
         r.status === 'NOT_VERIFIABLE' &&
-        (r.reason || '').toLowerCase().includes('competing')
+        (r.candidate_classification === 'TRUE_CONFLICT' || r.evidence_data?.has_conflict === true)
     );
 
   const productIdentity = isProductNameConflict

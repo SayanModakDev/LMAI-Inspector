@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 from app.extraction.declaration_extractor import extract_declarations, merge_extracted_fields
 from app.llm.evidence_resolver import resolve_evidence_with_gemini
-from app.llm.schemas import LLMExtractionResult, ResolvedDeclaration, SourceEvidence
+from app.llm.schemas import CandidateValue, LLMExtractionResult, ResolvedDeclaration, SourceEvidence
+from app.llm.evidence_resolver import _llm_has_genuine_product_identity_conflict
 from app.rules.rule_engine import evaluate_rules
 
 
@@ -179,3 +180,75 @@ def test_damaged_unsupported_identity_never_passes():
     results, overall = evaluate_rules([PRODUCT_NAME_RULE], fields)
     assert results[0]["status"] == "NOT_VERIFIABLE"
     assert overall == "REVIEW_REQUIRED"
+
+
+def test_tata_salt_generic_equivalent_and_recycling_candidates_reconcile():
+    raw_candidates = [
+        ("Salt", "OCR", 0, [20, 20, 100, 45]),
+        ("Tata Salt", "OCR_LAYOUT", 1, [30, 30, 220, 70]),
+        ("TATA Salt", "OCR_LAYOUT", 2, [35, 35, 225, 75]),
+        ("Tata Salt's Recyclablepack", "OCR", 3, [40, 300, 310, 335]),
+        ("KEEP otasvlenehaminat is Recycle Sd Salt", "OCR_LAYOUT", 4, [15, 400, 390, 440]),
+    ]
+    panels = [
+        {
+            "PRODUCT_NAME": {
+                "value": value,
+                "raw_text": value,
+                "confidence": 0.85,
+                "source": source,
+                "source_image_index": image_index,
+                "bbox": bbox,
+            },
+            "GENERIC_NAME": {
+                "value": "SALT",
+                "confidence": 0.85,
+                "source": "OCR",
+                "source_image_index": image_index,
+            },
+        }
+        for value, source, image_index, bbox in raw_candidates
+    ]
+
+    product = merge_extracted_fields(panels)["PRODUCT_NAME"]
+
+    assert product["value"].lower() == "tata salt"
+    assert product["status"] == "VALID"
+    assert product["has_conflict"] is False
+    assert product["candidate_classification"] == "CONFIRMED_SAME"
+    assert len(product["candidates"]) == 5
+    assert {
+        candidate["candidate_role"] for candidate in product["filtered_noise"]
+    } == {"GENERIC_NAME_PRODUCT_TYPE", "PACKAGING_RECYCLING_DISPOSAL"}
+    assert all(candidate.get("source_image_index") is not None for candidate in product["filtered_noise"])
+    assert all(candidate.get("bbox") for candidate in product["filtered_noise"] if candidate["value"] != "Salt")
+    assert all(candidate.get("rejection_reason") for candidate in product["filtered_noise"])
+
+    results, overall = evaluate_rules([PRODUCT_NAME_RULE], {"PRODUCT_NAME": product})
+    assert results[0]["status"] == "PASS"
+    assert overall == "COMPLIANT"
+
+
+def test_semantic_conflict_requires_two_eligible_product_identities():
+    false_conflict = ResolvedDeclaration(
+        field="PRODUCT_NAME",
+        status="CONFLICT",
+        confidence=0.9,
+        alternatives=[
+            CandidateValue(value="Salt", confidence=0.95),
+            CandidateValue(value="Tata Salt", confidence=0.92),
+            CandidateValue(value="Tata Salt's Recyclablepack", confidence=0.9),
+        ],
+    )
+    genuine_conflict = ResolvedDeclaration(
+        field="PRODUCT_NAME",
+        status="CONFLICT",
+        confidence=0.9,
+        alternatives=[
+            CandidateValue(value="Tata Salt", confidence=0.95),
+            CandidateValue(value="Aashirvaad Atta", confidence=0.94),
+        ],
+    )
+
+    assert _llm_has_genuine_product_identity_conflict(false_conflict) is False
+    assert _llm_has_genuine_product_identity_conflict(genuine_conflict) is True

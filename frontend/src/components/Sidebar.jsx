@@ -23,8 +23,11 @@ const NAV_ITEMS = [
 ];
 
 const Sidebar = ({ onCloseMobile }) => {
-  const { healthState } = useSystemHealth();
+  const { healthState, analysisInProgress } = useSystemHealth();
   const getStatusDisplay = () => {
+    if (analysisInProgress && healthState !== 'OFFLINE') {
+      return { dotClass: 'status-dot--degraded', text: 'Analysis in Progress' };
+    }
     switch (healthState) {
       case 'ONLINE':
         return { dotClass: 'status-dot--online', text: 'Engine Online (v1.0)' };

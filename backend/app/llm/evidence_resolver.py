@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.config import get_settings
 from app.core.ontology import assess_address_structure, extract_contextual_emails
 from app.extraction.declaration_extractor import (
+    classify_product_identity_candidate,
     is_valid_date_candidate,
     is_descriptive_product_text,
     _product_names_conflict,
@@ -84,8 +85,8 @@ def _has_unresolved_product_identity_conflict(candidate: Optional[Dict[str, Any]
     identity_values: List[str] = []
     for item in raw_candidates:
         value = item.get("value") if isinstance(item, dict) else item
-        role = str(item.get("role") or "").upper() if isinstance(item, dict) else ""
-        if not value or role == "BRAND" or is_descriptive_product_text(value):
+        role = str(item.get("candidate_role") or item.get("role") or "").upper() if isinstance(item, dict) else ""
+        if not value or (role and role != "PRODUCT_NAME") or is_descriptive_product_text(value):
             continue
         normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
         if normalized and normalized not in {
@@ -98,6 +99,41 @@ def _has_unresolved_product_identity_conflict(candidate: Optional[Dict[str, Any]
         _product_names_conflict(identity_values[left], identity_values[right])
         for left in range(len(identity_values))
         for right in range(left + 1, len(identity_values))
+    )
+
+
+def _llm_has_genuine_product_identity_conflict(declaration: ResolvedDeclaration) -> bool:
+    """Accept a semantic conflict only when two eligible product identities remain."""
+    candidates: List[Dict[str, Any]] = []
+    if declaration.value:
+        candidates.append({"value": declaration.value, "confidence": declaration.confidence})
+    candidates.extend(
+        {
+            "value": alternative.value,
+            "confidence": alternative.confidence,
+            "raw_text": "\n".join(ev.raw_text for ev in alternative.source_evidence if ev.raw_text),
+        }
+        for alternative in declaration.alternatives
+        if alternative.value
+    )
+
+    identities: List[str] = []
+    for candidate in candidates:
+        role, _ = classify_product_identity_candidate(candidate)
+        if role != "PRODUCT_NAME":
+            continue
+        value = str(candidate["value"]).strip()
+        normalized = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+        if normalized and normalized not in {
+            re.sub(r"[^a-z0-9]+", " ", existing.lower()).strip()
+            for existing in identities
+        }:
+            identities.append(value)
+
+    return any(
+        _product_names_conflict(identities[left], identities[right])
+        for left in range(len(identities))
+        for right in range(left + 1, len(identities))
     )
 
 
@@ -688,6 +724,20 @@ def resolve_evidence_with_gemini(
                             "evidence_state": "EVIDENCE_VERIFIED",
                         }
                         continue
+
+            if field_name == "PRODUCT_NAME" and not _llm_has_genuine_product_identity_conflict(decl):
+                if det_candidate and det_candidate.get("value"):
+                    retained = dict(det_candidate)
+                    retained.setdefault(
+                        "review_notes",
+                        "Semantic conflict contained only generic, descriptive, packaging, or equivalent identity evidence.",
+                    )
+                    merged_fields[field_name] = retained
+                    llm_metadata.setdefault("identity_resolution_rejections", []).append({
+                        "field": field_name,
+                        "reason": retained["review_notes"],
+                    })
+                    continue
 
             # True conflict confirmed by LLM evidence interpretation
             merged_fields[field_name] = {

@@ -4,6 +4,7 @@ import { CheckCircle2, Loader2, Circle, AlertOctagon, RotateCcw, ImagePlus } fro
 import { apiService } from '../services/api';
 import ProgressStepper from '../components/ProgressStepper';
 import BrandLogo from '../components/BrandLogo';
+import { useSystemHealth } from '../context/SystemHealthContext';
 import './Processing.css';
 
 const PIPELINE_STAGES = [
@@ -42,6 +43,7 @@ const PIPELINE_STAGES = [
 const Processing = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { setAnalysisInProgress } = useSystemHealth();
   const { files, previewUrls } = location.state || {};
 
   const [activeStageIndex, setActiveStageIndex] = useState(0);
@@ -52,6 +54,11 @@ const Processing = () => {
   const hasStartedRef = useRef(false);
   const isMountedRef = useRef(true);
   const stageIntervalRef = useRef(null);
+
+  useEffect(() => {
+    setAnalysisInProgress(true);
+    return () => setAnalysisInProgress(false);
+  }, [setAnalysisInProgress]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -137,6 +144,7 @@ const Processing = () => {
         console.error('Inspection pipeline error:', err);
         const detail = err.response?.data?.detail || err.message || 'Pipeline analysis failed.';
         if (isMountedRef.current) {
+          setAnalysisInProgress(false);
           setActiveStageIndex((curr) => {
             setErrorStageIndex(curr);
             return curr;
