@@ -427,9 +427,9 @@ const EvidenceViewer = ({
       valStr.startsWith('CONFLICT:') ||
       nameItem.source === 'MULTI_IMAGE_CONFLICT' ||
       nameItem.extraction_method === 'MULTI_IMAGE_CONFLICT' ||
-      nameItem.is_ambiguous ||
-      (Array.isArray(nameItem.candidates) && nameItem.candidates.length > 1) ||
-      (Array.isArray(nameItem.competing_candidates) && nameItem.competing_candidates.length > 1);
+      nameItem.has_conflict === true ||
+      nameItem.candidate_classification === 'TRUE_CONFLICT' ||
+      nameItem.status === 'CONFLICTING_EVIDENCE';
 
     if (!isConflict) return null;
 

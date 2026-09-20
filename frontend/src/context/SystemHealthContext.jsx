@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { resolveBackendUrl } from '../services/api';
 
 const SystemHealthContext = createContext(null);
@@ -8,8 +8,13 @@ export function SystemHealthProvider({ children }) {
   const [healthData, setHealthData] = useState(null);
   const [lastChecked, setLastChecked] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
+  const [analysisInProgress, setAnalysisInProgress] = useState(false);
+  const consecutiveFailuresRef = useRef(0);
+  const checkInFlightRef = useRef(false);
 
   const checkHealth = useCallback(async () => {
+    if (checkInFlightRef.current) return;
+    checkInFlightRef.current = true;
     setIsChecking(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -24,6 +29,7 @@ export function SystemHealthProvider({ children }) {
 
       if (res.ok) {
         const data = await res.json();
+        consecutiveFailuresRef.current = 0;
         setHealthData(data);
         setLastChecked(new Date());
         
@@ -37,16 +43,21 @@ export function SystemHealthProvider({ children }) {
           setHealthState('UNKNOWN');
         }
       } else {
+        consecutiveFailuresRef.current = 0;
         setHealthData({ error: `HTTP ${res.status}` });
         setHealthState('DEGRADED');
         setLastChecked(new Date());
       }
     } catch (err) {
-      clearTimeout(timeoutId);
-      setHealthData(null);
-      setHealthState('OFFLINE');
+      consecutiveFailuresRef.current += 1;
+      setHealthData({
+        error: err.name === 'AbortError' ? 'Health check timed out' : 'Health check failed',
+      });
+      setHealthState(consecutiveFailuresRef.current >= 2 ? 'OFFLINE' : 'DEGRADED');
       setLastChecked(new Date());
     } finally {
+      clearTimeout(timeoutId);
+      checkInFlightRef.current = false;
       setIsChecking(false);
     }
   }, []);
@@ -65,6 +76,8 @@ export function SystemHealthProvider({ children }) {
         healthData,
         lastChecked,
         isChecking,
+        analysisInProgress,
+        setAnalysisInProgress,
         refreshHealth: checkHealth,
       }}
     >
@@ -81,6 +94,8 @@ export function useSystemHealth() {
       healthData: null,
       lastChecked: null,
       isChecking: false,
+      analysisInProgress: false,
+      setAnalysisInProgress: () => {},
       refreshHealth: () => {},
     };
   }

@@ -253,6 +253,23 @@ PRODUCT_DESCRIPTIVE_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 
+PRODUCT_PACKAGING_TEXT_RE = re.compile(
+    r'(?:'
+    r'\brecycl[a-z]*|\bdispose\w*|\bdisposal\b|\bwaste\b|\blaminate\w*|'
+    r'\b(?:plastic|paper|glass|metal)\s+(?:pack|packaging|wrapper|pouch|container)\b|'
+    r'\b(?:pack|packaging|wrapper|pouch|container)\s+(?:is\s+)?(?:recycl[a-z]*|reusable|compostable|biodegradable)\b|'
+    r'\bkeep\s+(?:the\s+)?(?:pack|packaging|wrapper|pouch|container)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+PRODUCT_OTHER_CONTEXT_RE = re.compile(
+    r'\b(?:ingredients?|nutrition(?:al)?|directions?|instructions?|consumer\s+care|customer\s+care|'
+    r'manufactur(?:ed|er)|marketed|packed\s+by|m\.?r\.?p\.?|net\s+(?:wt|qty|weight|quantity)|'
+    r'batch|fssai|licen[cs]e|best\s+before|use\s+by)\b',
+    re.IGNORECASE,
+)
+
 
 def is_descriptive_product_text(text: Any) -> bool:
     """Return True for an unanchored benefit, instruction, or marketing line.
@@ -1110,6 +1127,50 @@ STANDALONE_COMMODITY_NOUNS = {
 }
 
 
+def classify_product_identity_candidate(
+    candidate: Dict[str, Any],
+    generic_values: Optional[set[str]] = None,
+) -> Tuple[str, str]:
+    """Assign a semantic role without changing the candidate's OCR text or provenance."""
+    value = str(candidate.get('value') or '').strip()
+    context = ' '.join(
+        str(candidate.get(key) or '').strip()
+        for key in ('raw_text', 'source_context', 'context')
+        if candidate.get(key)
+    ) or value
+    anchor = str(candidate.get('anchor_label') or candidate.get('source_label') or '').lower()
+    section = str(candidate.get('semantic_section') or '').upper()
+    declared_role = str(candidate.get('candidate_role') or candidate.get('role') or '').upper()
+
+    if declared_role == 'BRAND' or 'brand' in anchor or 'trade mark' in anchor:
+        return 'BRAND', 'Candidate is explicitly owned by the brand field.'
+    if section in {SECTION_INGREDIENTS, SECTION_NUTRITION, SECTION_SERVING_SIZE, SECTION_INSTRUCTIONS}:
+        return 'INGREDIENTS_NUTRITION_DIRECTIONS_OTHER', f'Candidate belongs to semantic section {section}.'
+    if section in {SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_ADDRESS, SECTION_MANUFACTURER, SECTION_MARKETER, SECTION_PACKER}:
+        return 'OTHER', f'Candidate belongs to semantic section {section}.'
+    if PRODUCT_PACKAGING_TEXT_RE.search(context):
+        return 'PACKAGING_RECYCLING_DISPOSAL', 'Candidate contains packaging, recycling, or disposal instructions.'
+    if PRODUCT_OTHER_CONTEXT_RE.search(context):
+        return 'INGREDIENTS_NUTRITION_DIRECTIONS_OTHER', 'Candidate is part of another labelled declaration or instruction.'
+    if float(candidate.get('confidence') or 0) < 0.5:
+        return 'UNKNOWN_LOW_CONFIDENCE', 'Candidate OCR confidence is too low to establish product identity.'
+    if any(label in anchor for label in ('variant', 'flavour', 'flavor', 'fragrance')):
+        return 'PRODUCT_VARIANT', 'Candidate is explicitly labelled as a product variant.'
+    if is_descriptive_product_text(value):
+        return 'DESCRIPTIVE_TEXT_MARKETING_CLAIM', 'Candidate is descriptive or promotional text, not a product title.'
+
+    normalized = re.sub(r'[^a-z0-9]+', ' ', value.lower()).strip()
+    normalized_generics = {
+        re.sub(r'[^a-z0-9]+', ' ', str(item).lower()).strip()
+        for item in (generic_values or set())
+        if str(item).strip()
+    }
+    if normalized in normalized_generics or normalized in STANDALONE_COMMODITY_NOUNS:
+        return 'GENERIC_NAME_PRODUCT_TYPE', 'Candidate is a generic commodity or product type.'
+
+    return 'PRODUCT_NAME', 'Candidate remains eligible as a supported commercial product identity.'
+
+
 def _is_disallowed_brand_candidate(val: str) -> bool:
     """Validate that an extracted brand candidate string represents a genuine brand name,
     excluding marketing slogans, usage instructions, sustainability claims, and corporate legal entities.
@@ -1608,10 +1669,12 @@ def _product_names_conflict(s1: str, s2: str) -> bool:
     if set1 == set2:
         return False
 
-    # Panel detail expansion: if all words of one candidate are fully contained in the other
-    # and the shorter phrase has at least 2 words (e.g. "Tata Salt" vs "Tata Salt Vacuum Evaporated Iodised")
-    if (set1.issubset(set2) or set2.issubset(set1)) and min(len(set1), len(set2)) >= 2:
-        return False
+    # Panel detail expansion: a shorter supported title, or a lone generic
+    # commodity contained in a specific product title, is compatible evidence.
+    if set1.issubset(set2) or set2.issubset(set1):
+        shorter = set1 if len(set1) <= len(set2) else set2
+        if len(shorter) >= 2 or (len(shorter) == 1 and next(iter(shorter)) in STANDALONE_COMMODITY_NOUNS):
+            return False
 
     overlap = set1.intersection(set2)
     union = set1.union(set2)
@@ -2098,6 +2161,9 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
 
     elif field_name == 'PRODUCT_NAME':
+        candidate_role = str(candidate.get('candidate_role') or '').upper()
+        if candidate_role and candidate_role != 'PRODUCT_NAME':
+            return True
         if sec in (SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE, SECTION_INGREDIENTS, SECTION_ADDRESS):
             return True
         # Reject nutrition table rows
@@ -2329,6 +2395,19 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 clean_pname_candidates.append(cand)
         candidates_by_field['PRODUCT_NAME'] = clean_pname_candidates
 
+    generic_identity_values = {
+        str(candidate.get('value')).strip()
+        for field_name in ('GENERIC_NAME', 'PRODUCT_TYPE')
+        for candidate in candidates_by_field.get(field_name, [])
+        if candidate.get('value')
+    }
+    for candidate in candidates_by_field.get('PRODUCT_NAME', []):
+        role, role_reason = classify_product_identity_candidate(candidate, generic_identity_values)
+        candidate['candidate_role'] = role
+        candidate['role_reason'] = role_reason
+        if role != 'PRODUCT_NAME':
+            candidate['rejection_reason'] = role_reason
+
     for name, candidates in candidates_by_field.items():
         if not candidates:
             continue
@@ -2349,6 +2428,10 @@ def merge_extracted_fields(field_sets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 result['filtered_noise'] = noise
                 result['candidate_classification'] = 'IRRELEVANT'
                 result['evidence_merge_type'] = 'IRRELEVANT'
+                if name == 'PRODUCT_NAME':
+                    result['status'] = 'REVIEW'
+                    result['review_required'] = True
+                    result['evidence_state'] = 'EVIDENCE_LOW_CONFIDENCE'
                 merged[name] = result
             continue
 

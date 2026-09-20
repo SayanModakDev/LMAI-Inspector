@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -40,6 +41,21 @@ router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+_scan_slots = threading.BoundedSemaphore(max(1, int(settings.OCR_CONCURRENCY)))
+
+
+def acquire_scan_slot():
+    """Bound concurrent OCR pipelines so one process does not duplicate models or exhaust RAM."""
+    if not _scan_slots.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Inspection capacity is currently in use. Wait for the active analysis to finish before retrying.",
+        )
+    try:
+        yield
+    finally:
+        _scan_slots.release()
+
 
 def format_public_url(path: str) -> str:
     """Prefix path with PUBLIC_BASE_URL if configured, otherwise return relative path."""
@@ -52,12 +68,13 @@ def format_public_url(path: str) -> str:
 
 
 @router.post("/scan", response_model=schemas.ScanResponse)
-async def perform_scan(
+def perform_scan(
     files: List[UploadFile] = File(default=None),
     file: UploadFile = File(default=None),
     db: Session = Depends(get_db),
+    _scan_slot: None = Depends(acquire_scan_slot),
 ):
-    """Upload any number of label images and perform one combined inspection pipeline."""
+    """Run the synchronous inspection pipeline in FastAPI's bounded worker threadpool."""
     log_memory_checkpoint("process RSS before inspection")
 
     uploaded_files = [item for item in (files or []) if item and item.filename]
@@ -92,7 +109,7 @@ async def perform_scan(
             )
 
         # 2. Read content into memory for validation
-        content = await uploaded_file.read()
+        content = uploaded_file.file.read()
         if not content or len(content) == 0:
             raise HTTPException(
                 status_code=400,

@@ -106,7 +106,7 @@ app.include_router(rules.router, prefix="/api", tags=["Rules"])
 
 @app.get("/", tags=["Health"])
 @app.get("/health", tags=["Health"])
-def health_check():
+async def health_check():
     """Root health check endpoint."""
     return {
         "status": "running",
