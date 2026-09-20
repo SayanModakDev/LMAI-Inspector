@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  MinusCircle,
   RotateCcw,
   ChevronDown,
   ChevronRight,
@@ -46,6 +47,7 @@ const Result = () => {
   // Report Generation State
   const [generatingReport, setGeneratingReport] = useState(false);
   const [reportUrl, setReportUrl] = useState(null);
+  const [reportError, setReportError] = useState(null);
 
   useEffect(() => {
     fetchInspection();
@@ -54,12 +56,15 @@ const Result = () => {
   const fetchInspection = async () => {
     try {
       setLoading(true);
+      setReportError(null);
       const data = await apiService.getInspection(id);
       setInspection(data);
 
       if (data.report?.file_name) {
         const initialReportUrl = data.report.file_url || `/reports/${data.report.file_name}`;
         setReportUrl(resolveBackendUrl(initialReportUrl));
+      } else {
+        setReportUrl(null);
       }
 
       setError(null);
@@ -74,15 +79,21 @@ const Result = () => {
   const handleGenerateReport = async () => {
     try {
       setGeneratingReport(true);
+      setReportError(null);
       const res = await apiService.generateReport(id);
-      const rawUrl = res.data?.file_url || `/reports/${res.data?.file_name}`;
+      const reportData = res?.data || {};
+      const rawUrl = reportData.file_url ||
+        (reportData.file_name ? `/reports/${reportData.file_name}` : null);
+      if (!rawUrl) {
+        throw new Error('The report service did not return a PDF location.');
+      }
       const url = resolveBackendUrl(rawUrl);
       setReportUrl(url);
       window.open(url, '_blank');
-      await fetchInspection();
     } catch (err) {
       console.error('Report generation error:', err);
-      alert('Report generation failed: ' + (err.response?.data?.detail || err.message));
+      setReportError(err.response?.data?.detail || err.message || 'Report generation failed.');
+      setActiveTab('report');
     } finally {
       setGeneratingReport(false);
     }
@@ -490,10 +501,25 @@ const Result = () => {
               className="btn btn-primary btn-md"
               onClick={handleGenerateReport}
               disabled={generatingReport}
+              aria-busy={generatingReport}
             >
               <Printer size={16} />{' '}
               {generatingReport ? 'Compiling Dossier...' : 'Generate Official PDF Report'}
             </button>
+            {reportError && (
+              <div className="flex items-center gap-2 text-danger text-xs" role="alert">
+                <AlertTriangle size={14} />
+                <span>{reportError}</span>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={handleGenerateReport}
+                  disabled={generatingReport}
+                >
+                  <RotateCcw size={13} /> Retry
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
