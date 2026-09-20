@@ -235,6 +235,36 @@ MARKETING_STOP_RE = re.compile(
     re.IGNORECASE,
 )
 
+PRODUCT_IDENTITY_NOUN_RE = re.compile(
+    r'\b(?:salt|sugar|biscuits?|cookies?|oil|tea|coffee|soap|shampoo|conditioner|cream|flour|atta|maida|rice|masala|juice|tooth\s*paste|toothpaste|dental\s+cream|noodles|extract|butter|flakes|muesli|dal|sauce|lotion|gel|powder|talc|detergent|cleaner|water|drink|milk|candy|bar|snack|chips|cereal)\b',
+    re.IGNORECASE,
+)
+
+PRODUCT_DESCRIPTIVE_CLAIM_RE = re.compile(
+    r'(?:'
+    r'\b(?:daily|complete|long[-\s]*lasting|advanced)?\s*(?:sensitivity|cavity|enamel|gum)\s+(?:protection|care|relief)\b|'
+    r'\b(?:strong|healthy|whiter|cleaner)\s+(?:teeth|gums|smile|hair|skin)\b|'
+    r'\b(?:triple|dual|deep|complete)\s+cleaning\s+action\b|'
+    r'\b(?:clinically|dentist|doctor)\s+(?:proven|recommended)\b|'
+    r'\b(?:helps?\s+)?(?:protects?|prevents?|fights?|strengthens?|keeps?)\s+(?:against\s+)?\w+|'
+    r'\b(?:great|rich|authentic)\s+(?:taste|flavou?r)\b|'
+    r'^(?:use|apply|brush|serve|enjoy|keep|store|take|mix)\b'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def is_descriptive_product_text(text: Any) -> bool:
+    """Return True for an unanchored benefit, instruction, or marketing line.
+
+    Product-type nouns keep a line eligible because they provide identity
+    semantics; the caller separately considers brand and layout evidence.
+    """
+    value = str(text or '').strip()
+    if not value or PRODUCT_IDENTITY_NOUN_RE.search(value):
+        return False
+    return bool(MARKETING_STOP_RE.search(value) or PRODUCT_DESCRIPTIVE_CLAIM_RE.search(value))
+
 SECTION_BOUNDARY_RE = re.compile(
     r'(?:'
     r'\b(?:manufactured|mfg|mfd|packed|marketed|imported)\s*(?:&|and|/)?\s*(?:marketed|packed|mkt|pkd)?\s*(?:by|at|for)\b|'
@@ -1092,6 +1122,11 @@ def _is_disallowed_brand_candidate(val: str) -> bool:
         return True
     lower = clean_val.lower()
 
+    # A line containing the commodity/product type is product identity or a
+    # generic descriptor, not a standalone brand banner.
+    if PRODUCT_IDENTITY_NOUN_RE.search(clean_val):
+        return True
+
     if re.search(r'\bdentist\s+recommended\s+brand\b', lower):
         return True
     if re.search(r'\btriple\s+cleaning\s+action\b', lower):
@@ -1264,6 +1299,8 @@ def _extract_product_name_candidates(
 
     for index, line in enumerate(lines[:25]):
         if _is_disallowed_product_name_line(line):
+            continue
+        if is_descriptive_product_text(line):
             continue
         words = re.findall(r"[A-Za-z][A-Za-z&'-]*", line)
         lowered = [w.lower() for w in words]
@@ -2073,6 +2110,13 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
         # Reject candidates with explicit brand ownership
         anchor = str(candidate.get('anchor_label') or '').lower()
         if 'brand' in anchor or 'trade mark' in anchor or candidate.get('role') == 'BRAND':
+            return True
+        is_explicit_identity = (
+            str(candidate.get('source') or '').upper() == 'OCR_LABEL'
+            or any(label in anchor for label in ('product', 'item', 'article'))
+        )
+        if not is_explicit_identity and is_descriptive_product_text(val):
+            candidate.setdefault('candidate_role', 'DESCRIPTIVE_TEXT')
             return True
 
     elif field_name == 'BRAND':
@@ -4547,8 +4591,10 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
                 None,
             )
             if matching_item:
-                field_data.setdefault('source_image_index', matching_item.get('image_index'))
-                field_data.setdefault('bbox', matching_item.get('bbox'))
+                if field_data.get('source_image_index') is None:
+                    field_data['source_image_index'] = matching_item.get('image_index')
+                if not field_data.get('bbox'):
+                    field_data['bbox'] = matching_item.get('bbox')
                 field_data['confidence'] = min(float(field_data.get('confidence') or 0), float(matching_item.get('confidence') or 0))
 
         if not field_data.get('evidence_state'):
