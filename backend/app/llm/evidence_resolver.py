@@ -13,6 +13,8 @@ from app.core.config import get_settings
 from app.core.ontology import assess_address_structure, extract_contextual_emails
 from app.extraction.declaration_extractor import (
     is_valid_date_candidate,
+    is_descriptive_product_text,
+    _product_names_conflict,
     DATE_FIELDS,
     DATE_PREFIX_RE,
     parse_date_with_precision,
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 CANONICAL_FIELDS_PROMPT_DOC = """
 CANONICAL DECLARATIONS TO IDENTIFY AND RESOLVE:
-1. PRODUCT_NAME: Commercial product title (e.g. 'Nutriva Crispy Oats Cookies', 'Lumina Glow Face Cream'). Distinct from brand or lone generic commodity name.
+1. PRODUCT_NAME: Commercial product title (e.g. 'Nutriva Crispy Oats Cookies', 'Lumina Glow Face Cream'). Distinct from brand, variant/flavour-only text, a lone generic commodity name, and descriptive or promotional claims/taglines.
 2. BRAND: Distinct commercial brand or trademark (e.g. 'Nutriva', 'Lumina', 'Tata', 'Nestle').
 3. GENERIC_NAME: Common or generic name of the commodity (e.g. 'Cookies', 'Face Cream', 'Crystal Sugar', 'Edible Vegetable Oil').
 4. DECLARED_NET_QUANTITY: Declared net weight, volume, or count with legal metric unit (e.g. '500 g', '1 kg', '750 ml', '100 N'). For multipacks (e.g. '10 x 50 g'), preserve the exact printed statement in value and source_evidence.
@@ -64,6 +66,39 @@ ROLE_SPECIFIC_FIELDS = {
     "MARKETER_NAME": {"MARKETER"},
     "MARKETER_ADDRESS": {"MARKETER"},
 }
+
+
+def _has_unresolved_product_identity_conflict(candidate: Optional[Dict[str, Any]]) -> bool:
+    """Keep incompatible deterministic product identities under review.
+
+    A grounded semantic selection may discard descriptive/tagline noise, but it
+    must not silently choose one of multiple genuinely incompatible identities.
+    """
+    if not candidate or candidate.get("status") not in ("CONFLICTING_EVIDENCE", "AMBIGUOUS", "REVIEW"):
+        return False
+
+    raw_candidates = candidate.get("all_candidates") or candidate.get("candidates") or []
+    if not raw_candidates:
+        raw_candidates = [{"value": value} for value in candidate.get("values", [])]
+
+    identity_values: List[str] = []
+    for item in raw_candidates:
+        value = item.get("value") if isinstance(item, dict) else item
+        role = str(item.get("role") or "").upper() if isinstance(item, dict) else ""
+        if not value or role == "BRAND" or is_descriptive_product_text(value):
+            continue
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
+        if normalized and normalized not in {
+            re.sub(r"[^a-z0-9]+", " ", existing.lower()).strip()
+            for existing in identity_values
+        }:
+            identity_values.append(str(value).strip())
+
+    return any(
+        _product_names_conflict(identity_values[left], identity_values[right])
+        for left in range(len(identity_values))
+        for right in range(left + 1, len(identity_values))
+    )
 
 
 def _responsible_party_roles(text: str) -> set[str]:
@@ -381,6 +416,20 @@ def resolve_evidence_with_gemini(
 
         if decl.status == "RESOLVED" and decl.value:
             source_context = "\n".join(ev.raw_text for ev in decl.source_evidence if ev.raw_text)
+
+            if field_name == "PRODUCT_NAME" and _has_unresolved_product_identity_conflict(det_candidate):
+                retained = dict(det_candidate)
+                retained["review_notes"] = (
+                    "Grounded semantic evidence selected one candidate, but incompatible OCR-supported "
+                    "product identities remain unresolved."
+                )
+                merged_fields[field_name] = retained
+                llm_metadata.setdefault("identity_resolution_rejections", []).append({
+                    "field": field_name,
+                    "value": decl.value,
+                    "reason": retained["review_notes"],
+                })
+                continue
 
             resolved_role: Optional[str] = None
             if field_name in ROLE_SPECIFIC_FIELDS:
