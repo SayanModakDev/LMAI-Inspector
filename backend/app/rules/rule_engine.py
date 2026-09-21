@@ -198,6 +198,12 @@ def _is_uncontradicted_visual_candidate(r: Any) -> bool:
 
 def _is_physical_verification_rule(r: Any) -> bool:
     """Check if a rule result represents a physical verification requirement (caliper/scale)."""
+    status = getattr(r, 'status', None) or (r.get('status') if isinstance(r, dict) else None)
+    if status == 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION':
+        return True
+    scope = getattr(r, 'screening_scope', None) or (r.get('screening_scope') if isinstance(r, dict) else None)
+    if scope == 'OUT_OF_SCOPE_PHYSICAL_VERIFICATION':
+        return True
     vtype = getattr(r, 'verification_type', None) or (r.get('verification_type') if isinstance(r, dict) else None)
     evidence_data = getattr(r, 'evidence_data', None) or (r.get('evidence_data') if isinstance(r, dict) else None)
     if not vtype and isinstance(evidence_data, dict):

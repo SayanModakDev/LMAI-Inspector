@@ -19,6 +19,7 @@ import { apiService } from '../services/api';
 import MetricCard from '../components/MetricCard';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
+import ErrorState from '../components/ErrorState';
 import { formatISTDate, formatISTTime } from '../utils/dateUtils';
 import './Dashboard.css';
 
@@ -27,21 +28,33 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        setLoading(true);
-        const data = await apiService.getDashboardStats();
-        setStats(data);
-        setError(null);
-      } catch (err) {
-        console.error('Failed to load dashboard statistics:', err);
-        setError('Unable to retrieve operational metrics from backend.');
-      } finally {
-        setLoading(false);
+  const fetchStats = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await apiService.getDashboardStats();
+      if (!data || typeof data !== 'object') {
+        throw new Error('Received invalid operational payload from backend.');
       }
-    };
+      setStats(data);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to load dashboard statistics:', err);
+      setError(err?.response?.data?.detail || 'Unable to retrieve operational metrics from backend.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchStats();
+    const handleFocus = () => {
+      fetchStats();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   if (loading) {
@@ -50,6 +63,38 @@ const Dashboard = () => {
         <div className="skeleton-header" />
         <div className="skeleton-grid" />
         <div className="skeleton-card" />
+      </div>
+    );
+  }
+
+  if (error || !stats) {
+    return (
+      <div className="dashboard-page">
+        <div className="dashboard-header">
+          <div className="dashboard-header__text">
+            <h2 className="dashboard-title">Inspection Overview</h2>
+            <p className="dashboard-subtitle">
+              Review packaging declarations, evidence, and compliance screening results under the Legal Metrology (Packaged Commodities) Rules, 2011.
+            </p>
+          </div>
+          <div className="dashboard-header__actions">
+            <Link to="/history" className="btn btn-outline">
+              <History size={15} /> View History
+            </Link>
+            <Link to="/scan" className="btn btn-primary">
+              <ScanLine size={15} /> New Inspection
+            </Link>
+          </div>
+        </div>
+
+        <div className="card p-6">
+          <ErrorState
+            title="Unable to Retrieve Operational Metrics"
+            message={error || 'Failed to connect to the inspection analysis backend.'}
+            reason="Could not retrieve aggregate statistics and screening records from the backend API. Please check your network connection and ensure the backend server is running."
+            onRetry={fetchStats}
+          />
+        </div>
       </div>
     );
   }
