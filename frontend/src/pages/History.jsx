@@ -14,12 +14,14 @@ import {
 import { apiService, resolveBackendUrl } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
+import ErrorState from '../components/ErrorState';
 import { formatISTDate, formatISTTime, formatISTDateTime } from '../utils/dateUtils';
 import './History.css';
 
 const History = () => {
   const [inspections, setInspections] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -30,11 +32,17 @@ const History = () => {
   const fetchHistory = async () => {
     try {
       setLoading(true);
+      setError(null);
       const statusParam = filter !== 'ALL' ? filter : undefined;
       const data = await apiService.getHistory(0, 100, statusParam);
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid inspection history payload received.');
+      }
       setInspections(data || []);
+      setError(null);
     } catch (err) {
       console.error('Failed to load inspection history:', err);
+      setError(err?.response?.data?.detail || 'Unable to retrieve inspection history from backend.');
     } finally {
       setLoading(false);
     }
@@ -115,6 +123,15 @@ const History = () => {
         <div className="card-body p-0">
           {loading ? (
             <div className="p-8 text-center text-muted">Loading history records...</div>
+          ) : error ? (
+            <div className="p-6">
+              <ErrorState
+                title="Unable to Retrieve Inspection History"
+                message={error}
+                reason="Could not retrieve stored inspection records from the backend API. Please check your connection and retry."
+                onRetry={fetchHistory}
+              />
+            </div>
           ) : filteredItems.length === 0 ? (
             <EmptyState
               title="No inspection records found"
