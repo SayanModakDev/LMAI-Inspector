@@ -896,6 +896,7 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         _paragraph("Audit Status", th_style),
     ]
     extracted_rows = [extracted_headers]
+    rule_by_parameter = {result.parameter: result for result in results_list}
     for field in (inspection.extracted_fields or []):
         param = field.field_name
         if param == "BARCODE_METADATA":
@@ -908,10 +909,33 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
         method_display = f"<b>{field.source or 'OCR'}</b> (Conf: {conf_pct})"
         status_display = "<font color='#334155'>IMAGE EVIDENCE</font>"
 
+        if param == "VEG_NONVEG_SYMBOL":
+            visual_rule = rule_by_parameter.get(param)
+            visual_evidence = dict(getattr(visual_rule, "evidence_data", None) or {})
+            confirmed = bool(
+                visual_rule
+                and normalize_rule_status(visual_rule.status) == RuleStatus.PASS
+                and visual_evidence.get("status") == "VERIFIED"
+                and visual_evidence.get("candidate_status") == "CONFIRMED"
+                and (visual_evidence.get("visual_confirmation") or {}).get("confirmed") is True
+            )
+            symbol_value = visual_evidence.get("value") or visual_evidence.get("symbol_type")
+            verified_display = str(symbol_value or "Not verifiable")
+            detector = visual_evidence.get("detector_version") or "unversioned detector"
+            panel_index = visual_evidence.get("source_image_index")
+            bbox = visual_evidence.get("bbox")
+            panel_text = f"Panel {int(panel_index) + 1}" if isinstance(panel_index, int) else "Panel unavailable"
+            bbox_text = f"bbox {bbox}" if bbox else "bbox unavailable"
+            method_display = f"VISUAL / {detector}; {panel_text}; {bbox_text}"
+            if confirmed:
+                status_display = "<font color='#047857'><b>VERIFIED VISUAL SYMBOL</b></font>"
+            else:
+                status_display = "<font color='#B45309'><b>REVIEW REQUIRED / UNVERIFIED</b></font>"
+
         extracted_rows.append([
             _paragraph(param, small_bold),
             _paragraph(orig_val or "—", small_style),
-            _safe_html_p(verified_display, small_style),
+            _paragraph(verified_display, small_style),
             _safe_html_p(method_display, small_style),
             _safe_html_p(status_display, small_style),
         ])

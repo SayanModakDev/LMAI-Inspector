@@ -3311,7 +3311,13 @@ def _extract_compact_declaration_panel(
     second_price = re.fullmatch(r'(?:₹|rs\.?|inr)?\s*([0-9]+[.,][0-9]{1,4})(?:\s*/?\s*[a-z])?', candidates[1], re.I)
     batch_match = re.fullmatch(r'[A-Za-z]{1,8}[A-Za-z0-9-]{3,30}', candidates[2])
     date_matches = re.findall(r'(?<!\d)(\d{1,2}[/-]\d{2,4})(?!\d)', candidates[3])
-    if not (first_price and second_price and batch_match and len(date_matches) == 2):
+    if not (
+        first_price
+        and second_price
+        and batch_match
+        and is_plausible_batch_identifier(batch_match.group(0))
+        and len(date_matches) == 2
+    ):
         return {}
 
     result: Dict[str, Dict[str, Any]] = {}
@@ -4093,7 +4099,65 @@ INVALID_BATCH_TOKENS = {
     'no', 'no.', 'number', 'num', 'num.', 'code', 'lot', 'batch', 'b', 'b.',
     'date', 'mfd', 'pkd', 'exp', 'expiry', 'mrp', 'rs', 'inr', 'none', 'n/a', 'na', 'null',
     'image', 'placeholder', '[image]', '[image 1]', 'undefined',
+    'print', 'printed', 'printing', 'imprinted', 'stamped', 'embossed',
+    'shown', 'mentioned', 'above', 'below', 'here', 'there', 'label', 'pack',
 }
+
+
+def is_plausible_batch_identifier(value: Any) -> bool:
+    """Return whether evidence is an actual identifier rather than label instructions."""
+    candidate = str(value or '').strip(' \t\r\n,;:.')
+    normalized = candidate.lower()
+    compact = re.sub(r'[^A-Za-z0-9]', '', candidate)
+    if not candidate or normalized in INVALID_BATCH_TOKENS or len(compact) < 2:
+        return False
+    if re.fullmatch(
+        r'(?:to\s+be\s+)?(?:print(?:ed|ing)?|stamp(?:ed)?|emboss(?:ed)?|'
+        r'see\s+(?:above|below)|shown\s+(?:above|below)|as\s+printed)',
+        normalized,
+    ):
+        return False
+    if re.search(
+        r'\b(?:please|scan|see|first|letters?|details?|instruction|where|when)\b',
+        normalized,
+    ):
+        return False
+    # Actual batch codes ordinarily carry a digit, separator, or uppercase code
+    # form.  This keeps valid all-letter lot codes while rejecting prose words.
+    return bool(
+        re.search(r'\d', candidate)
+        or re.search(r'[-/.]', candidate)
+        or (candidate.isupper() and candidate.isalpha() and len(candidate) <= 16)
+    )
+
+
+def sanitize_batch_number_field(fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Remove an unsupported canonical batch value, retaining no fabricated substitute."""
+    field = fields.get('BATCH_NUMBER')
+    if not isinstance(field, dict):
+        return None
+    if is_plausible_batch_identifier(field.get('value')):
+        return field
+
+    # A merge may carry alternative candidates. Prefer a genuinely supported
+    # identifier only when that candidate itself has printed OCR provenance.
+    for candidate in field.get('candidates') or []:
+        if not isinstance(candidate, dict) or not is_plausible_batch_identifier(candidate.get('value')):
+            continue
+        replacement = dict(candidate)
+        replacement.setdefault('source', 'OCR')
+        replacement['batch_sanitization'] = 'PROMOTED_VALID_PRINTED_CANDIDATE'
+        fields['BATCH_NUMBER'] = replacement
+        return replacement
+
+    rejected = dict(field)
+    rejected['status'] = 'REJECTED'
+    rejected['rejection_reason'] = (
+        "Instructional or placeholder wording is not an actual printed batch identifier."
+    )
+    fields.pop('BATCH_NUMBER', None)
+    logger.info("Rejected unsupported BATCH_NUMBER candidate: %r", rejected.get('value'))
+    return None
 
 
 def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
@@ -4114,8 +4178,7 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
         if cleaned_after:
             tokens = cleaned_after.split()
             first_token = tokens[0].strip(' ,;:')
-            if (first_token.lower().rstrip(':.-') not in INVALID_BATCH_TOKENS
-                    and len(re.sub(r'[^A-Za-z0-9]', '', first_token)) >= 4):
+            if is_plausible_batch_identifier(first_token):
                 candidate = first_token
 
         # If not on same line, check immediate next line (e.g. Batch No:\nB104)
@@ -4126,8 +4189,7 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
                 next_tokens = cleaned_next.split()
                 if next_tokens:
                     cand = next_tokens[0].strip(' ,;:')
-                    if (cand.lower().rstrip(':.-') not in INVALID_BATCH_TOKENS
-                            and len(re.sub(r'[^A-Za-z0-9]', '', cand)) >= 4):
+                    if is_plausible_batch_identifier(cand):
                         candidate = cand
 
         if candidate:
@@ -4152,7 +4214,7 @@ def _extract_batch_number(lines: List[str], normalized: str, ocr_items: Optional
                 cleaned_after = re.sub(r'^(?:no\.?|number|num\.?|code)\b[:\s-]*', '', after, flags=re.IGNORECASE).strip(' :;,-=#')
                 if cleaned_after:
                     tok = cleaned_after.split()[0].strip(' ,;:')
-                    if tok.lower() not in INVALID_BATCH_TOKENS and len(re.sub(r'[^A-Za-z0-9]', '', tok)) >= 1:
+                    if is_plausible_batch_identifier(tok):
                         return {
                             'value': tok[:100],
                             'raw_value': f"{m.group(0)}: {tok}",
@@ -4727,6 +4789,8 @@ def extract_declarations(raw_text: str, ocr_items: Optional[List[Dict[str, Any]]
     compact_fields = _extract_compact_declaration_panel(lines, effective_items)
     for field_name, compact_field in compact_fields.items():
         fields.setdefault(field_name, compact_field)
+
+    sanitize_batch_number_field(fields)
 
     for f_name, field_data in fields.items():
         val_str = str(field_data.get('value', ''))

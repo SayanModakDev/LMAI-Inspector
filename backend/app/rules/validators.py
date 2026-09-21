@@ -21,6 +21,7 @@ from app.core.ontology import (
     normalize_unit,
 )
 from app.extraction.cleaner import is_artifact_token
+from app.extraction.declaration_extractor import is_plausible_batch_identifier
 from app.extraction.evidence_model import EvidenceAvailabilityState
 
 logger = logging.getLogger(__name__)
@@ -1426,9 +1427,8 @@ def validate_batch_number_present(
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
     cleaned = re.sub(r'^(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)[:\s-]*', '', raw_val, flags=re.IGNORECASE).strip()
 
-    invalid_batch_tokens = {"no", "number", "num", "code", "lot", "batch", "b", "none", "n/a", "n.a.", "null", "image", "placeholder", "[image]", "undefined"}
     is_art, _ = is_artifact_token(cleaned)
-    if not cleaned or is_art or cleaned.lower() in invalid_batch_tokens or len(re.sub(r'[^A-Za-z0-9]', '', cleaned)) < 1:
+    if not cleaned or is_art or not is_plausible_batch_identifier(cleaned):
         return ValidationResult(
             status="FAIL",
             binary=0,
@@ -1526,15 +1526,24 @@ def validate_veg_nonveg_present(
             candidate for candidate in supporting
             if isinstance(candidate, dict)
             and candidate.get("accepted") is True
+            and candidate.get("lifecycle_state") == "VERIFIED"
             and str(candidate.get("symbol_type") or "").upper() == symbol_type
+            and candidate.get("shape") == (
+                "circle" if symbol_type == "VEGETARIAN" else "triangle"
+            )
             and candidate.get("has_enclosing_square") is True
             and candidate.get("frame_detection") in (
                 "connected_same_colour_contour",
                 "fragmented_same_colour_frame",
             )
+            and (candidate.get("acceptance_checks") or {}).get("appropriate_inner_colour") is True
+            and (candidate.get("acceptance_checks") or {}).get("same_colour_enclosing_square") is True
+            and (candidate.get("acceptance_checks") or {}).get("inner_outer_spatial_containment") is True
             and float(candidate.get("contrast_score") or 0) >= 0.35
             and candidate.get("image_index") is not None
             and bool(candidate.get("bbox"))
+            and bool(candidate.get("detector_version"))
+            and bool(candidate.get("original_image_dimensions"))
         ]
         confirmation = evidence.get("visual_confirmation") or {}
         confirmed = bool(
@@ -1554,7 +1563,8 @@ def validate_veg_nonveg_present(
                 binary=1,
                 reason=(
                     f"Confirmed {symbol_type.lower().replace('_', '-')} symbol from package-image evidence: "
-                    "prescribed inner shape, same-colour enclosing square, sufficient contrast, "
+                    "prescribed inner shape and colour, measured same-colour enclosing square, "
+                    "spatial containment, sufficient contrast, "
                     "image/bounding-box provenance, and no supported opposite symbol."
                 ),
                 normalized_value=label,
@@ -1569,7 +1579,8 @@ def validate_veg_nonveg_present(
             missing.append("an accepted prescribed-geometry candidate")
         elif not matching_supported:
             missing.append(
-                "an accepted same-colour enclosing frame, sufficient contrast, and image/bounding-box provenance"
+                "a VERIFIED candidate with prescribed shape/colour, a measured same-colour enclosing frame, "
+                "spatial containment, sufficient contrast, detector version, and image/bounding-box provenance"
             )
         if evidence.get("status") not in ("VERIFIED", "CONFIRMED") or evidence.get("candidate_status") != "CONFIRMED":
             missing.append("detector lifecycle confirmation")

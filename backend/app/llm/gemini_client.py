@@ -120,6 +120,7 @@ class GeminiClient:
             backoff_base = 0.5
 
             for retry_idx in range(max_retries):
+                attempt_started = time.perf_counter()
                 attempt_info = {
                     "model": model_name,
                     "tier": model_tier,
@@ -151,8 +152,9 @@ class GeminiClient:
                         config=config,
                     )
 
+                    attempt_ms = round((time.perf_counter() - attempt_started) * 1000)
                     elapsed_ms = round((time.perf_counter() - start_time) * 1000)
-                    attempt_info["processing_time_ms"] = elapsed_ms
+                    attempt_info["processing_time_ms"] = attempt_ms
                     attempt_info["success"] = True
 
                     # Parse response into LLMExtractionResult
@@ -198,6 +200,9 @@ class GeminiClient:
                 except Exception as exc:
                     error_str = str(exc)
                     attempt_info["error"] = error_str
+                    attempt_info["processing_time_ms"] = round(
+                        (time.perf_counter() - attempt_started) * 1000
+                    )
                     metadata["attempts"].append(attempt_info)
                     logger.warning(
                         "Gemini call error on model=%s attempt=%d: %s",

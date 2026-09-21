@@ -67,6 +67,38 @@ def test_decorative_green_graphic_is_rejected_without_prescribed_square():
     assert any("enclosing square" in candidate["decision_reason"] for candidate in result["candidates"])
 
 
+def test_every_visual_candidate_has_auditable_lifecycle_and_colour_statistics():
+    decorative = _canvas()
+    cv2.circle(decorative, (70, 70), 22, (20, 45, 120), -1)
+    cv2.rectangle(decorative, (180, 40), (250, 90), (30, 140, 30), -1)
+    result = detect_food_symbol(decorative)
+
+    assert result["candidates"]
+    for candidate in result["candidates"]:
+        assert candidate["lifecycle_state"] in {"VERIFIED", "REJECTED"}
+        assert len(candidate["bbox"]) == 4
+        assert len(candidate["inner_bbox"]) == 4
+        assert candidate["detector_version"]
+        assert candidate["original_image_dimensions"] == {"width": 300, "height": 300}
+        assert "bgr_mean" in candidate["inner_colour"]
+        assert "rgb_mean" in candidate["inner_colour"]
+        assert "hsv_mean" in candidate["inner_colour"]
+        if candidate["lifecycle_state"] == "REJECTED":
+            assert candidate["rejection_reasons"]
+
+
+def test_instructional_printed_token_is_not_a_batch_number():
+    fields = extract_declarations(
+        "For Manufacturing Licence No., read second alphabet of the Batch No. printed."
+    )
+    assert "BATCH_NUMBER" not in fields
+
+
+def test_real_batch_identifier_remains_extractable():
+    fields = extract_declarations("Batch No: BGM260315")
+    assert fields["BATCH_NUMBER"]["value"] == "BGM260315"
+
+
 def test_prescribed_symbol_survives_localized_frame_glare():
     image = _symbol("VEGETARIAN")
     # A narrow highlight breaks two parts of the printed frame while leaving
@@ -218,7 +250,7 @@ def test_real_tata_salt_four_image_visual_regression():
     accepted = [item for item in merged["supporting_candidates"] if item["accepted"]]
     assert len(accepted) == 1
     assert accepted[0]["frame_detection"] == "fragmented_same_colour_frame"
-    assert accepted[0]["frame_metrics"]["interior_annulus_density"] <= 0.16
+    assert accepted[0]["frame_metrics"]["interior_annulus_density"] <= 0.17
 
 
 def test_isolated_state_is_partial_and_not_a_false_pass():

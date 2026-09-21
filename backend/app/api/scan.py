@@ -1,10 +1,12 @@
 import logging
+import hashlib
 import os
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+import cv2
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -14,7 +16,12 @@ from app.core.config import get_settings
 from app.core.constants import InspectionStatus
 from app.database import models, schemas
 from app.database.connection import get_db
-from app.extraction.declaration_extractor import extract_declarations, merge_product_evidence, merge_extracted_fields
+from app.extraction.declaration_extractor import (
+    extract_declarations,
+    merge_product_evidence,
+    merge_extracted_fields,
+    sanitize_batch_number_field,
+)
 from app.ocr.ocr_service import run_ocr
 from app.ocr.preprocessing import preprocess_image
 from app.rules.applicability import get_applicable_rules
@@ -66,6 +73,52 @@ def format_public_url(path: str) -> str:
     return f"{base}{clean_path}" if base else clean_path
 
 
+def _persist_symbol_candidate_crops(
+    original_path: str,
+    visual_result: Dict[str, Any],
+    image_index: int,
+) -> None:
+    """Persist exact original-image bbox crops for every retained detector candidate."""
+    candidates = visual_result.get("candidates") or []
+    if not candidates:
+        return
+    original = cv2.imread(original_path, cv2.IMREAD_COLOR)
+    if original is None:
+        logger.warning("Unable to retain symbol evidence crops for image=%s", image_index)
+        return
+
+    image_h, image_w = original.shape[:2]
+    stem = os.path.splitext(os.path.basename(original_path))[0]
+    for candidate_index, candidate in enumerate(candidates):
+        bbox = candidate.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+        x1, x2 = max(0, min(image_w, x1)), max(0, min(image_w, x2))
+        y1, y2 = max(0, min(image_h, y1)), max(0, min(image_h, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        crop = original[y1:y2, x1:x2]
+        encoded, png_bytes = cv2.imencode(".png", crop)
+        if not encoded:
+            continue
+        crop_name = f"symbol_evidence_{stem}_img{image_index}_cand{candidate_index}.png"
+        crop_path = get_safe_upload_path(settings.UPLOAD_DIR, crop_name)
+        with open(crop_path, "wb") as crop_file:
+            crop_file.write(png_bytes.tobytes())
+        candidate["source_image_index"] = image_index
+        candidate["original_image_index"] = image_index
+        candidate["original_image_bbox"] = [x1, y1, x2, y2]
+        candidate["evidence_crop_file"] = crop_name
+        candidate["evidence_crop_url"] = format_public_url(f"/uploads/{crop_name}")
+        candidate["evidence_crop_sha256"] = hashlib.sha256(png_bytes.tobytes()).hexdigest()
+        candidate["evidence_crop_dimensions"] = {
+            "width": x2 - x1,
+            "height": y2 - y1,
+        }
+    del original
+
+
 
 @router.post("/scan", response_model=schemas.ScanResponse)
 def perform_scan(
@@ -75,7 +128,8 @@ def perform_scan(
     _scan_slot: None = Depends(acquire_scan_slot),
 ):
     """Run the synchronous inspection pipeline in FastAPI's bounded worker threadpool."""
-    log_memory_checkpoint("process RSS before inspection")
+    scan_start_rss_mb = log_memory_checkpoint("process RSS before inspection")
+    scan_cpu_started = time.process_time()
 
     uploaded_files = [item for item in (files or []) if item and item.filename]
     if file and file.filename and not uploaded_files:
@@ -158,7 +212,13 @@ def perform_scan(
         barcode_result = None
         per_image_fields = []
         total_processing_time = 0
-        timings: Dict[str, Any] = {"upload_ms": upload_ms, "images": []}
+        timings: Dict[str, Any] = {
+            "upload_ms": upload_ms,
+            "images": [],
+            "process_rss_start_mb": scan_start_rss_mb,
+            "ocr_concurrency": int(settings.OCR_CONCURRENCY),
+            "uvicorn_worker_expectation": 1,
+        }
 
         # -------------------------------------------------------------------
         # Pre-OCR Automatic Image Quality Gate
@@ -189,6 +249,7 @@ def perform_scan(
                 image_results.append({
                     'image_index': image_index,
                     'image_path': safe_filenames[image_index],
+                    'original_full_path': original_path,
                     'processed_image_path': os.path.basename(original_path),
                     'processed_full_path': original_path,
                     'ocr_status': 'RECAPTURE_REQUIRED',
@@ -335,6 +396,7 @@ def perform_scan(
                 image_results.append({
                     'image_index': image_index,
                     'image_path': safe_filenames[image_index],
+                    'original_full_path': original_path,
                     'processed_image_path': os.path.basename(original_path),
                     'processed_full_path': original_path,
                     'ocr_status': 'RECAPTURE_REQUIRED',
@@ -394,6 +456,7 @@ def perform_scan(
                 image_results.append({
                     'image_index': image_index,
                     'image_path': safe_filenames[image_index],
+                    'original_full_path': original_path,
                     'processed_image_path': os.path.basename(processed_path),
                     'processed_full_path': processed_path,
                     'ocr_status': ocr_result_data.get('ocr_status', 'SUCCESS_WITH_TEXT' if raw_text else 'NO_TEXT_DETECTED'),
@@ -405,6 +468,10 @@ def perform_scan(
                         'detection_count': ocr_result_data.get('detection_count', len(ocr_items)),
                         'preprocessing_variant': ocr_result_data.get('preprocessing_variant', 'original'),
                         'engine': ocr_result_data.get('engine', 'PaddleOCR'),
+                        'ocr_initialization_ms': ocr_result_data.get('ocr_initialization_ms', 0),
+                        'ocr_inference_ms': ocr_result_data.get('ocr_inference_ms', 0),
+                        'ocr_attempt_timings': ocr_result_data.get('ocr_attempt_timings', []),
+                        'ocr_runtime': ocr_result_data.get('ocr_runtime'),
                         'engine_error': ocr_result_data.get('engine_error'),
                     },
                     'quality': q_res.model_dump() if q_res else None,
@@ -415,6 +482,10 @@ def perform_scan(
                     "image_index": image_index,
                     "preprocess_ms": preprocess_ms,
                     "ocr_ms": ocr_ms,
+                    "ocr_initialization_ms": ocr_result_data.get('ocr_initialization_ms', 0),
+                    "ocr_inference_ms": ocr_result_data.get('ocr_inference_ms', 0),
+                    "ocr_attempt_timings": ocr_result_data.get('ocr_attempt_timings', []),
+                    "ocr_runtime": ocr_result_data.get('ocr_runtime'),
                     "barcode_decode_ms": barcode_ms,
                     "quality_ms": q_res.processing_time_ms if q_res else 0,
                 })
@@ -424,6 +495,7 @@ def perform_scan(
                 image_results.append({
                     'image_index': image_index,
                     'image_path': safe_filenames[image_index],
+                    'original_full_path': original_path,
                     'processed_image_path': os.path.basename(original_path),
                     'processed_full_path': original_path,
                     'ocr_status': 'OCR_ENGINE_ERROR',
@@ -443,6 +515,21 @@ def perform_scan(
 
         raw_text = '\n\n'.join(combined_text_parts)
         ocr_items = combined_ocr_items
+        timings['preprocessing_total_ms'] = sum(
+            int(item.get('preprocess_ms') or 0) for item in timings['images']
+        )
+        timings['ocr_total_ms'] = sum(
+            int(item.get('ocr_ms') or 0) for item in timings['images']
+        )
+        timings['ocr_initialization_ms'] = sum(
+            int(item.get('ocr_initialization_ms') or 0) for item in timings['images']
+        )
+        timings['ocr_inference_total_ms'] = sum(
+            int(item.get('ocr_inference_ms') or 0) for item in timings['images']
+        )
+        timings['barcode_decode_total_ms'] = sum(
+            int(item.get('barcode_decode_ms') or 0) for item in timings['images']
+        )
         for idx, item in enumerate(ocr_items):
             item['token_id'] = idx
 
@@ -494,10 +581,29 @@ def perform_scan(
         gemini_total_ms = round((time.perf_counter() - gemini_started) * 1000)
         timings['gemini_total_ms'] = gemini_total_ms
         if gemini_metadata:
-            if 'llm_latency_ms' in gemini_metadata:
-                timings['gemini_latency_ms'] = gemini_metadata['llm_latency_ms']
-            if 'grounding_validation_ms' in gemini_metadata:
-                timings['gemini_grounding_ms'] = gemini_metadata['grounding_validation_ms']
+            timings['gemini_latency_ms'] = gemini_metadata.get(
+                'latency_ms', gemini_metadata.get('llm_processing_time_ms', 0)
+            )
+            timings['gemini_grounding_ms'] = gemini_metadata.get(
+                'grounding_ms', gemini_metadata.get('grounding_validation_ms', 0)
+            )
+            attempts = gemini_metadata.get('attempts') or []
+            timings['gemini_primary_request_ms'] = sum(
+                int(attempt.get('processing_time_ms') or 0)
+                for attempt in attempts
+                if attempt.get('tier') == 'primary'
+            )
+            timings['gemini_fallback_request_ms'] = sum(
+                int(attempt.get('processing_time_ms') or 0)
+                for attempt in attempts
+                if attempt.get('tier') == 'fallback'
+            )
+            timings['gemini_fallback_used'] = bool(gemini_metadata.get('fallback_used'))
+
+        # Apply the same deterministic safety gate after Gemini/hybrid merging:
+        # grounded instructional prose such as "Batch No. printed" is still not
+        # an actual batch identifier and must not become canonical evidence.
+        sanitize_batch_number_field(extracted_fields)
 
         package_context = detect_package_context(raw_text, extracted_fields)
         if getattr(settings, "GEMINI_AUTO_SCOPE", True) and llm_pkg_context_data:
@@ -601,9 +707,16 @@ def perform_scan(
             visual_started = time.perf_counter()
             panel_symbol_results = []
             for image_res in image_results:
-                proc_img_path = image_res.get('processed_full_path')
-                if proc_img_path and os.path.exists(proc_img_path):
-                    vis_ev = detect_food_symbol(proc_img_path)
+                original_img_path = image_res.get('original_full_path')
+                if original_img_path and os.path.exists(original_img_path):
+                    vis_ev = detect_food_symbol(original_img_path)
+                    _persist_symbol_candidate_crops(
+                        original_img_path,
+                        vis_ev,
+                        image_res['image_index'],
+                    )
+                    vis_ev['source_image_index'] = image_res['image_index']
+                    vis_ev['original_image_file'] = image_res.get('image_path')
                     image_res['visual_evidence'] = vis_ev
                     panel_symbol_results.append((vis_ev, image_res['image_index']))
             timings['visual_detection_ms'] = round((time.perf_counter() - visual_started) * 1000)
@@ -619,6 +732,11 @@ def perform_scan(
                         'source_image_index': merged_visual.get('source_image_index'),
                         'bbox': merged_visual.get('bbox'),
                         'detection_method': merged_visual.get('detection_method'),
+                        'detector_version': merged_visual.get('detector_version'),
+                        'evidence_crop_file': merged_visual.get('evidence_crop_file'),
+                        'evidence_crop_url': merged_visual.get('evidence_crop_url'),
+                        'evidence_crop_sha256': merged_visual.get('evidence_crop_sha256'),
+                        'aggregation_trace': merged_visual.get('aggregation_trace'),
                         'status': 'CONFLICTING_EVIDENCE',
                         'has_conflict': True,
                         'conflict_reason': merged_visual.get('reason'),
@@ -638,6 +756,11 @@ def perform_scan(
                             'source_image_index': merged_visual.get('source_image_index'),
                             'bbox': merged_visual.get('bbox'),
                             'detection_method': merged_visual.get('detection_method'),
+                            'detector_version': merged_visual.get('detector_version'),
+                            'evidence_crop_file': merged_visual.get('evidence_crop_file'),
+                            'evidence_crop_url': merged_visual.get('evidence_crop_url'),
+                            'evidence_crop_sha256': merged_visual.get('evidence_crop_sha256'),
+                            'aggregation_trace': merged_visual.get('aggregation_trace'),
                             'detected': True,
                             'status': 'VERIFIED',
                             'is_candidate': False,
@@ -656,6 +779,11 @@ def perform_scan(
                         'source_image_index': merged_visual.get('source_image_index'),
                         'bbox': merged_visual.get('bbox'),
                         'detection_method': merged_visual.get('detection_method'),
+                        'detector_version': merged_visual.get('detector_version'),
+                        'evidence_crop_file': merged_visual.get('evidence_crop_file'),
+                        'evidence_crop_url': merged_visual.get('evidence_crop_url'),
+                        'evidence_crop_sha256': merged_visual.get('evidence_crop_sha256'),
+                        'aggregation_trace': merged_visual.get('aggregation_trace'),
                         'status': 'REVIEW',
                         'is_ambiguous': True,
                         'is_candidate': True,
@@ -675,6 +803,11 @@ def perform_scan(
                         'source_image_index': merged_visual.get('source_image_index'),
                         'bbox': merged_visual.get('bbox'),
                         'detection_method': merged_visual.get('detection_method'),
+                        'detector_version': merged_visual.get('detector_version'),
+                        'evidence_crop_file': merged_visual.get('evidence_crop_file'),
+                        'evidence_crop_url': merged_visual.get('evidence_crop_url'),
+                        'evidence_crop_sha256': merged_visual.get('evidence_crop_sha256'),
+                        'aggregation_trace': merged_visual.get('aggregation_trace'),
                         'status': 'REVIEW',
                         'reason': merged_visual.get('reason') or (
                             'No supported prescribed food symbol was detected in the package images.'
@@ -856,18 +989,48 @@ def perform_scan(
         db_started = time.perf_counter()
         db.commit()
         timings['database_write_ms'] = round((time.perf_counter() - db_started) * 1000)
-        timings['total_ms'] = round((time.perf_counter() - request_started) * 1000)
-        # Persist timings with OCR payload after the main inspection write.
-        db_ocr.ocr_data['timings'] = timings
-        db.commit()
-        logger.info("scan timing complete inspection=%s timings=%s", db_inspection.id, timings)
 
+        report_started = time.perf_counter()
         try:
             generate_inspection_pdf(db_inspection, db)
+            timings['report_status'] = 'GENERATED'
             logger.info("automatic report generated inspection=%s", db_inspection.id)
         except Exception as report_exc:
             # A report failure must not discard an otherwise completed inspection.
+            timings['report_status'] = 'ERROR'
+            timings['report_error'] = str(report_exc)
             logger.exception("automatic report generation failed inspection=%s: %s", db_inspection.id, report_exc)
+        timings['report_generation_and_persistence_ms'] = round(
+            (time.perf_counter() - report_started) * 1000
+        )
+        timings['process_cpu_time_ms'] = round(
+            (time.process_time() - scan_cpu_started) * 1000
+        )
+        timings['process_rss_end_mb'] = log_memory_checkpoint(
+            "process RSS after report generation",
+            f"inspection_id={db_inspection.id}",
+        )
+        timings['process_rss_delta_mb'] = round(
+            timings['process_rss_end_mb'] - scan_start_rss_mb,
+            2,
+        )
+        timings['total_ms'] = round((time.perf_counter() - request_started) * 1000)
+
+        # SQLAlchemy JSON columns do not detect nested in-place mutations.
+        # Assign a new payload so timings are actually persisted instead of
+        # silently remaining absent/null in inspection history.
+        timing_persist_started = time.perf_counter()
+        persisted_ocr_payload = dict(ocr_payload)
+        persisted_ocr_payload['timings'] = dict(timings)
+        db_ocr.ocr_data = persisted_ocr_payload
+        db.commit()
+        timing_persistence_ms = round((time.perf_counter() - timing_persist_started) * 1000)
+        logger.info(
+            "scan timing complete inspection=%s timing_persistence_ms=%s timings=%s",
+            db_inspection.id,
+            timing_persistence_ms,
+            timings,
+        )
 
         created_dt = db_inspection.created_at
         if created_dt and created_dt.tzinfo is None:

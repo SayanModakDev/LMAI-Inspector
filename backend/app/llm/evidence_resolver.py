@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import get_settings
+from app.extraction.declaration_extractor import sanitize_batch_number_field
 from app.core.ontology import assess_address_structure, extract_contextual_emails
 from app.extraction.declaration_extractor import (
     classify_product_identity_candidate,
@@ -412,6 +413,7 @@ def resolve_evidence_with_gemini(
             llm_metadata["notes"] = "No OCR tokens detected; relying on deterministic extractor."
         else:
             llm_metadata["llm_status"] = "DISABLED"
+        sanitize_batch_number_field(deterministic_fields)
         return deterministic_fields, llm_metadata, None
 
     # Step 1: Build prompt
@@ -429,6 +431,7 @@ def resolve_evidence_with_gemini(
 
     if not llm_result:
         logger.info("Gemini resolution unavailable (%s); using deterministic candidates.", llm_metadata["llm_status"])
+        sanitize_batch_number_field(deterministic_fields)
         return deterministic_fields, llm_metadata, None
 
     # Step 3: Grounding & Hallucination Validation
@@ -771,4 +774,5 @@ def resolve_evidence_with_gemini(
         grounding_audit.get("rejected_count", 0),
     )
 
+    sanitize_batch_number_field(merged_fields)
     return merged_fields, llm_metadata, validated_result.package_context

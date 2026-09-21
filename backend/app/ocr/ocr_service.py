@@ -19,6 +19,8 @@ from app.utils.memory import force_garbage_collection, log_memory_checkpoint
 
 logger = logging.getLogger(__name__)
 _ocr_instance = None
+_ocr_initialization_ms = 0
+_ocr_model_source = "NOT_INITIALIZED"
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 DET_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_det_infer")
 REC_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_rec_infer")
@@ -26,8 +28,9 @@ REC_MODEL_DIR = os.path.join(MODELS_DIR, "en_PP-OCRv3_rec_infer")
 
 def _get_ocr():
     """Lazy-initialize a single process-level PaddleOCR instance with bounded thread pools."""
-    global _ocr_instance
+    global _ocr_instance, _ocr_initialization_ms, _ocr_model_source
     if _ocr_instance is None:
+        initialization_started = time.perf_counter()
         from paddleocr import PaddleOCR
         threads = int(os.getenv("PADDLE_CPU_THREADS", "1"))
 
@@ -49,14 +52,30 @@ def _get_ocr():
             ocr_kwargs["det_model_dir"] = DET_MODEL_DIR
             ocr_kwargs["rec_model_dir"] = REC_MODEL_DIR
             logger.info("Using bundled local OCR models from %s", MODELS_DIR)
+            _ocr_model_source = "BUNDLED_LOCAL"
+        else:
+            _ocr_model_source = "PADDLE_DEFAULT_CACHE"
 
         _ocr_instance = PaddleOCR(**ocr_kwargs)
+        _ocr_initialization_ms = round((time.perf_counter() - initialization_started) * 1000)
         logger.info(
-            "PaddleOCR engine initialized successfully (version=PP-OCRv3, angle_cls=False, cpu_threads=%d, bundled=%s)",
+            "PaddleOCR engine initialized successfully (version=PP-OCRv3, angle_cls=False, cpu_threads=%d, bundled=%s, initialization_ms=%d)",
             threads,
             "det_model_dir" in ocr_kwargs,
+            _ocr_initialization_ms,
         )
     return _ocr_instance
+
+
+def get_ocr_runtime_metadata() -> Dict[str, Any]:
+    """Expose read-only model/cache state for scan diagnostics."""
+    return {
+        "initialized": _ocr_instance is not None,
+        "initialization_ms": _ocr_initialization_ms,
+        "model_source": _ocr_model_source,
+        "det_model_dir": DET_MODEL_DIR if os.path.isdir(DET_MODEL_DIR) else None,
+        "rec_model_dir": REC_MODEL_DIR if os.path.isdir(REC_MODEL_DIR) else None,
+    }
 
 
 def _normalize_ocr_text(text_parts: List[str]) -> str:
@@ -158,6 +177,10 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
             "source_image": image_path,
             "preprocessing_variant": "none",
             "engine": "PaddleOCR",
+            "ocr_initialization_ms": 0,
+            "ocr_inference_ms": 0,
+            "ocr_attempt_timings": [],
+            "ocr_runtime": get_ocr_runtime_metadata(),
             "error": "Invalid or unreadable image file",
             "engine_error": None,
         }
@@ -166,6 +189,9 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     successful_attempt_count = 0
     last_engine_error: Optional[Exception] = None
     candidates: List[Dict[str, Any]] = []
+    initialization_ms = 0
+    inference_ms = 0
+    attempt_timings: List[Dict[str, Any]] = []
 
     # Diagnostic RSS log before OCR
     log_memory_checkpoint("RSS before OCR", f"file={base_img_name}")
@@ -174,8 +200,21 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
     attempt_count += 1
     logger.info("OCR attempt started for %s (variant=original)", image_path)
     try:
+        was_initialized = _ocr_instance is not None
+        engine_started = time.perf_counter()
         ocr = _get_ocr()
+        engine_access_ms = round((time.perf_counter() - engine_started) * 1000)
+        if not was_initialized:
+            initialization_ms += engine_access_ms
+        inference_started = time.perf_counter()
         results = ocr.ocr(image_path, cls=False)
+        attempt_inference_ms = round((time.perf_counter() - inference_started) * 1000)
+        inference_ms += attempt_inference_ms
+        attempt_timings.append({
+            "variant": "original",
+            "engine_access_ms": engine_access_ms,
+            "inference_ms": attempt_inference_ms,
+        })
         items = _collect_ocr_items(results)
         successful_attempt_count += 1
         if items:
@@ -214,8 +253,18 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
                     v_path = generate_rotated_variant(image_path, int(v_name.replace("rotate", "")), variant_dir)
                 else:
                     v_path = generate_single_variant(image_path, v_name, variant_dir)
+                engine_started = time.perf_counter()
                 ocr = _get_ocr()
+                engine_access_ms = round((time.perf_counter() - engine_started) * 1000)
+                inference_started = time.perf_counter()
                 v_results = ocr.ocr(v_path, cls=False)
+                attempt_inference_ms = round((time.perf_counter() - inference_started) * 1000)
+                inference_ms += attempt_inference_ms
+                attempt_timings.append({
+                    "variant": v_name,
+                    "engine_access_ms": engine_access_ms,
+                    "inference_ms": attempt_inference_ms,
+                })
                 v_items = _collect_ocr_items(v_results)
                 successful_attempt_count += 1
                 if v_items:
@@ -297,6 +346,10 @@ def run_ocr(image_path: str) -> Dict[str, Any]:
         "source_image": image_path,
         "preprocessing_variant": final_variant,
         "engine": "PaddleOCR",
+        "ocr_initialization_ms": initialization_ms,
+        "ocr_inference_ms": inference_ms,
+        "ocr_attempt_timings": attempt_timings,
+        "ocr_runtime": get_ocr_runtime_metadata(),
         "error": error_msg,
         "engine_error": str(last_engine_error) if ocr_status == "OCR_ENGINE_ERROR" else None,
     }
