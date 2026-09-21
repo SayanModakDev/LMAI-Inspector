@@ -1485,31 +1485,115 @@ def validate_veg_nonveg_present(
     all_fields: Dict[str, Any],
 ) -> ValidationResult:
     """Validate Vegetarian / Non-Vegetarian symbol or declaration (FSSAI)."""
+    source = str((evidence or {}).get("source") or "").upper()
+    if source == "VISUAL_DETECTION":
+        if not evidence:
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason="No prescribed food-symbol evidence was detected in the submitted package images.",
+                evidence=None,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_NOT_DETECTED.value,
+            )
+
+        if evidence.get("has_conflict") is True or evidence.get("status") == "CONFLICTING_EVIDENCE":
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=(
+                    evidence.get("conflict_reason")
+                    or evidence.get("reason")
+                    or "Supported vegetarian and non-vegetarian symbols conflict across package images."
+                ),
+                normalized_value=str(evidence.get("value") or "CONFLICTING_SYMBOLS"),
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_CONFLICTING.value,
+            )
+
+        if evidence.get("status") == "REVIEW" and evidence.get("reason"):
+            return ValidationResult(
+                status="NOT_VERIFIABLE",
+                binary=0,
+                reason=str(evidence["reason"]),
+                normalized_value=str(evidence.get("value") or ""),
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+            )
+
+        symbol_type = str(evidence.get("value") or evidence.get("symbol_type") or "").upper()
+        supporting = evidence.get("supporting_candidates") or []
+        matching_supported = [
+            candidate for candidate in supporting
+            if isinstance(candidate, dict)
+            and candidate.get("accepted") is True
+            and str(candidate.get("symbol_type") or "").upper() == symbol_type
+            and candidate.get("has_enclosing_square") is True
+            and candidate.get("frame_detection") in (
+                "connected_same_colour_contour",
+                "fragmented_same_colour_frame",
+            )
+            and float(candidate.get("contrast_score") or 0) >= 0.35
+            and candidate.get("image_index") is not None
+            and bool(candidate.get("bbox"))
+        ]
+        confirmation = evidence.get("visual_confirmation") or {}
+        confirmed = bool(
+            evidence.get("detected") is True
+            and evidence.get("status") in ("VERIFIED", "CONFIRMED")
+            and evidence.get("candidate_status") == "CONFIRMED"
+            and evidence.get("is_candidate") is not True
+            and confirmation.get("confirmed") is True
+            and symbol_type in ("VEGETARIAN", "NON_VEGETARIAN")
+            and matching_supported
+        )
+
+        if confirmed:
+            label = "VEG" if symbol_type == "VEGETARIAN" else "NON_VEG"
+            return ValidationResult(
+                status="PASS",
+                binary=1,
+                reason=(
+                    f"Confirmed {symbol_type.lower().replace('_', '-')} symbol from package-image evidence: "
+                    "prescribed inner shape, same-colour enclosing square, sufficient contrast, "
+                    "image/bounding-box provenance, and no supported opposite symbol."
+                ),
+                normalized_value=label,
+                evidence=evidence,
+                evidence_state=EvidenceAvailabilityState.EVIDENCE_VERIFIED.value,
+            )
+
+        missing = []
+        if symbol_type not in ("VEGETARIAN", "NON_VEGETARIAN"):
+            missing.append("a supported vegetarian/non-vegetarian classification")
+        if not supporting:
+            missing.append("an accepted prescribed-geometry candidate")
+        elif not matching_supported:
+            missing.append(
+                "an accepted same-colour enclosing frame, sufficient contrast, and image/bounding-box provenance"
+            )
+        if evidence.get("status") not in ("VERIFIED", "CONFIRMED") or evidence.get("candidate_status") != "CONFIRMED":
+            missing.append("detector lifecycle confirmation")
+        if confirmation.get("confirmed") is not True:
+            missing.append("a completed visual-confirmation record")
+        requirement = "; ".join(dict.fromkeys(missing)) or "prescribed visual confirmation"
+        return ValidationResult(
+            status="NOT_VERIFIABLE",
+            binary=0,
+            reason=(
+                f"Visual candidate detected for {symbol_type or 'food symbol'}, but it remains unconfirmed. "
+                f"Missing confirmation requirement: {requirement}."
+            ),
+            normalized_value=symbol_type,
+            evidence=evidence,
+            evidence_state=EvidenceAvailabilityState.EVIDENCE_DETECTED_UNASSOCIATED.value,
+        )
+
     pre = _check_preconditions(evidence, rule)
     if pre:
         return pre
 
     raw_val = str(evidence.get("value", "")).strip()  # type: ignore[union-attr]
     lowered = raw_val.lower()
-
-    # Distinguish detector candidate vs verified evidence
-    is_candidate = bool(
-        evidence.get("status") == "CANDIDATE"  # type: ignore[union-attr]
-        or evidence.get("is_candidate") is True  # type: ignore[union-attr]
-        or (evidence.get("source") == "VISUAL_DETECTION" and evidence.get("status") != "VERIFIED")  # type: ignore[union-attr]
-    )
-
-    if is_candidate:
-        # A visual candidate alone must never become a legal PASS.
-        symbol_type = evidence.get("value") or evidence.get("symbol_type") or "symbol"  # type: ignore[union-attr]
-        det_method = evidence.get("detection_method", "visual detector")  # type: ignore[union-attr]
-        return ValidationResult(
-            status="NOT_VERIFIABLE",
-            binary=0,
-            reason=f"Visual candidate detected: {symbol_type} ({det_method}); declaration not detected reliably from package images.",
-            normalized_value=str(symbol_type),
-            evidence=evidence,
-        )
 
     if any(k in lowered for k in ['vegetarian', 'non-vegetarian', 'non-veg', 'nonveg', 'veg symbol', 'veg']):
         status_label = "NON_VEG" if any(k in lowered for k in ['non-veg', 'nonveg', 'non-vegetarian']) else "VEG"

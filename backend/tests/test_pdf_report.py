@@ -167,6 +167,40 @@ def test_pdf_report_declared_net_quantity_decomposition(db_session):
     assert "Quantity & Unit:" in text or "VALUE_AND_UNIT_PRESENT" in text
 
 
+def test_pdf_excludes_optional_barcode_lookup_metadata_from_declaration_audit(db_session):
+    insp = models.Inspection(
+        product_name="Tata Salt",
+        category="FOOD",
+        overall_result="REVIEW_REQUIRED",
+    )
+    db_session.add(insp)
+    db_session.flush()
+    db_session.add_all([
+        models.ExtractedField(
+            inspection_id=insp.id,
+            field_name="BARCODE",
+            field_value="8904043901015",
+            confidence=1.0,
+            source="BARCODE",
+        ),
+        models.ExtractedField(
+            inspection_id=insp.id,
+            field_name="BARCODE_METADATA",
+            field_value=None,
+            confidence=None,
+            source="BARCODE_LOOKUP",
+        ),
+    ])
+    db_session.commit()
+    db_session.refresh(insp)
+
+    report = generate_inspection_pdf(insp, db_session)
+    text = _extract_pdf_text(report.file_path)
+
+    assert "BARCODE_METADATA" not in text
+    assert "8904043901015" in text
+
+
 def test_pdf_report_unverified_rule_references_show_pending_verification(db_session):
     """Verify unverified rule references display 'Pending verification' and not fabricated numbers."""
     insp = models.Inspection(

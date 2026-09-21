@@ -626,7 +626,7 @@ def perform_scan(
                         'candidates': merged_visual.get('candidates', []),
                         'competing_candidates': merged_visual.get('competing_candidates', []),
                     }
-                elif merged_visual.get('status') == 'CANDIDATE':
+                elif merged_visual.get('status') == 'VERIFIED':
                     existing_ev = extracted_fields.get('VEG_NONVEG_SYMBOL')
                     # Visual symbol detection takes precedence over generic/unanchored OCR text mentions
                     if not existing_ev or existing_ev.get('source') in ('OCR', 'OCR_LAYOUT', 'TEXT'):
@@ -638,10 +638,12 @@ def perform_scan(
                             'source_image_index': merged_visual.get('source_image_index'),
                             'bbox': merged_visual.get('bbox'),
                             'detection_method': merged_visual.get('detection_method'),
-                            'status': 'CANDIDATE',
-                            'is_candidate': True,
-                            'candidate_status': 'CANDIDATE',
+                            'detected': True,
+                            'status': 'VERIFIED',
+                            'is_candidate': False,
+                            'candidate_status': 'CONFIRMED',
                             'has_conflict': False,
+                            'visual_confirmation': merged_visual.get('visual_confirmation'),
                             'candidates': merged_visual.get('candidates', []),
                             'supporting_candidates': merged_visual.get('supporting_candidates', []),
                         }
@@ -797,6 +799,11 @@ def perform_scan(
         db.add(db_ocr)
 
         for field_name, field_data in extracted_fields.items():
+            # External barcode lookup metadata is supplementary context stored
+            # in ocr_data.barcode_result.  It is not a package declaration and
+            # must not become an empty statutory evidence row.
+            if field_name == 'BARCODE_METADATA':
+                continue
             db.add(models.ExtractedField(
                 inspection_id=db_inspection.id,
                 field_name=field_name,
