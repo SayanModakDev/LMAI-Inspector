@@ -898,6 +898,10 @@ def generate_inspection_pdf(inspection: models.Inspection, db_session: Optional[
     extracted_rows = [extracted_headers]
     for field in (inspection.extracted_fields or []):
         param = field.field_name
+        if param == "BARCODE_METADATA":
+            # Optional external catalogue lookup metadata is retained in the
+            # OCR payload, but it is not a package-label declaration.
+            continue
         orig_val = field.field_value
         verified_display = "<font color='#64748B'>As detected</font>"
         conf_pct = f"{int(field.confidence * 100)}%" if field.confidence is not None else "—"

@@ -276,6 +276,10 @@ const EvidenceViewer = ({
     (extractedFields || []).forEach((field) => {
       const key = (field.field_name || field.parameter || '').toUpperCase();
       if (!key) return;
+      // External barcode catalogue metadata is supplementary lookup context,
+      // not a statutory package declaration. Barcode decoding itself is
+      // rendered separately below and remains fully visible.
+      if (key === 'BARCODE_METADATA') return;
 
       const matchingRule = ruleResults.find((r) => r.parameter === key);
       const isMissing = !field.field_value || String(field.field_value).trim() === '';

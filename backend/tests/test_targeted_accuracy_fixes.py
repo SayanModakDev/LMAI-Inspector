@@ -8,13 +8,14 @@ import pytest
 from unittest.mock import MagicMock
 
 from app.core.ontology import extract_contextual_emails, normalize_contextual_email
-from app.extraction.declaration_extractor import extract_declarations
+from app.extraction.declaration_extractor import extract_declarations, merge_extracted_fields
 from app.rules.validators import (
     dispatch_validator,
     validate_address_present,
     validate_consumer_care_present,
     validate_manufacturer_present,
 )
+from app.rules.rule_engine import calculate_rule_summary, derive_screening_result
 from app.llm.evidence_resolver import resolve_evidence_with_gemini
 from app.llm.schemas import LLMExtractionResult, ResolvedDeclaration, SourceEvidence
 from app.visual_detection import aggregate_food_symbol_evidence, detect_food_symbol
@@ -66,12 +67,37 @@ def test_decorative_green_graphic_is_rejected_without_prescribed_square():
     assert any("enclosing square" in candidate["decision_reason"] for candidate in result["candidates"])
 
 
+def test_prescribed_symbol_survives_localized_frame_glare():
+    image = _symbol("VEGETARIAN")
+    # A narrow highlight breaks two parts of the printed frame while leaving
+    # the inner shape and the remaining local side support observable.
+    cv2.rectangle(image, (146, 102), (155, 112), (255, 255, 255), -1)
+    result = detect_food_symbol(image)
+    assert result["detected"] is True
+    assert result["status"] == "VERIFIED"
+    assert result["symbol_type"] == "VEGETARIAN"
+
+
+def test_prescribed_symbol_survives_mild_package_perspective():
+    image = _symbol("VEGETARIAN")
+    source = np.float32([[0, 0], [299, 0], [299, 299], [0, 299]])
+    destination = np.float32([[12, 6], [288, 18], [296, 288], [4, 280]])
+    transform = cv2.getPerspectiveTransform(source, destination)
+    warped = cv2.warpPerspective(image, transform, (300, 300), borderValue=(245, 245, 245))
+    result = detect_food_symbol(warped)
+    assert result["detected"] is True
+    assert result["status"] == "VERIFIED"
+    assert result["symbol_type"] == "VEGETARIAN"
+
+
 def test_same_supported_symbol_on_multiple_panels_is_not_a_conflict():
     merged = aggregate_food_symbol_evidence([
         (detect_food_symbol(_symbol("VEGETARIAN")), 0),
         (detect_food_symbol(_symbol("VEGETARIAN")), 2),
     ])
-    assert merged["status"] == "CANDIDATE"
+    assert merged["status"] == "VERIFIED"
+    assert merged["candidate_status"] == "CONFIRMED"
+    assert merged["visual_confirmation"]["confirmed"] is True
     assert merged["symbol_type"] == "VEGETARIAN"
     assert {item["image_index"] for item in merged["supporting_candidates"]} == {0, 2}
 
@@ -83,7 +109,7 @@ def test_valid_symbol_plus_demonstrable_false_positive_is_not_a_conflict():
         (detect_food_symbol(_symbol("VEGETARIAN")), 0),
         (detect_food_symbol(decorative), 1),
     ])
-    assert merged["status"] == "CANDIDATE"
+    assert merged["status"] == "VERIFIED"
     assert merged["symbol_type"] == "VEGETARIAN"
     assert any(
         item["image_index"] == 1 and item["accepted"] is False
@@ -101,6 +127,47 @@ def test_two_genuinely_supported_contradictory_symbols_remain_unresolved():
     assert {item["symbol_type"] for item in merged["competing_candidates"]} == {
         "VEGETARIAN", "NON_VEGETARIAN"
     }
+
+
+def test_confirmed_visual_symbol_passes_without_ocr_evidence():
+    merged = aggregate_food_symbol_evidence([(detect_food_symbol(_symbol("VEGETARIAN")), 4)])
+    evidence = {
+        **merged,
+        "source": "VISUAL_DETECTION",
+        "candidate_status": "CONFIRMED",
+    }
+    result = dispatch_validator(
+        "VEG_NONVEG_PRESENT",
+        evidence,
+        {"rule_id": "PC-FOOD-005", "parameter": "VEG_NONVEG_SYMBOL", "required": True},
+        {},
+    )
+    assert result.status == "PASS"
+    assert result.evidence_state == "EVIDENCE_VERIFIED"
+    assert "OCR" not in result.reason
+
+
+def test_high_confidence_visual_candidate_without_structural_confirmation_stays_review():
+    evidence = {
+        "value": "VEGETARIAN",
+        "symbol_type": "VEGETARIAN",
+        "confidence": 0.99,
+        "source": "VISUAL_DETECTION",
+        "detected": True,
+        "status": "CANDIDATE",
+        "candidate_status": "CANDIDATE",
+        "is_candidate": True,
+        "supporting_candidates": [],
+    }
+    result = dispatch_validator(
+        "VEG_NONVEG_PRESENT",
+        evidence,
+        {"rule_id": "PC-FOOD-005", "parameter": "VEG_NONVEG_SYMBOL", "required": True},
+        {},
+    )
+    assert result.status == "NOT_VERIFIABLE"
+    assert "Missing confirmation requirement" in result.reason
+    assert "accepted prescribed-geometry candidate" in result.reason
 
 
 def test_insufficient_symbol_evidence_does_not_fabricate_detection():
@@ -144,7 +211,7 @@ def test_real_tata_salt_four_image_visual_regression():
     panel_results = [(detect_food_symbol(str(path)), index) for index, path in enumerate(paths)]
     merged = aggregate_food_symbol_evidence(panel_results)
 
-    assert merged["status"] == "CANDIDATE"
+    assert merged["status"] == "VERIFIED"
     assert merged["symbol_type"] == "VEGETARIAN"
     assert merged["source_image_index"] == 0
     assert merged["has_conflict"] is False
@@ -303,6 +370,41 @@ def test_tata_role_blocks_keep_original_image_and_distinct_bounding_boxes():
     assert fields["MANUFACTURER_ADDRESS"]["bbox"][1] > fields["MARKETER_ADDRESS"]["bbox"][3]
     assert "Kolkata" not in fields["MANUFACTURER_ADDRESS"]["value"]
     assert "Mithapur" not in fields["MARKETER_ADDRESS"]["value"]
+
+
+def test_tata_partial_manufacturer_ocr_discards_registration_noise_without_crossing_roles():
+    panel_zero = [
+        {"token_id": 27, "text": "g.Mtrl.Mfd.By", "bbox": [225, 908, 335, 977], "confidence": 0.7776, "image_index": 0},
+        {"token_id": 28, "text": "4037F-25", "bbox": [395, 902, 469, 926], "confidence": 0.9449, "image_index": 0},
+        {"token_id": 29, "text": "Regn.No.PR", "bbox": [230, 936, 327, 996], "confidence": 0.9348, "image_index": 0},
+    ]
+    panel_one = [
+        {"token_id": 39, "text": "Mkt byTata Consumer Products LimitedTata Centre", "bbox": [180, 576, 552, 614], "confidence": 0.7392, "image_index": 1},
+        {"token_id": 40, "text": "1st Floor 43.Jawaharlal Nehru Road", "bbox": [183, 601, 529, 641], "confidence": 0.7304, "image_index": 1},
+        {"token_id": 41, "text": "Kolkata-700071.", "bbox": [183, 628, 309, 662], "confidence": 0.9572, "image_index": 1},
+        {"token_id": 43, "text": "Mfg byTata Chemicals LimitedP.O", "bbox": [181, 656, 465, 692], "confidence": 0.8597, "image_index": 1},
+        {"token_id": 44, "text": "Gujarat.Lic.No.10012021000351", "bbox": [178, 709, 444, 741], "confidence": 0.9337, "image_index": 1},
+    ]
+    field_sets = []
+    for items in (panel_zero, panel_one):
+        field_sets.append(extract_declarations("\n".join(item["text"] for item in items), ocr_items=items))
+    merged = merge_extracted_fields(field_sets)
+
+    assert merged["MANUFACTURER_NAME"]["value"] == "Tata Chemicals Limited"
+    assert merged["MANUFACTURER_NAME"]["role"] == "MANUFACTURER"
+    assert "Regn.No.PR" not in [
+        candidate.get("value") for candidate in merged["MANUFACTURER_NAME"].get("candidates", [])
+    ]
+    assert merged["MARKETER_NAME"]["role"] == "MARKETER"
+    assert "Tata Consumer Products" in merged["MARKETER_NAME"]["value"]
+
+    address = merged["MANUFACTURER_ADDRESS"]
+    assert address["value"] == "P.O, Gujarat."
+    assert address["address_completeness"] == "PARTIAL"
+    assert address["source_image_index"] == 1
+    assert {item["token_id"] for item in address["source_evidence"]} == {43, 44}
+    assert validate_address_present(address, _address_rule(), merged).status == "NOT_VERIFIABLE"
+    assert "Kolkata" not in address["value"]
 
 
 def test_incomplete_ocr_address_is_preserved_as_partial_not_invented():
@@ -478,3 +580,81 @@ def test_sensodyne_deterministic_behavior_does_not_regress():
     )
     assert fields["PRODUCT_NAME"]["value"] == "Sensodyne Fresh Mint Toothpaste"
     assert fields["DECLARED_NET_QUANTITY"]["value"] == "75 g"
+
+
+def test_optional_barcode_lookup_metadata_is_not_a_declaration_badge():
+    from app.api.inspections import get_inspection_detail
+    from app.database import models
+    from app.database.connection import SessionLocal
+
+    db = SessionLocal()
+    try:
+        inspection = models.Inspection(
+            product_name="Tata Salt",
+            category="FOOD",
+            overall_result="REVIEW_REQUIRED",
+        )
+        db.add(inspection)
+        db.flush()
+        db.add(models.OCRResult(
+            inspection_id=inspection.id,
+            raw_text="Tata Salt",
+            ocr_data={
+                "ocr_items": [],
+                "images": [],
+                "barcode_result": {
+                    "value": "8904043901015",
+                    "lookup": {"status": "UNAVAILABLE", "source": "Open Food Facts"},
+                },
+            },
+        ))
+        db.add_all([
+            models.ExtractedField(
+                inspection_id=inspection.id,
+                field_name="BARCODE",
+                field_value="8904043901015",
+                confidence=1.0,
+                source="BARCODE",
+            ),
+            # Simulate a legacy record created before supplementary lookup
+            # metadata was separated from package declarations.
+            models.ExtractedField(
+                inspection_id=inspection.id,
+                field_name="BARCODE_METADATA",
+                field_value=None,
+                source="BARCODE_LOOKUP",
+            ),
+        ])
+        db.flush()
+
+        payload = get_inspection_detail(inspection.id, db)
+        fields = {item["field_name"]: item for item in payload["extracted_fields"]}
+        assert "BARCODE" in fields
+        assert "BARCODE_METADATA" not in fields
+        assert payload["ocr_result"]["ocr_data"]["barcode_result"]["lookup"]["status"] == "UNAVAILABLE"
+        assert payload["summary"]["review_count"] == 0
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_tata_status_transition_keeps_overall_review_required():
+    before = [
+        {"rule_id": f"PASS-{index}", "parameter": f"FIELD_{index}", "status": "PASS"}
+        for index in range(8)
+    ] + [
+        {"rule_id": "PC-ALL-003", "parameter": "MANUFACTURER_NAME", "status": "NOT_VERIFIABLE"},
+        {"rule_id": "PC-ALL-004", "parameter": "MANUFACTURER_ADDRESS", "status": "NOT_VERIFIABLE"},
+        {"rule_id": "PC-FOOD-005", "parameter": "VEG_NONVEG_SYMBOL", "status": "NOT_VERIFIABLE"},
+        {"rule_id": "OPTIONAL", "parameter": "UNIT_SALE_PRICE", "status": "NOT_APPLICABLE"},
+    ]
+    before_summary = calculate_rule_summary(before)
+    assert (before_summary["passed"], before_summary["failed"], before_summary["review"], before_summary["not_applicable"]) == (8, 0, 3, 1)
+
+    after = [dict(row) for row in before]
+    for row in after:
+        if row["parameter"] in ("MANUFACTURER_NAME", "VEG_NONVEG_SYMBOL"):
+            row["status"] = "PASS"
+    after_summary = calculate_rule_summary(after)
+    assert (after_summary["passed"], after_summary["failed"], after_summary["review"], after_summary["not_applicable"]) == (10, 0, 1, 1)
+    assert derive_screening_result(after) == "REVIEW_REQUIRED"

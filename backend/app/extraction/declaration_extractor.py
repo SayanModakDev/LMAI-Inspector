@@ -216,7 +216,7 @@ CONSUMER_CARE_STOP_RE = re.compile(
 
 STORAGE_STOP_RE = re.compile(
     r'(?:'
-    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away)\b|'
+    r'\bcontainer\s+once\s+opened\b|\bstore\s+in\b|\bkeep\s+(?:in|away|out\s+of\s+reach)\b|'
     r'\bcool\s*(?:,|&|and)?\s*dry\s+place\b|\brefrigerat\w*\b|'
     r'\bavoid\s+(?:direct\s+)?sunlight\b|\bdo\s+not\s+(?:store|keep)\b|'
     r'\bdirections?\s+for\s+use\b|\bfor\s+external\s+use\b'
@@ -2147,6 +2147,8 @@ def _is_irrelevant_candidate(field_name: str, candidate: Dict[str, Any]) -> bool
             return True
         if CONTACT_CONTEXT_RE.search(context):
             return True
+        if not _is_plausible_responsible_party_name(val):
+            return True
 
     elif field_name == 'MANUFACTURER_ADDRESS':
         if sec in (SECTION_MARKETING, SECTION_NUTRITION, SECTION_STORAGE, SECTION_CONSUMER_CARE):
@@ -2612,6 +2614,10 @@ def _attach_value_provenance(field: Dict[str, Any], ocr_items: Optional[List[Dic
         expected_role in {'MANUFACTURER', 'MARKETER', 'PACKER'}
         and 'address_structure' not in field
     )
+    is_responsible_party_address = bool(
+        expected_role in {'MANUFACTURER', 'MARKETER', 'PACKER'}
+        and 'address_structure' in field
+    )
     for item in ocr_items:
         item_text = str(item.get('text') or '').strip()
         item_words = {
@@ -2627,11 +2633,21 @@ def _attach_value_provenance(field: Dict[str, Any], ocr_items: Optional[List[Dic
         if (
             (overlap >= 0.5 and (not is_responsible_party_name or value_coverage >= 0.5))
             or item_text.lower() in str(field['value']).lower()
-            or (len(compact_value) >= 2 and compact_value in compact_item)
+            or (len(compact_value) >= 4 and compact_value in compact_item)
             or (
                 is_responsible_party_name
                 and expected_role in item_roles
                 and value_coverage >= 0.30
+            )
+            or (
+                is_responsible_party_address
+                and expected_role in item_roles
+                and value_coverage >= 0.30
+            )
+            or (
+                is_responsible_party_address
+                and overlap >= 0.25
+                and value_coverage >= 0.50
             )
         ):
             image_index = int(item.get('image_index') or 0)
@@ -2657,6 +2673,22 @@ def _attach_value_provenance(field: Dict[str, Any], ocr_items: Optional[List[Dic
         key=lambda pair: (sum(score for score, _ in pair[1]), len(pair[1])),
     )
     selected = [item for _, item in scored_items]
+    if is_responsible_party_address:
+        selected_boxes = [item.get('bbox') for item in selected if len(item.get('bbox') or []) == 4]
+        address_top = min((box[1] for box in selected_boxes), default=None)
+        if address_top is not None:
+            role_anchors = [
+                item for item in ocr_items
+                if int(item.get('image_index') or 0) == image_index
+                and expected_role in _explicit_responsible_party_roles(str(item.get('text') or ''))
+                and len(item.get('bbox') or []) == 4
+                and item['bbox'][3] <= address_top
+                and address_top - item['bbox'][3] <= 160
+            ]
+            if role_anchors:
+                nearest_anchor = max(role_anchors, key=lambda item: item['bbox'][3])
+                if nearest_anchor not in selected:
+                    selected.insert(0, nearest_anchor)
     boxes = [item.get('bbox') for item in selected if len(item.get('bbox') or []) == 4]
     field.setdefault('source_image_index', image_index)
     if boxes:
@@ -2710,6 +2742,27 @@ def _extract_company_entity_from_line(line: str) -> Optional[Tuple[str, str]]:
     return entity, after_entity
 
 
+def _is_plausible_responsible_party_name(value: str) -> bool:
+    """Reject administrative identifiers and OCR fragments as company names.
+
+    This is deliberately narrower than entity autocorrection: it only filters
+    evidence that cannot itself be a responsible-party name.  It never fills in
+    or substitutes a company from registry/marketer data.
+    """
+    text = str(value or "").strip(' :;,-')
+    if len(re.sub(r'[^A-Za-z0-9]', '', text)) < 3:
+        return False
+    if re.search(
+        r'\b(?:regn?|registration|licen[cs]e|lic|fssai|batch|lot)\s*\.?\s*(?:no\.?|number)?\b',
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.fullmatch(r'(?:no\.?\s*)?[A-Z0-9./-]+', text, re.IGNORECASE) and re.search(r'\d', text):
+        return False
+    return bool(re.search(r'[A-Za-z]{3}', text))
+
+
 def _explicit_responsible_party_roles(line: str) -> set[str]:
     """Return only roles explicitly labelled on a responsible-party line.
 
@@ -2732,7 +2785,7 @@ def _explicit_responsible_party_roles(line: str) -> set[str]:
     ):
         roles.add('MARKETER')
     if re.search(
-        r'\b(?:packed\s+by\b|packaged\s+by\b|packer\b|pkd\.?\s*by\b|pkg\.?\s*by\b)',
+        r'\b(?:packed\s+by|packaged\s+by|packer\b|pkd\.?\s*by|pkg\.?\s*by)',
         text,
         re.IGNORECASE,
     ):
@@ -2748,6 +2801,12 @@ def _collect_continuation_lines(lines: List[str], start_index: int, current_sect
         if not line_clean:
             continue
         if _is_section_boundary(line_clean, current_section):
+            # A valid continuation can precede a new inline section on the
+            # same OCR line (for example ``Gujarat. Lic. No...``). Preserve
+            # only the grounded prefix and stop at the boundary.
+            cut_line = _cut_before_next_section(line_clean, current_section)
+            if cut_line and cut_line != line_clean:
+                collected.append(cut_line.strip(' ,;'))
             break
         if CONSUMER_CARE_STOP_RE.search(line_clean):
             break
@@ -2860,12 +2919,16 @@ def _extract_manufacturer_and_address(
                 else:
                     name = cont_lines[0]
                     address = _clean_address_text(', '.join(cont_lines[1:])) if len(cont_lines) > 1 else None
-                return name or None, address or None
+                if _is_plausible_responsible_party_name(name):
+                    return name, address or None
+                continue
             else:
                 vendor = _split_vendor_and_address(cleaned_after)
                 name = vendor['name'] or cleaned_after
                 address = _clean_address_text(vendor['address']) or None
-                return name or None, address
+                if _is_plausible_responsible_party_name(name):
+                    return name, address
+                continue
 
     # Step 2: Standalone company entity without "Manufactured by:" prefix
     for idx, line in enumerate(lines):
